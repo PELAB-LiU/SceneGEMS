@@ -1,8 +1,8 @@
 from typing import Callable
 
 from scenegems_tool.gateway.protocol import ServerMessage, make_error_message
-from scenegems_tool.workbench.scenario_session import ScenarioSession
 from scenegems_tool.vessel_stack.contracts.simulation_config import SimulationConfig
+from scenegems_tool.workbench.scenario_session import ScenarioSession
 from scenegems_tool.workbench.subsystem_integration_session import SubsystemIntegrationSession
 
 

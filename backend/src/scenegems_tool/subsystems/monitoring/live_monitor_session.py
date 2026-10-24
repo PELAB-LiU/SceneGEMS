@@ -3,11 +3,11 @@ from typing import Any, Callable, Dict, Sequence
 
 from concrete_level.models.concrete_scene import ConcreteScene
 from scenegems_tool.gateway.protocol import ServerMessage
-from scenegems_tool.subsystems.monitoring.monitor_session import MonitorSession
-from scenegems_tool.subsystems.monitoring.monitors import ExternalMonitor, InternalMonitor, MonitorBase
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.messaging.mqtt_monitor_client import MqttMonitorClient
 from scenegems_tool.messaging.mqtt_scenegems_service import MqttSceneGEMSService
+from scenegems_tool.subsystems.monitoring.monitor_session import MonitorSession
+from scenegems_tool.subsystems.monitoring.monitors import ExternalMonitor, InternalMonitor, MonitorBase
 
 
 class LiveMonitorSession(MonitorSession):

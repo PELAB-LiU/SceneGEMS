@@ -11,9 +11,9 @@ import paho.mqtt.client as mqtt
 
 from logical_level.constraint_satisfaction.evaluation_data import EvaluationData
 from scenegems_tool.gateway.serialization import serialize_frame
+from scenegems_tool.messaging.mqtt_client import MqttClient, MQttConnectionInfo
 from scenegems_tool.subsystems.scene_generation.scenario_generation_types import MqttSceneGenerationTask
 from scenegems_tool.subsystems.scene_generation.scene_generation_worker import run_scene_generation_worker
-from scenegems_tool.messaging.mqtt_client import MqttClient, MQttConnectionInfo
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 
 _logger = logging.getLogger(__name__)

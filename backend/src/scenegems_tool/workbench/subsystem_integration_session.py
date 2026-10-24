@@ -2,12 +2,12 @@ from abc import ABC, abstractmethod
 from typing import Callable
 
 from scenegems_tool.gateway.protocol import ServerMessage
-from scenegems_tool.workbench.scenario_session import ScenarioSession
 from scenegems_tool.subsystems.monitoring.empty_monitor_session import EmptyMonitorSession
 from scenegems_tool.subsystems.monitoring.monitor_session import MonitorSession
 from scenegems_tool.subsystems.scenario_execution.empty_simulation_session import EmptySimulationSession
-from scenegems_tool.vessel_stack.contracts.simulation_config import SimulationConfig
 from scenegems_tool.subsystems.scenario_execution.simulation_session import SimulationSession
+from scenegems_tool.vessel_stack.contracts.simulation_config import SimulationConfig
+from scenegems_tool.workbench.scenario_session import ScenarioSession
 
 
 class SubsystemIntegrationSession(ABC):

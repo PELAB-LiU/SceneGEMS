@@ -9,15 +9,15 @@ import yaml
 
 from concrete_level.models.trajectories import Trajectories
 from scenegems_tool.gateway.protocol import make_simulation_models_body
+from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
+from scenegems_tool.messaging.mqtt_scenario_execution_service import SCENARIO_EXECUTION_SERVICE_TOPIC
+from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 from scenegems_tool.vessel_stack.contracts.simulation_config import SimulationConfig
 from scenegems_tool.vessel_stack.simulation_docker_stack import (
     SIMULATION_COMPOSE_PROJECT,
     build_simulation_docker_stack_artifacts,
     write_simulation_gen_files,
 )
-from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
-from scenegems_tool.messaging.mqtt_scenario_execution_service import SCENARIO_EXECUTION_SERVICE_TOPIC
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 from utils.docker_compose_network import attach_broker_network_to_compose
 from utils.file_system_utils import (
     SCENARIO_EXECUTION_GEN_FOLDER,

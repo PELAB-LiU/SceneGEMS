@@ -1,8 +1,8 @@
 import unittest
 
+import simulation.backend_service.websocket_app as websocket_app
 from fastapi import WebSocketDisconnect
 
-import simulation.backend_service.websocket_app as websocket_app
 from scenegems_tool.gateway.protocol import SimulationStatus
 from scenegems_tool.gateway.websocket_app import backend_service_socket
 

@@ -1,12 +1,13 @@
 import math
 from typing import Union
-import pyproj
 
 import numpy as np
+import pyproj
 from haversine import Unit, haversine
 
 from concrete_level.models.actor_state import ActorState
 from utils.math_utils import calculate_heading
+
 
 class Geofence:
     """Circular geofence: center point (WGS84) and radius in meters."""

@@ -1,8 +1,8 @@
 import unittest
 from types import SimpleNamespace
 
-from scenegems_tool.gateway.protocol import SimulationStatus
 from scenegems_tool.backend_service.session import SocketSession
+from scenegems_tool.gateway.protocol import SimulationStatus
 
 
 class TestSocketSessionStatus(unittest.TestCase):
