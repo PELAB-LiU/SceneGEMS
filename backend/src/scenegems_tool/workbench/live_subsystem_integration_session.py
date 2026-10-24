@@ -6,7 +6,7 @@ from typing import Any, Callable, Dict
 from concrete_level.models.concrete_scene import ConcreteScene
 from functional_level.models.model_parser import ModelParser
 from scenegems_tool.gateway.protocol import ServerMessage, make_error_message
-from scenegems_tool.backend_service.scenario_session import ScenarioSession
+from scenegems_tool.workbench.scenario_session import ScenarioSession
 from scenegems_tool.monitoring.live_monitor_session import LiveMonitorSession
 from scenegems_tool.scenario_generation.scenario_generation_session import ScenarioGenerationSession
 from scenegems_tool.simulators.live_simulation_session import LiveSimulationSession
@@ -15,7 +15,7 @@ from scenegems_tool.subsystems_integration.mqtt_client import MQttConnectionInfo
 from scenegems_tool.subsystems_integration.mqtt_scenegems_client import MqttSceneGEMSClient
 from scenegems_tool.subsystems_integration.mqtt_scenegems_service import MqttSceneGEMSService
 from scenegems_tool.subsystems_integration.sim_utils import Geofence
-from scenegems_tool.subsystems_integration.subsystem_integration_session import SubsystemIntegrationSession
+from scenegems_tool.workbench.subsystem_integration_session import SubsystemIntegrationSession
 from scenegems_tool.trajectory_generation.trajectory_generation_session import TrajectoryGenerationSession
 from scenegems_tool.trajectory_generation.trajectory_generation_types import TrajectoryGenerationParams
 

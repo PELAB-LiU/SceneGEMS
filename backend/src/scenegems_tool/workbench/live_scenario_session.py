@@ -8,7 +8,7 @@ from concrete_level.trajectory_generation.trajectory_data import TrajectoryData
 from logical_level.constraint_satisfaction.evaluation_data import EvaluationData
 from scenegems_tool.monitoring.monitor_session import MonitorSession, iter_scene_batches
 from scenegems_tool.gateway.protocol import ServerMessage, make_initial_state_message
-from scenegems_tool.backend_service.scenario_session import ScenarioSession
+from scenegems_tool.workbench.scenario_session import ScenarioSession
 from utils.global_constants import ONE_HOUR_IN_SEC, ONE_SECOND
 
 
