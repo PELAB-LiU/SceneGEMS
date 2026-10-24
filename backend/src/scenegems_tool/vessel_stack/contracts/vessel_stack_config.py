@@ -7,7 +7,7 @@ resolver validates a configuration before anything is built from it.
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 
@@ -90,6 +90,9 @@ class VesselConfig:
     context: AgentContext = AgentContext.SIMULATION
     connection: Optional[AgentConnection] = None
     gazebo_vessel_model: Optional[str] = None  # SDF override; generated when None
+    # Adapter ids chosen in place of the registry default where several adapters connect the
+    # same two layers (for example ArduAgent or the lockstep MAVLink link from replay to ardupilot).
+    adapter_ids: Tuple[str, ...] = ()
 
     @property
     def is_simulated(self) -> bool:
