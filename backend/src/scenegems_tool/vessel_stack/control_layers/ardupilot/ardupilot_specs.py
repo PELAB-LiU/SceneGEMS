@@ -1,6 +1,6 @@
 """Specs of the ArduPilot control layer: per vessel SITL, MAVProxy and ArduAgent."""
 
-from scenegems_tool.vessel_stack.contracts.adapter_spec import ContainerSpec, LayerSpec
+from scenegems_tool.vessel_stack.contracts.adapter_spec import UPSTREAM_PINS_FILE, ContainerSpec, LayerSpec
 from scenegems_tool.vessel_stack.contracts.ports import Port
 from scenegems_tool.vessel_stack.contracts.roles import ControlLayerId, LayerRef
 from utils.file_system_utils import SITL_ENTRYPOINT_CONTAINER_PATH
@@ -9,6 +9,7 @@ SITL_CONTAINER = ContainerSpec(
     image="${SITL_IMAGE:-scenegems-ardupilot-sitl:latest}",
     build_fingerprint_source="deploy/images/sitl",
     entrypoint=SITL_ENTRYPOINT_CONTAINER_PATH,
+    upstream_pins_file=UPSTREAM_PINS_FILE,
 )
 MAVPROXY_CONTAINER = ContainerSpec(
     image="${MAVPROXY_IMAGE:-scenegems-mavproxy:latest}",

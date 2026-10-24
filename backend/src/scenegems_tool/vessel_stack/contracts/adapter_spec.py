@@ -21,6 +21,9 @@ class SpecStatus(str, Enum):
     PLANNED = "planned"  # part of the design, not implemented yet
 
 
+UPSTREAM_PINS_FILE = "deploy/images/upstream_pins.env"  # upstream commits the simulator images build from
+
+
 @dataclass(frozen=True)
 class ContainerSpec:
     """A container a spec adds to a per-job stack."""
@@ -29,6 +32,12 @@ class ContainerSpec:
     build_fingerprint_source: str  # repo path whose content stamps the image build
     entrypoint: str
     cpus: Optional[float] = None
+    upstream_pins_file: Optional[str] = None  # repo path of the upstream pins the image builds from, also part of the stamp
+
+    @property
+    def build_fingerprint_sources(self) -> Tuple[str, ...]:
+        """Every repo path whose content stamps the image build."""
+        return tuple(source for source in (self.build_fingerprint_source, self.upstream_pins_file) if source)
 
 
 @dataclass(frozen=True)
