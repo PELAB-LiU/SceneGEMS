@@ -5,3 +5,4 @@ numpy
 scipy
 pyproj
 haversine
+colav-automaton @ https://github.com/michaelstolberger27/usv-navigation/archive/54866f24a04987334057ae5c5896dfc3ee8ca058.zip
