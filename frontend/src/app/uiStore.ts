@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { defaultReferenceGeofence, type ReferenceGeofence } from "../features/connection/referenceGeofence";
+import { defaultReferenceGeofence, type ReferenceGeofence } from "../features/workbench/connection/referenceGeofence";
 
 export interface OverlayVisibility {
   dot: boolean;

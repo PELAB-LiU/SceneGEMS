@@ -6,7 +6,9 @@
 src/
   app/           AppShell layout and UI-only Zustand (uiStore)
   domain/        Simulation protocol, WebSocket client, playback store
-  features/      React UI by capability (scene, controls, connection, metrics)
+  features/      React UI by section of the control panel. Today only workbench/ exists
+                 (connection, controls, metrics, monitor, scene). campaigns/, cluster/,
+                 observe/ and results/ are added by later phases.
   language/      Lezer grammar for .problem files
 ```
 

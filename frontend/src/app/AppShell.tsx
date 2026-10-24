@@ -8,24 +8,24 @@ import { usePersistedState } from "./usePersistedState";
 import {
   connectionFormIsValid,
   useConnectionStore,
-} from "../features/connection/connectionStore";
+} from "../features/workbench/connection/connectionStore";
 import { useSimulationWorkflow } from "../domain/simulation/useSimulationWorkflow";
 import type { ClientToServerMessage } from "../domain/simulation/wireTypes";
-import { PlaybackControls } from "../features/controls/PlaybackControls";
-import { DomainConfigurationPanel } from "../features/controls/DomainConfigurationPanel";
+import { PlaybackControls } from "../features/workbench/controls/PlaybackControls";
+import { DomainConfigurationPanel } from "../features/workbench/controls/DomainConfigurationPanel";
 import {
   DEFAULT_COLREGS_PRESET,
   DEFAULT_OBSTACLE_TYPES_PRESET,
   DEFAULT_VESSEL_TYPES_PRESET,
-} from "../features/controls/domainConfigPresets";
-import { SceneGenerationSidebar } from "../features/controls/SceneGenerationSidebar";
-import { SceneMonitorPreview } from "../features/controls/SceneMonitorPreview";
-import { runBatchGeneration } from "../features/controls/runBatchGeneration";
-import { TrajectoryGenerationControls } from "../features/controls/TrajectoryGenerationControls";
-import { TrajectoryMonitorSidebar } from "../features/controls/TrajectoryMonitorSidebar";
+} from "../features/workbench/controls/domainConfigPresets";
+import { SceneGenerationSidebar } from "../features/workbench/controls/SceneGenerationSidebar";
+import { SceneMonitorPreview } from "../features/workbench/controls/SceneMonitorPreview";
+import { runBatchGeneration } from "../features/workbench/controls/runBatchGeneration";
+import { TrajectoryGenerationControls } from "../features/workbench/controls/TrajectoryGenerationControls";
+import { TrajectoryMonitorSidebar } from "../features/workbench/controls/TrajectoryMonitorSidebar";
 import { useTrajectoryGenerationStore } from "../domain/trajectoryGeneration/trajectoryGenerationStore";
-import { WarapsConnectionPanel } from "../features/connection/WarapsConnectionPanel";
-import { SceneCanvas } from "../features/scene/SceneCanvas";
+import { WarapsConnectionPanel } from "../features/workbench/connection/WarapsConnectionPanel";
+import { SceneCanvas } from "../features/workbench/scene/SceneCanvas";
 import { waitForSceneGeneration } from "../domain/playback/waitForSceneGeneration";
 import { useBatchGenerationStore } from "../domain/sceneGeneration/batchGenerationStore";
 import {

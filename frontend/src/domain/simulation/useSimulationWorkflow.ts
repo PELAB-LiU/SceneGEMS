@@ -14,7 +14,7 @@ import { useRecordingStore } from "../playback/recordingStore";
 import { useBatchGenerationStore } from "../sceneGeneration/batchGenerationStore";
 import { buildFramesFromTrajectoryData } from "../sceneGeneration/parseEvaluationDataFile";
 import { useTrajectoryGenerationStore } from "../trajectoryGeneration/trajectoryGenerationStore";
-import { useConnectionStore } from "../../features/connection/connectionStore";
+import { useConnectionStore } from "../../features/workbench/connection/connectionStore";
 import type { TrajectoryGenerationParamsWire } from "./wireTypes";
 
 let previewTrajectoryChunkQueue = Promise.resolve();
