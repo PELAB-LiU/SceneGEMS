@@ -154,7 +154,7 @@
             "name": "Run Simulation Backend",
             "type": "debugpy",
             "request": "launch",
-            "program": "backend/src/scenegems_tool/backend_service/websocket_app.py",
+            "program": "backend/src/scenegems_tool/gateway/websocket_app.py",
             "console": "integratedTerminal",
             "env": {
                 "PYTHONPATH": "${workspaceFolder}/backend/src"

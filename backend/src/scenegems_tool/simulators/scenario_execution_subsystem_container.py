@@ -8,7 +8,7 @@ import threading
 import yaml
 
 from concrete_level.models.trajectories import Trajectories
-from scenegems_tool.backend_service.protocol import make_simulation_models_body
+from scenegems_tool.gateway.protocol import make_simulation_models_body
 from scenegems_tool.simulators.simulation_config import SimulationConfig
 from scenegems_tool.simulators.simulation_docker_stack import (
     SIMULATION_COMPOSE_PROJECT,

@@ -5,7 +5,7 @@ from typing import Callable, Optional
 
 from concrete_level.models.concrete_actors import ConcreteVessel
 from concrete_level.models.concrete_scene import ConcreteScene
-from scenegems_tool.backend_service.protocol import ServerMessage, SimulationStatus, make_simulation_models_message, make_simulation_status_message
+from scenegems_tool.gateway.protocol import ServerMessage, SimulationStatus, make_simulation_models_message, make_simulation_status_message
 from scenegems_tool.monitoring.monitor_session import MonitorSession
 from scenegems_tool.simulators.gazeboo.vessel_model_generator import generate_vessel_model
 from scenegems_tool.simulators.simulation_config import SimulationConfig

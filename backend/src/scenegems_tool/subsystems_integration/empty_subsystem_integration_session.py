@@ -1,6 +1,6 @@
 from typing import Callable
 
-from scenegems_tool.backend_service.protocol import ServerMessage, make_error_message
+from scenegems_tool.gateway.protocol import ServerMessage, make_error_message
 from scenegems_tool.backend_service.scenario_session import ScenarioSession
 from scenegems_tool.simulators.simulation_config import SimulationConfig
 from scenegems_tool.subsystems_integration.subsystem_integration_session import SubsystemIntegrationSession

@@ -14,8 +14,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-from scenegems_tool.backend_service.protocol import make_waraps_status_message
-from scenegems_tool.backend_service.web_socket_session_manager import WebSocketSessionManager
+from scenegems_tool.gateway.protocol import make_waraps_status_message
+from scenegems_tool.gateway.web_socket_session_manager import WebSocketSessionManager
 from scenegems_tool.docker_subsystem_shutdown import shutdown_all_docker_subsystems
 from utils.file_system_utils import ensure_directories
 
@@ -99,7 +99,7 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(
-        "scenegems_tool.backend_service.websocket_app:app",
+        "scenegems_tool.gateway.websocket_app:app",
         host="127.0.0.1",
         port=5174,
         reload=False,

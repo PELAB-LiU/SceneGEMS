@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict, Optional
 from concrete_level.models.concrete_scene import ConcreteScene
 from concrete_level.models.trajectories import Trajectories
 from concrete_level.trajectory_generation.trajectory_builder import TrajectoryBuilder
-from scenegems_tool.backend_service.protocol import (
+from scenegems_tool.gateway.protocol import (
     ServerMessage,
     SimulationStatus,
     make_error_message,

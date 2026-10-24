@@ -4,8 +4,8 @@ from typing import Dict, Tuple
 
 from fastapi import WebSocket
 
-from scenegems_tool.backend_service.socket_message_processor import SocketMessageProcessor
-from scenegems_tool.backend_service.socket_session import SocketSession
+from scenegems_tool.gateway.socket_message_processor import SocketMessageProcessor
+from scenegems_tool.gateway.socket_session import SocketSession
 
 
 class WebSocketSessionManager:

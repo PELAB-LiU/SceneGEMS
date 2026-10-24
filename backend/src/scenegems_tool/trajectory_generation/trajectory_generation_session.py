@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Callable
 
-from scenegems_tool.backend_service.protocol import ServerMessage
+from scenegems_tool.gateway.protocol import ServerMessage
 from scenegems_tool.subsystems_integration.mqtt_client import MQttConnectionInfo
 from scenegems_tool.subsystems_integration.mqtt_trajectory_generation_client import MqttTrajectoryGenerationClient
 from scenegems_tool.subsystems_integration.mqtt_trajectory_generation_service import TRAJECTORY_GENERATION_SERVICE_NAME, TRAJECTORY_GENERATION_SERVICE_TOPIC

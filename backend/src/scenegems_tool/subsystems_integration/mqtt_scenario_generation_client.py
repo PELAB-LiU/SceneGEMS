@@ -8,7 +8,7 @@ import paho.mqtt.client as mqtt
 
 from concrete_level.models.concrete_scene import ConcreteScene
 from logical_level.constraint_satisfaction.evaluation_data import EvaluationData
-from scenegems_tool.backend_service.protocol import ServerMessage, make_generated_scene_message
+from scenegems_tool.gateway.protocol import ServerMessage, make_generated_scene_message
 from scenegems_tool.subsystems_integration.mqtt_client import MqttClient, MQttConnectionInfo
 from scenegems_tool.subsystems_integration.sim_utils import Geofence
 

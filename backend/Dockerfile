@@ -41,4 +41,4 @@ ENV PYTHONPATH=/app/src
 
 EXPOSE 5174
 
-CMD ["uvicorn", "scenegems_tool.backend_service.websocket_app:app", "--host", "0.0.0.0", "--port", "5174"]
+CMD ["uvicorn", "scenegems_tool.gateway.websocket_app:app", "--host", "0.0.0.0", "--port", "5174"]

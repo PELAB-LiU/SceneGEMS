@@ -3,8 +3,8 @@ import unittest
 from fastapi import WebSocketDisconnect
 
 import simulation.backend_service.websocket_app as websocket_app
-from scenegems_tool.backend_service.protocol import SimulationStatus
-from scenegems_tool.backend_service.websocket_app import backend_service_socket
+from scenegems_tool.gateway.protocol import SimulationStatus
+from scenegems_tool.gateway.websocket_app import backend_service_socket
 
 
 class _FakeWebSocket:

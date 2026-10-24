@@ -3,14 +3,14 @@ from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Sequence, Tuple
 
 from concrete_level.models.concrete_scene import ConcreteScene
-from scenegems_tool.backend_service.protocol import (
+from scenegems_tool.gateway.protocol import (
     ServerMessage,
     make_generated_scene_message,
     make_monitor_status_message,
     make_preview_chunk_message,
     make_simulation_chunk_message,
 )
-from scenegems_tool.backend_service.serialization import serialize_frame
+from scenegems_tool.gateway.serialization import serialize_frame
 
 # Keep MQTT payloads small on the live WARA-PS broker. Batches of 100 scenes were
 # large enough that the monitor worker lost the TLS session (paho CONN_LOST).

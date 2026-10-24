@@ -2,8 +2,8 @@ import asyncio
 import json
 import traceback
 
-from scenegems_tool.backend_service.protocol import ClientMessage, simulation_config_from_body
-from scenegems_tool.backend_service.socket_session import SocketSession
+from scenegems_tool.gateway.protocol import ClientMessage, simulation_config_from_body
+from scenegems_tool.gateway.socket_session import SocketSession
 from scenegems_tool.subsystems_integration.sim_utils import Geofence
 
 

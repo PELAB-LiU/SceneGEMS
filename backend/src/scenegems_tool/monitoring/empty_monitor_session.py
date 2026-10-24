@@ -1,7 +1,7 @@
 from typing import Any, Callable, Dict, Sequence
 
 from concrete_level.models.concrete_scene import ConcreteScene
-from scenegems_tool.backend_service.protocol import ServerMessage
+from scenegems_tool.gateway.protocol import ServerMessage
 from scenegems_tool.monitoring.monitor_session import MonitorSession
 
 

@@ -13,7 +13,7 @@ import numpy as np
 from concrete_level.models.concrete_scene import ConcreteScene
 from concrete_level.models.trajectories import Trajectories
 from concrete_level.trajectory_generation.scene_builder import SceneBuilder
-from scenegems_tool.backend_service.protocol import SimulationStatus, simulation_config_from_body
+from scenegems_tool.gateway.protocol import SimulationStatus, simulation_config_from_body
 from scenegems_tool.simulators.simulation_config import SimulationConfig
 from scenegems_tool.simulators.simulation_parser import SimulationParser
 from scenegems_tool.subsystems_integration.mqtt_client import MQttConnectionInfo

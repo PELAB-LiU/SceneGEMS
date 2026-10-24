@@ -10,7 +10,7 @@ from typing import Any, List, Optional, Tuple
 import paho.mqtt.client as mqtt
 
 from logical_level.constraint_satisfaction.evaluation_data import EvaluationData
-from scenegems_tool.backend_service.serialization import serialize_frame
+from scenegems_tool.gateway.serialization import serialize_frame
 from scenegems_tool.scenario_generation.scenario_generation_types import MqttSceneGenerationTask
 from scenegems_tool.scenario_generation.scene_generation_worker import run_scene_generation_worker
 from scenegems_tool.subsystems_integration.mqtt_client import MqttClient, MQttConnectionInfo
