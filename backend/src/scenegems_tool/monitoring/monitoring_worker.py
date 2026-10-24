@@ -4,8 +4,8 @@ from typing import Dict, List, Optional, Tuple
 
 from concrete_level.colregs_monitoring.colregs_monitor_runtime import ColregsMonitorRuntime, MonitoringTask
 from concrete_level.colregs_monitoring.monitored_trajectory import MonitoredSceneWithResults
-from scenegems_tool.subsystems_integration.mqtt_client import MQttConnectionInfo
-from scenegems_tool.subsystems_integration.mqtt_monitor_service import (
+from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
+from scenegems_tool.messaging.mqtt_monitor_service import (
     MqttMonitoringBatchTask,
     MqttMonitoringTask,
     MqttMonitorService,

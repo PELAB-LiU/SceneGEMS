@@ -9,7 +9,7 @@ from typing import Any, List, Optional
 
 import paho.mqtt.client as mqtt
 
-from scenegems_tool.subsystems_integration.mqtt_client import MqttClient, MQttConnectionInfo
+from scenegems_tool.messaging.mqtt_client import MqttClient, MQttConnectionInfo
 from scenegems_tool.subsystems_integration.sim_utils import Geofence
 from scenegems_tool.trajectory_generation.trajectory_generation_types import MqttTrajectoryGenerationTask, TrajectoryGenerationParams
 from scenegems_tool.trajectory_generation.trajectory_generation_worker import run_trajectory_generation_worker

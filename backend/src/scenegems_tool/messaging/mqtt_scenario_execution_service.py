@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 import paho.mqtt.client as mqtt
 
 from scenegems_tool.gateway.protocol import SimulationStatus
-from scenegems_tool.subsystems_integration.mqtt_client import MqttClient, MQttConnectionInfo
+from scenegems_tool.messaging.mqtt_client import MqttClient, MQttConnectionInfo
 from scenegems_tool.subsystems_integration.sim_utils import Geofence
 
 SCENARIO_EXECUTION_SERVICE_NAME = "scenario_execution_service"

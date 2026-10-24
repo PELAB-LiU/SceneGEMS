@@ -5,9 +5,9 @@ from concrete_level.models.concrete_scene import ConcreteScene
 from scenegems_tool.gateway.protocol import ServerMessage
 from scenegems_tool.monitoring.monitor_session import MonitorSession
 from scenegems_tool.monitoring.monitors import ExternalMonitor, InternalMonitor, MonitorBase
-from scenegems_tool.subsystems_integration.mqtt_client import MQttConnectionInfo
-from scenegems_tool.subsystems_integration.mqtt_monitor_client import MqttMonitorClient
-from scenegems_tool.subsystems_integration.mqtt_scenegems_service import MqttSceneGEMSService
+from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
+from scenegems_tool.messaging.mqtt_monitor_client import MqttMonitorClient
+from scenegems_tool.messaging.mqtt_scenegems_service import MqttSceneGEMSService
 
 
 class LiveMonitorSession(MonitorSession):

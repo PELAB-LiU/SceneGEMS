@@ -1,6 +1,6 @@
 import numpy as np
 
-from scenegems_tool.subsystems_integration.mqtt_agent_client import MqttAgentClient
+from scenegems_tool.messaging.mqtt_agent_client import MqttAgentClient
 from scenegems_tool.subsystems_integration.sim_utils import to_true_north
 from utils.file_system_utils import SITL_ENTRYPOINT_CONTAINER_PATH, docker_volume_path, runtime_assets_volume_mount
 

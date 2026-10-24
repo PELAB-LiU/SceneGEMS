@@ -1,6 +1,6 @@
 from typing import List
 
-from scenegems_tool.subsystems_integration.mqtt_client import MqttClient, MQttConnectionInfo
+from scenegems_tool.messaging.mqtt_client import MqttClient, MQttConnectionInfo
 from scenegems_tool.subsystems_integration.sim_utils import Geofence
 
 

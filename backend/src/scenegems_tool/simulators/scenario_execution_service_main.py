@@ -1,7 +1,7 @@
 import os
 
 from scenegems_tool.simulators.scenario_execution_worker import ScenarioExecutionWorker
-from scenegems_tool.subsystems_integration.mqtt_client import MQttConnectionInfo
+from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.subsystems_integration.sim_utils import Geofence
 
 

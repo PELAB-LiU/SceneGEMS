@@ -7,7 +7,7 @@ from typing import Optional
 
 import yaml
 
-from scenegems_tool.subsystems_integration.mqtt_client import MQttConnectionInfo
+from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.subsystems_integration.sim_utils import Geofence
 from utils.docker_compose_network import attach_broker_network_to_compose
 from utils.file_system_utils import TRAJECTORY_GENERATION_GEN_FOLDER, merge_compose_volumes
