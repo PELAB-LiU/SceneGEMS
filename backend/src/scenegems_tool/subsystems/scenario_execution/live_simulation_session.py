@@ -13,11 +13,11 @@ from scenegems_tool.gateway.protocol import (
 )
 from scenegems_tool.workbench.scenario_session import ScenarioSession
 from scenegems_tool.subsystems.monitoring.monitor_session import MonitorSession, iter_scene_batches
-from scenegems_tool.simulators.scenario_execution_subsystem_container import (
+from scenegems_tool.subsystems.scenario_execution.scenario_execution_subsystem_container import (
     ScenarioExecutionSubsystemContainer,
 )
 from scenegems_tool.simulators.simulation_config import SimulationConfig
-from scenegems_tool.simulators.simulation_session import SimulationSession
+from scenegems_tool.subsystems.scenario_execution.simulation_session import SimulationSession
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.messaging.mqtt_scenario_execution_client import MqttScenarioExecutionClient
 from scenegems_tool.messaging.mqtt_scenario_execution_service import SCENARIO_EXECUTION_SERVICE_NAME
