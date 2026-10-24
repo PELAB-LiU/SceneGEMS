@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Literal, NotRequired, Optional, Required, Ty
 
 import numpy as np
 
-from scenegems_tool.simulators.simulation_config import SimulatedAgentConfig, SimulationConfig, WaveConfig
+from scenegems_tool.vessel_stack.contracts.simulation_config import SimulatedAgentConfig, SimulationConfig, WaveConfig
 
 
 class LoadScenarioFileMessage(TypedDict):

@@ -11,7 +11,7 @@ from concrete_level.colregs_monitoring.monitored_trajectory import MonitoredScen
 from concrete_level.models.concrete_scene import ConcreteScene
 from scenegems_tool.gateway.serialization import serialize_monitored_frame
 from scenegems_tool.messaging.mqtt_client import MqttClient, MQttConnectionInfo
-from scenegems_tool.subsystems_integration.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 
 
 @dataclass(frozen=True)

@@ -5,7 +5,7 @@ import numpy as np
 from haversine import Unit
 
 from concrete_level.models.actor_state import ActorState
-from scenegems_tool.subsystems_integration.sim_utils import (
+from scenegems_tool.vessel_stack.contracts.sim_utils import (
     Geofence,
     from_true_north,
     to_true_north,

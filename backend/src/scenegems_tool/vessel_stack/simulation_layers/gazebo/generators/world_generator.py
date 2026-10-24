@@ -4,7 +4,7 @@ from typing import List, Tuple
 import numpy as np
 
 from concrete_level.models.actor_state import ActorState
-from scenegems_tool.simulators.simulation_config import WaveConfig
+from scenegems_tool.vessel_stack.contracts.simulation_config import WaveConfig
 from utils.global_constants import MAX_COORD
 
 

@@ -4,7 +4,7 @@ import time
 
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.messaging.mqtt_trajectory_generation_service import MqttTrajectoryGenerationService
-from scenegems_tool.subsystems_integration.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 from utils.file_system_utils import ensure_directories
 
 

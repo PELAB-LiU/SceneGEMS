@@ -10,7 +10,7 @@ from scenegems_tool.messaging.mqtt_monitor_service import (
     MqttMonitoringTask,
     MqttMonitorService,
 )
-from scenegems_tool.subsystems_integration.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 from utils.colregs_approximations import COLREGSConstraints
 from utils.global_constants import ONE_SECOND
 

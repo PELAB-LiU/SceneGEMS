@@ -8,7 +8,7 @@ from scenegems_tool.subsystems.scene_generation.scenario_generation_container im
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.messaging.mqtt_scenario_generation_client import GeneratedSceneHandler, MqttScenarioGenerationClient
 from scenegems_tool.messaging.mqtt_scenario_generation_service import SCENARIO_GENERATION_SERVICE_NAME, SCENARIO_GENERATION_SERVICE_TOPIC
-from scenegems_tool.subsystems_integration.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 
 
 class ScenarioGenerationSession:

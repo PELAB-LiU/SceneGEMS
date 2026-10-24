@@ -14,11 +14,11 @@ from concrete_level.models.concrete_scene import ConcreteScene
 from concrete_level.models.trajectories import Trajectories
 from concrete_level.trajectory_generation.scene_builder import SceneBuilder
 from scenegems_tool.gateway.protocol import SimulationStatus, simulation_config_from_body
-from scenegems_tool.simulators.simulation_config import SimulationConfig
-from scenegems_tool.simulators.simulation_parser import SimulationParser
+from scenegems_tool.vessel_stack.contracts.simulation_config import SimulationConfig
+from scenegems_tool.vessel_stack.simulation_parser import SimulationParser
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.messaging.mqtt_scenario_execution_service import MqttScenarioExecutionService, MqttStartSimulationTask
-from scenegems_tool.subsystems_integration.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 from utils.global_constants import MAX_DISTANCE, ONE_SECOND
 from utils.math_utils import rotate_heading as rotate_heading_util
 

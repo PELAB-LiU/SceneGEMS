@@ -4,7 +4,7 @@ import traceback
 
 from scenegems_tool.gateway.protocol import ClientMessage, simulation_config_from_body
 from scenegems_tool.gateway.socket_session import SocketSession
-from scenegems_tool.subsystems_integration.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 
 
 class SocketMessageProcessor:

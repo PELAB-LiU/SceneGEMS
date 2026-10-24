@@ -7,9 +7,9 @@ from concrete_level.models.concrete_scene import ConcreteScene
 from concrete_level.models.trajectories import Trajectories
 from concrete_level.trajectory_generation.scene_builder import SceneBuilder
 from concrete_level.trajectory_generation.trajectory_builder import TrajectoryBuilder
-from scenegems_tool.simulators.path_simplification import simplify_state_path
-from scenegems_tool.simulators.simulation_config import SimulationConfig
-from scenegems_tool.simulators.simulation_docker_stack import (
+from scenegems_tool.vessel_stack.asv_software.replay.path_simplification import simplify_state_path
+from scenegems_tool.vessel_stack.contracts.simulation_config import SimulationConfig
+from scenegems_tool.vessel_stack.simulation_docker_stack import (
     _STANDALONE_COMPOSE_FILENAME,
     SIMULATION_COMPOSE_PROJECT,
     build_simulation_docker_stack_artifacts,
@@ -20,7 +20,7 @@ from scenegems_tool.simulators.simulation_docker_stack import (
 __all__ = ["SimulationParser", "SimulationParentClient", "SIMULATION_COMPOSE_PROJECT"]
 from scenegems_tool.messaging.mqtt_agent_client import ExecutionState, MqttAgentClient
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
-from scenegems_tool.subsystems_integration.sim_utils import Geofence, waypoint_from_state
+from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence, waypoint_from_state
 
 _logger = logging.getLogger(__name__)
 

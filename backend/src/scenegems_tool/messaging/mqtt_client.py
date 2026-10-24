@@ -10,7 +10,7 @@ from typing import Any, List, Set
 
 import paho.mqtt.client as mqtt
 
-from scenegems_tool.subsystems_integration.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 
 _LOOPBACK_ALIASES = frozenset({"localhost", "127.0.0.1", "::1"})
 _DOCKER_HOST_GATEWAY = "host.docker.internal"

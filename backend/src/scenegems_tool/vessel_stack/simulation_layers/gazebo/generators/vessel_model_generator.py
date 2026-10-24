@@ -1,8 +1,8 @@
 import numpy as np
 
 from concrete_level.models.concrete_actors import ConcreteVessel
-from scenegems_tool.simulators.gazeboo.hydrodynamics import calculate_hydrodynamics
-from scenegems_tool.simulators.gazeboo.thrust_calculation import calculate_thrust_coefficient, calculate_thrust_multiplier
+from scenegems_tool.vessel_stack.simulation_layers.gazebo.generators.hydrodynamics import calculate_hydrodynamics
+from scenegems_tool.vessel_stack.simulation_layers.gazebo.generators.thrust_calculation import calculate_thrust_coefficient, calculate_thrust_multiplier
 
 
 def generate_vessel_model(vessel: ConcreteVessel, agent_name: str) -> str:

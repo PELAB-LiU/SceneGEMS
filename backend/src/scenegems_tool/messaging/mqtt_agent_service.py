@@ -11,7 +11,7 @@ import paho.mqtt.client as mqtt
 
 from concrete_level.models.actor_state import ActorState
 from scenegems_tool.messaging.mqtt_client import MqttClient, MQttConnectionInfo
-from scenegems_tool.subsystems_integration.sim_utils import Geofence, to_true_north
+from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence, to_true_north
 
 
 class TaskStatus(str, Enum):
