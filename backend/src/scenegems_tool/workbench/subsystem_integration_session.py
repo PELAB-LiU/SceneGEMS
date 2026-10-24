@@ -6,7 +6,7 @@ from scenegems_tool.subsystems.monitoring.empty_monitor_session import EmptyMoni
 from scenegems_tool.subsystems.monitoring.monitor_session import MonitorSession
 from scenegems_tool.subsystems.scenario_execution.empty_simulation_session import EmptySimulationSession
 from scenegems_tool.subsystems.scenario_execution.simulation_session import SimulationSession
-from scenegems_tool.vessel_stack.contracts.simulation_config import SimulationConfig
+from scenegems_tool.vessel_stack.contracts.vessel_stack_config import SimulationInstanceConfig
 from scenegems_tool.workbench.scenario_session import ScenarioSession
 
 
@@ -26,7 +26,7 @@ class SubsystemIntegrationSession(ABC):
         pass
 
     @abstractmethod
-    def set_simulation_session(self, scenario_session: ScenarioSession, simulation_config: SimulationConfig) -> None:
+    def set_simulation_session(self, scenario_session: ScenarioSession, simulation_config: SimulationInstanceConfig) -> None:
         pass
 
     @abstractmethod

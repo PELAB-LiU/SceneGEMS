@@ -10,7 +10,8 @@ from logical_level.constraint_satisfaction.evaluation_data import EvaluationData
 from scenegems_tool.gateway.protocol import ClientMessage, ServerMessage, make_error_message, make_monitor_status_message, make_waraps_status_message
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo, resolve_mqtt_broker_endpoints
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
-from scenegems_tool.vessel_stack.contracts.simulation_config import SimulationConfig
+from scenegems_tool.vessel_stack.contracts.vessel_stack_config import SimulationInstanceConfig
+from scenegems_tool.vessel_stack.registry.catalog import default_resolver
 from scenegems_tool.workbench.empty_scenario_session import EmptyScenarioSession
 from scenegems_tool.workbench.empty_subsystem_integration_session import EmptySubsystemIntegrationSession
 from scenegems_tool.workbench.live_scenario_session import LiveScenarioSession
@@ -134,15 +135,28 @@ class SocketSession:
         # The live monitor can block while it waits for the monitor heartbeat.
         await asyncio.to_thread(monitor_session.monitor_generated_scene, request_id, scene, {}, valid)
 
-    def set_simulation_session(self, simulation_config: SimulationConfig) -> None:
+    def _accept_simulation_config(self, simulation_config: SimulationInstanceConfig) -> bool:
+        """Validate the vessel stacks, environment and speedup through the adapter registry."""
+        resolution = default_resolver().resolve_instance(simulation_config)
+        for warning in resolution.warnings:
+            print(f"Simulation configuration warning: {warning}")
+        if not resolution.accepted:
+            self.send_runtime_error(f"Simulation configuration rejected: {resolution.reason}")
+            return False
+        return True
+
+    def set_simulation_session(self, simulation_config: SimulationInstanceConfig) -> None:
         if self.scenario_session.is_initialized:
-            self.subsystem_integration_session.set_simulation_session(scenario_session=self.scenario_session, simulation_config=simulation_config)
+            if self._accept_simulation_config(simulation_config):
+                self.subsystem_integration_session.set_simulation_session(scenario_session=self.scenario_session, simulation_config=simulation_config)
             return
         self.send_runtime_error("No scenario loaded")
 
-    def generate_simulation_models(self, simulation_config: SimulationConfig) -> None:
+    def generate_simulation_models(self, simulation_config: SimulationInstanceConfig) -> None:
         if not self.scenario_session.is_initialized:
             self.send_runtime_error("No scenario loaded")
+            return
+        if not self._accept_simulation_config(simulation_config):
             return
         scene = self.scenario_session.trajectories.initial_scene
         if scene is None:

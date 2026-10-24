@@ -1,7 +1,7 @@
 import numpy as np
 
 from concrete_level.models.concrete_actors import ConcreteVessel
-from scenegems_tool.vessel_stack.contracts.simulation_config import WaveConfig
+from scenegems_tool.vessel_stack.contracts.vessel_stack_config import WaveConfig
 from utils.global_constants import ONE_N_MILE_IN_M
 
 

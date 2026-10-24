@@ -8,7 +8,8 @@ from concrete_level.models.trajectories import Trajectories
 from concrete_level.trajectory_generation.scene_builder import SceneBuilder
 from concrete_level.trajectory_generation.trajectory_builder import TrajectoryBuilder
 from scenegems_tool.vessel_stack.asv_software.replay.path_simplification import simplify_state_path
-from scenegems_tool.vessel_stack.contracts.simulation_config import SimulationConfig
+from scenegems_tool.vessel_stack.contracts.vessel_stack_config import SimulationInstanceConfig
+from scenegems_tool.vessel_stack.control_layers.ardupilot.arduagent_control_mode import arduagent_control_mode
 from scenegems_tool.vessel_stack.simulation_docker_stack import (
     _STANDALONE_COMPOSE_FILENAME,
     SIMULATION_COMPOSE_PROJECT,
@@ -37,7 +38,7 @@ class SimulationParser:
 
     def __init__(
         self,
-        simulation_config: SimulationConfig,
+        simulation_config: SimulationInstanceConfig,
         trajectories: Trajectories,
         mqtt_connection: MQttConnectionInfo,
         parent_client: SimulationParentClient,
@@ -65,7 +66,7 @@ class SimulationParser:
             )
             compose_filename = _STANDALONE_COMPOSE_FILENAME
 
-        for agent_id, agent_config in self.simulation_config.simulated_agents.items():
+        for agent_id, vessel_config in self.simulation_config.vessels.items():
             vessel = trajectories.initial_scene.get_by_id(agent_id)
             if not isinstance(vessel, ConcreteVessel):
                 raise ValueError(f"Vessel {vessel} is not a ConcreteVessel.")
@@ -86,11 +87,12 @@ class SimulationParser:
 
             mission_waypoints = [waypoint_from_state(s, parent_client.reference_geofence) for s in path_states]
 
+            agent_config = vessel_config.require_connection()
             client = MqttAgentClient(
                 vessel=vessel,
                 mqtt_connection=mqtt_connection,
                 topic=agent_config.topic,
-                control_mode=agent_config.control_mode,
+                control_mode=arduagent_control_mode(vessel_config.stack.asv_software),
                 agent_name=agent_config.agent_name,
                 reference_geofence=parent_client.reference_geofence,
                 initial_state=state,

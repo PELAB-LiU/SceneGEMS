@@ -12,7 +12,7 @@ from scenegems_tool.gateway.protocol import make_simulation_models_body
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.messaging.mqtt_scenario_execution_service import SCENARIO_EXECUTION_SERVICE_TOPIC
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
-from scenegems_tool.vessel_stack.contracts.simulation_config import SimulationConfig
+from scenegems_tool.vessel_stack.contracts.vessel_stack_config import SimulationInstanceConfig
 from scenegems_tool.vessel_stack.simulation_docker_stack import (
     SIMULATION_COMPOSE_PROJECT,
     build_simulation_docker_stack_artifacts,
@@ -99,7 +99,7 @@ class ScenarioExecutionSubsystemContainer:
         self,
         mqtt_connection: MQttConnectionInfo,
         reference_geofence: Geofence,
-        simulation_config: SimulationConfig,
+        simulation_config: SimulationInstanceConfig,
         trajectories: Trajectories,
         time_step: int,
     ):
@@ -119,7 +119,7 @@ class ScenarioExecutionSubsystemContainer:
         self,
         mqtt_connection: MQttConnectionInfo,
         reference_geofence: Geofence,
-        simulation_config: SimulationConfig,
+        simulation_config: SimulationInstanceConfig,
         trajectories: Trajectories,
         time_step: int,
     ) -> None:
@@ -142,7 +142,7 @@ class ScenarioExecutionSubsystemContainer:
         self,
         mqtt_connection: MQttConnectionInfo,
         reference_geofence: Geofence,
-        simulation_config: SimulationConfig,
+        simulation_config: SimulationInstanceConfig,
         trajectories: Trajectories,
         time_step: int,
     ) -> None:
@@ -191,7 +191,7 @@ class ScenarioExecutionSubsystemContainer:
         stack_compose: dict,
         mqtt_connection: MQttConnectionInfo,
         reference_geofence: Geofence,
-        simulation_config: SimulationConfig,
+        simulation_config: SimulationInstanceConfig,
         time_step: int,
     ) -> dict:
         image = os.environ.get("SCENARIO_EXECUTION_IMAGE", DEFAULT_IMAGE)

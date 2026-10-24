@@ -15,7 +15,7 @@ from scenegems_tool.subsystems.scene_generation.scenario_generation_session impo
 from scenegems_tool.subsystems.trajectory_generation.trajectory_generation_session import TrajectoryGenerationSession
 from scenegems_tool.subsystems.trajectory_generation.trajectory_generation_types import TrajectoryGenerationParams
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
-from scenegems_tool.vessel_stack.contracts.simulation_config import SimulationConfig
+from scenegems_tool.vessel_stack.contracts.vessel_stack_config import SimulationInstanceConfig
 from scenegems_tool.workbench.scenario_session import ScenarioSession
 from scenegems_tool.workbench.subsystem_integration_session import SubsystemIntegrationSession
 
@@ -110,7 +110,7 @@ class LiveSubsystemIntegrationSession(SubsystemIntegrationSession):
         )
         self.simulation_session.set_monitor_session(self.monitor_session)
 
-    def set_simulation_session(self, scenario_session: ScenarioSession, simulation_config: SimulationConfig) -> None:
+    def set_simulation_session(self, scenario_session: ScenarioSession, simulation_config: SimulationInstanceConfig) -> None:
         previous = self.simulation_session
         self.simulation_session = LiveSimulationSession(
             scenario_session=scenario_session,

@@ -61,9 +61,19 @@ class SocketMessageProcessor:
                     case "reset_simulation":
                         asyncio.create_task(self._handle_reset_simulation())
                     case "initialize_simulation":
-                        self.session.set_simulation_session(simulation_config_from_body(message))
+                        try:
+                            simulation_config = simulation_config_from_body(message)
+                        except ValueError as exc:
+                            self.session.send_runtime_error(f"Invalid simulation configuration: {exc}")
+                        else:
+                            self.session.set_simulation_session(simulation_config)
                     case "generate_simulation_models":
-                        self.session.generate_simulation_models(simulation_config_from_body(message))
+                        try:
+                            simulation_config = simulation_config_from_body(message)
+                        except ValueError as exc:
+                            self.session.send_runtime_error(f"Invalid simulation configuration: {exc}")
+                        else:
+                            self.session.generate_simulation_models(simulation_config)
                     case "initialize_monitor":
                         self.session.set_monitor_session(message["name"], message["topic"], message["scope"], message["colregsConstraintsContent"])
                     case "shut_down_monitor":

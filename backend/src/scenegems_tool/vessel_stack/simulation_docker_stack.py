@@ -12,9 +12,11 @@ from concrete_level.models.concrete_actors import ConcreteVessel
 from concrete_level.models.trajectories import Trajectories
 from scenegems_tool.messaging.mqtt_agent_client import MqttAgentClient
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
+from scenegems_tool.vessel_stack.contracts.roles import SimulationLayerId
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
-from scenegems_tool.vessel_stack.contracts.simulation_config import SimulationConfig
+from scenegems_tool.vessel_stack.contracts.vessel_stack_config import SimulationInstanceConfig
 from scenegems_tool.vessel_stack.control_layers.ardupilot.ardu_param_generator import generate_ardu_params
+from scenegems_tool.vessel_stack.control_layers.ardupilot.arduagent_control_mode import arduagent_control_mode
 from scenegems_tool.vessel_stack.control_layers.ardupilot.vessel_service_generator import generate_vessel_service
 from scenegems_tool.vessel_stack.simulation_layers.gazebo.generators.gazebo_service_generator import generate_gazebo_service
 from scenegems_tool.vessel_stack.simulation_layers.gazebo.generators.vessel_model_generator import generate_vessel_model
@@ -27,7 +29,7 @@ _STANDALONE_COMPOSE_FILENAME = f"{SIMULATION_GEN_FOLDER}/docker-compose.yml"
 
 
 def build_simulation_docker_stack_artifacts(
-    simulation_config: SimulationConfig,
+    simulation_config: SimulationInstanceConfig,
     trajectories: Trajectories,
     mqtt_connection: MQttConnectionInfo,
     reference_geofence: Geofence,
@@ -39,20 +41,23 @@ def build_simulation_docker_stack_artifacts(
     vessel_includes: List[Tuple[str, ActorState]] = []
     pending_writes: List[Tuple[str, str]] = []
 
-    for agent_id, agent_config in simulation_config.simulated_agents.items():
+    environment = simulation_config.environment
+    is_ardupilot_sim = simulation_config.simulation_layer == SimulationLayerId.ARDUPILOT_SIM
+    for agent_id, vessel_config in simulation_config.vessels.items():
         vessel = trajectories.initial_scene.get_by_id(agent_id)
         if not isinstance(vessel, ConcreteVessel):
             raise ValueError(f"Vessel {vessel} is not a ConcreteVessel.")
 
         state = trajectories.initial_scene[vessel]
-        if agent_config.context != "simulation":
+        if not vessel_config.is_simulated:
             continue
 
+        agent_config = vessel_config.require_connection()
         agent_stub = MqttAgentClient(
             vessel=vessel,
             mqtt_connection=mqtt_connection,
             topic=agent_config.topic,
-            control_mode=agent_config.control_mode,
+            control_mode=arduagent_control_mode(vessel_config.stack.asv_software),
             agent_name=agent_config.agent_name,
             reference_geofence=reference_geofence,
             initial_state=state,
@@ -60,8 +65,8 @@ def build_simulation_docker_stack_artifacts(
             mission_waypoints=[],
         )
 
-        if agent_config.gazebo_vessel_model is not None:
-            vessel_model = agent_config.gazebo_vessel_model
+        if vessel_config.gazebo_vessel_model is not None:
+            vessel_model = vessel_config.gazebo_vessel_model
         else:
             vessel_model = generate_vessel_model(vessel, agent_config.agent_name)
         vessel_model_filename = f"{agent_config.agent_name}_model.sdf"
@@ -72,8 +77,8 @@ def build_simulation_docker_stack_artifacts(
         ardu_params = generate_ardu_params(
             vessel,
             trajectories.get_max_speed(vessel),
-            simulation_config.wind_vector,
-            simulation_config.wave,
+            environment.wind_vector,
+            environment.wave,
         )
         params_file = f"{SIMULATION_GEN_FOLDER}/params-{agent_config.agent_name}.params"
         lines = []
@@ -86,8 +91,8 @@ def build_simulation_docker_stack_artifacts(
                 agent_stub,
                 agent_config.port,
                 params_file,
-                simulation_config.simulation_speed,
-                simulation_config.is_ardupilot_sim,
+                simulation_config.speedup,
+                is_ardupilot_sim,
             )
         )
 
@@ -96,9 +101,9 @@ def build_simulation_docker_stack_artifacts(
     world_model = generate_world(
         lat_long,
         vessel_includes,
-        simulation_config.wind_vector,
-        simulation_config.wave,
-        simulation_config.simulation_speed,
+        environment.wind_vector,
+        environment.wave,
+        simulation_config.speedup,
         headless=headless,
     )
     world_file = f"{SIMULATION_GEN_FOLDER}/ocean_world.sdf"
@@ -106,10 +111,10 @@ def build_simulation_docker_stack_artifacts(
     trajectories_file = f"{SIMULATION_GEN_FOLDER}/trajectories.json"
     pending_writes.append((trajectories_file, json.dumps(trajectories.to_dict())))
 
-    if simulation_config.is_gazebo_sim:
+    if simulation_config.simulation_layer == SimulationLayerId.GAZEBO:
         gazebo_service = generate_gazebo_service(
             world_file,
-            [agent_config.agent_name for agent_config in simulation_config.simulated_agents.values()],
+            [vessel_config.require_connection().agent_name for vessel_config in simulation_config.vessels.values()],
             headless=headless,
             display="host.docker.internal:0.0",
             verbose=4,

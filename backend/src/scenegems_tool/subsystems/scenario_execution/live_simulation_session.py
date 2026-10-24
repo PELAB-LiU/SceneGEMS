@@ -20,7 +20,7 @@ from scenegems_tool.subsystems.scenario_execution.scenario_execution_subsystem_c
 )
 from scenegems_tool.subsystems.scenario_execution.simulation_session import SimulationSession
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
-from scenegems_tool.vessel_stack.contracts.simulation_config import SimulationConfig
+from scenegems_tool.vessel_stack.contracts.vessel_stack_config import SimulationInstanceConfig
 from scenegems_tool.workbench.scenario_session import ScenarioSession
 from utils.global_constants import ONE_SECOND
 
@@ -38,7 +38,7 @@ class LiveSimulationSession(SimulationSession):
 
     def __init__(
         self,
-        simulation_config: SimulationConfig,
+        simulation_config: SimulationInstanceConfig,
         trajectories: Trajectories,
         scenario_session: ScenarioSession,
         mqtt_connection: MQttConnectionInfo,

@@ -17,7 +17,7 @@ from scenegems_tool.gateway.protocol import SimulationStatus, simulation_config_
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.messaging.mqtt_scenario_execution_service import MqttScenarioExecutionService, MqttStartSimulationTask
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
-from scenegems_tool.vessel_stack.contracts.simulation_config import SimulationConfig
+from scenegems_tool.vessel_stack.contracts.vessel_stack_config import SimulationInstanceConfig
 from scenegems_tool.vessel_stack.simulation_parser import SimulationParser
 from utils.global_constants import MAX_DISTANCE, ONE_SECOND
 from utils.math_utils import rotate_heading as rotate_heading_util
@@ -40,7 +40,7 @@ class ScenarioExecutionWorker:
         self,
         mqtt_connection: MQttConnectionInfo,
         reference_geofence: Geofence,
-        simulation_config: SimulationConfig,
+        simulation_config: SimulationInstanceConfig,
         trajectories: Trajectories,
         time_step: int,
     ):
@@ -189,7 +189,7 @@ class ScenarioExecutionWorker:
         self._running_simulation_clock = 0.0
         self._sync_agent_clocks(0.0)
         self._publish_simulation_state()
-        tick_interval = float(self.time_step) / max(1, self.simulation_config.simulation_speed)
+        tick_interval = float(self.time_step) / max(1, self.simulation_config.speedup)
         next_emit_at = time.monotonic() + tick_interval
         while not self._stop_event.is_set():
             if not self.simulation_parser.are_agents_running:

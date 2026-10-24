@@ -12,7 +12,8 @@ from typing import Any, Dict, List, Literal, NotRequired, Optional, Required, Ty
 
 import numpy as np
 
-from scenegems_tool.vessel_stack.contracts.simulation_config import SimulatedAgentConfig, SimulationConfig, WaveConfig
+from scenegems_tool.gateway.workbench_stack_mapping import control_mode_label, simulation_layer_from_simulator_type, simulator_type_label, workbench_stack
+from scenegems_tool.vessel_stack.contracts.vessel_stack_config import AgentConnection, AgentContext, EnvironmentConfig, SimulationInstanceConfig, VesselConfig, WaveConfig
 
 
 class LoadScenarioFileMessage(TypedDict):
@@ -329,31 +330,41 @@ def _parse_agent_port(connection: SimulationConnectionInfo) -> Optional[int]:
     return int(raw_port)
 
 
-def simulation_config_from_body(body: SimulationModelsBody) -> SimulationConfig:
+def _parse_agent_context(connection: SimulationConnectionInfo) -> AgentContext:
+    try:
+        return AgentContext(connection["context"])
+    except ValueError:
+        raise ValueError(f"Unknown agent context '{connection['context']}'; expected one of {', '.join(context.value for context in AgentContext)}.") from None
+
+
+def simulation_config_from_body(body: SimulationModelsBody) -> SimulationInstanceConfig:
     """Convert an inbound simulation-models body (initialize_simulation /
-    generate_simulation_models / simulation_models) into a domain SimulationConfig."""
+    generate_simulation_models / simulation_models) into a typed simulation instance.
+    simulatorType and each agent's controlMode become one stack triple per vessel
+    (see gateway.workbench_stack_mapping)."""
     wave = body["wave"]
     wind_vector = list(body["windVector"])
     if len(wind_vector) != 3:
         raise ValueError(f"windVector must have 3 components [east, north, up]; got {len(wind_vector)}.")
-    return SimulationConfig(
-        simulator_type=body["simulatorType"],
-        wind_vector=np.array(wind_vector, dtype=float),
-        wave=WaveConfig(
-            amplitude=float(wave["amplitude"]),
-            period=float(wave["period"]),
-            steepness=float(wave["steepness"]),
-            direction=np.array(wave["direction"]),
+    simulator_type = body["simulatorType"]
+    return SimulationInstanceConfig(
+        simulation_layer=simulation_layer_from_simulator_type(simulator_type),
+        environment=EnvironmentConfig(
+            wind_vector=np.array(wind_vector, dtype=float),
+            wave=WaveConfig(
+                amplitude=float(wave["amplitude"]),
+                period=float(wave["period"]),
+                steepness=float(wave["steepness"]),
+                direction=np.array(wave["direction"]),
+            ),
         ),
-        simulation_speed=int(body.get("simulationSpeed", 1)),
-        simulated_agents={
-            agent_id: SimulatedAgentConfig(
+        speedup=int(body.get("simulationSpeed", 1)),
+        vessels={
+            agent_id: VesselConfig(
                 agent_id=agent_id,
-                context=connection["context"],
-                control_mode=connection["controlMode"],
-                agent_name=connection["agentName"],
-                topic=connection["topic"],
-                port=_parse_agent_port(connection),
+                stack=workbench_stack(simulator_type, connection["controlMode"]),
+                context=_parse_agent_context(connection),
+                connection=AgentConnection(agent_name=connection["agentName"], topic=connection["topic"], port=_parse_agent_port(connection)),
                 gazebo_vessel_model=connection.get("gazeboVesselModel", None),
             )
             for agent_id, connection in body["connectionsByAgentId"].items()
@@ -361,33 +372,34 @@ def simulation_config_from_body(body: SimulationModelsBody) -> SimulationConfig:
     )
 
 
-def make_simulation_models_body(config: SimulationConfig) -> SimulationModelsBody:
-    """Convert a domain SimulationConfig into the wire simulation-models body."""
+def make_simulation_models_body(config: SimulationInstanceConfig) -> SimulationModelsBody:
+    """Convert a typed simulation instance into the wire simulation-models body."""
+    environment = config.environment
     return SimulationModelsBody(
-        simulatorType=config.simulator_type,
-        windVector=[float(component) for component in config.wind_vector],
+        simulatorType=simulator_type_label(config.simulation_layer),
+        windVector=[float(component) for component in environment.wind_vector],
         wave=WaveInfo(
-            amplitude=config.wave.amplitude,
-            period=config.wave.period,
-            steepness=config.wave.steepness,
-            direction=[float(component) for component in config.wave.direction],
+            amplitude=environment.wave.amplitude,
+            period=environment.wave.period,
+            steepness=environment.wave.steepness,
+            direction=[float(component) for component in environment.wave.direction],
         ),
-        simulationSpeed=int(config.simulation_speed),
+        simulationSpeed=int(config.speedup),
         connectionsByAgentId={
             agent_id: SimulationConnectionInfo(
-                context=agent.context,
-                controlMode=agent.control_mode,
-                agentName=agent.agent_name,
-                topic=agent.topic,
-                port=agent.port,
-                gazeboVesselModel=agent.gazebo_vessel_model,
+                context=vessel.context.value,
+                controlMode=control_mode_label(vessel.stack.asv_software),
+                agentName=vessel.require_connection().agent_name,
+                topic=vessel.require_connection().topic,
+                port=vessel.require_connection().port,
+                gazeboVesselModel=vessel.gazebo_vessel_model,
             )
-            for agent_id, agent in config.simulated_agents.items()
+            for agent_id, vessel in config.vessels.items()
         },
     )
 
 
-def make_simulation_models_message(config: SimulationConfig) -> SimulationModelsMessage:
+def make_simulation_models_message(config: SimulationInstanceConfig) -> SimulationModelsMessage:
     body = make_simulation_models_body(config)
     return SimulationModelsMessage(type="simulation_models", **body)
 

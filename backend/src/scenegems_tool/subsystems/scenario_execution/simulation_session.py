@@ -7,7 +7,7 @@ from concrete_level.models.concrete_actors import ConcreteVessel
 from concrete_level.models.concrete_scene import ConcreteScene
 from scenegems_tool.gateway.protocol import ServerMessage, SimulationStatus, make_simulation_models_message, make_simulation_status_message
 from scenegems_tool.subsystems.monitoring.monitor_session import MonitorSession
-from scenegems_tool.vessel_stack.contracts.simulation_config import SimulationConfig
+from scenegems_tool.vessel_stack.contracts.vessel_stack_config import SimulationInstanceConfig
 from scenegems_tool.vessel_stack.simulation_layers.gazebo.generators.vessel_model_generator import generate_vessel_model
 
 
@@ -91,15 +91,15 @@ class SimulationSession(ABC):
     def start_simulation_runtime(self) -> None:
         pass
 
-    def generate_vessel_models(self, scene: ConcreteScene, simulation_config: SimulationConfig) -> None:
-        for agent_config in simulation_config.simulated_agents.values():
-            if agent_config.gazebo_vessel_model is not None or agent_config.context != "simulation":
+    def generate_vessel_models(self, scene: ConcreteScene, simulation_config: SimulationInstanceConfig) -> None:
+        for vessel_config in simulation_config.vessels.values():
+            if vessel_config.gazebo_vessel_model is not None or not vessel_config.is_simulated:
                 continue
-            vessel = scene.get_by_id(agent_config.agent_id)
+            vessel = scene.get_by_id(vessel_config.agent_id)
             if not isinstance(vessel, ConcreteVessel):
                 continue
-            vessel_model = generate_vessel_model(vessel, agent_config.agent_name)
-            agent_config.gazebo_vessel_model = vessel_model
+            vessel_model = generate_vessel_model(vessel, vessel_config.require_connection().agent_name)
+            vessel_config.gazebo_vessel_model = vessel_model
 
         message = make_simulation_models_message(simulation_config)
         self.send_payload(message)
