@@ -6,6 +6,10 @@ wall clock: every streamed message carries SITL's own time (time_boot_ms), and t
 runner (mavlink_lockstep_runner.py) acts when that time crosses a simulation-time step
 boundary. Wall time is used only for connection, readiness and step timeouts.
 
+The vessel is armed in HOLD and switched to GUIDED with its first command. An armed boat
+in GUIDED without a target loiters, and with the generated hull parameters loiter spins it
+around its start point, so every repeat would start from a different state (WP4 finding).
+
 SITL keeps running while a command travels to it, so a command takes effect a few wall
 milliseconds, times the speedup, after its boundary. Stepping on SITL time removes the
 dependence on a wall-clock timer in SceneGEMS, not that latency (design doc 12.8).
@@ -23,13 +27,16 @@ from pymavlink import mavutil
 from concrete_level.models.actor_state import ActorState
 from scenegems_tool.vessel_stack.contracts.ports import HeadingSpeedCommand
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence, from_true_north, to_true_north
+from utils.math_utils import heading_diff, rotate_heading
 
+ROVER_HOLD_MODE = 4  # Rover custom_mode of HOLD: throttle and steering exactly 0
 ROVER_GUIDED_MODE = 15  # Rover custom_mode of GUIDED
 # Early-boot heartbeats can report armed and mode 15 before ArduPilot is usable (Phase 0), so
 # readiness is this EKF message, and arming state is read only from later heartbeats.
 EKF_READY_TEXT = "EKF3 IMU0 is using GPS"
 SITL_SERIAL0_BASE_PORT = 5760  # SITL instance i listens on 5760 + 10 * i and boots only after a client connects
 GCS_SYSTEM_ID = 245
+GUIDED_TARGET_TIMEOUT_S = 3.0  # Rover drops a GUIDED target older than this, so commands must come faster
 _FORCE_ARM_MAGIC = 21196  # arming checks are covered by the EKF gate; a SITL boat fails some RC checks
 _RETRY_INTERVAL_MS = 2000  # in SITL time
 _UNKNOWN_HEADING = 65535
@@ -81,8 +88,10 @@ class MavlinkLink:
         self._armed = False
         self._custom_mode: Optional[int] = None
         self._cursor = 0
+        self._last_attempt_ms: Optional[int] = None
+        self._guided_requested = False
 
-    # Connection and readiness
+    # Connection, readiness and arming
 
     def connect(self, timeout_s: float = 300.0) -> None:
         """Connect and wait for the first heartbeat. SITL may still be starting, so connection errors are retried."""
@@ -118,29 +127,46 @@ class MavlinkLink:
         # Parameters loaded during boot can reset the stream rates, so ask again now.
         self._request_streams()
 
-    def engage_guided(self, timeout_s: float = 300.0) -> int:
-        """Set GUIDED and arm, retrying every 2 s of SITL time, and return the SITL time when both are confirmed."""
+    def engage(self, timeout_s: float = 300.0) -> int:
+        """Arm in HOLD and return the SITL time when confirmed. The first command switches to GUIDED."""
+        self.begin_engagement()
+        deadline = time.monotonic() + timeout_s
+        while not self.advance_engagement():
+            if time.monotonic() > deadline:
+                raise MavlinkLinkError(f"{self.endpoint}: not armed in HOLD within {timeout_s:g} s (armed={self._armed}, mode={self._custom_mode})")
+            self.poll(0.5)
+        return int(self.engaged_boot_ms or 0)
+
+    def begin_engagement(self) -> None:
         if not self._ekf_ready:
-            raise MavlinkLinkError(f"{self.endpoint}: engage_guided before the EKF is ready")
+            raise MavlinkLinkError(f"{self.endpoint}: engagement before the EKF is ready")
         # Forget the arming state of early heartbeats; only heartbeats from now on count.
         self._armed = False
         self._custom_mode = None
-        deadline = time.monotonic() + timeout_s
-        last_attempt_ms: Optional[int] = None
-        while not (self._armed and self._custom_mode == ROVER_GUIDED_MODE):
-            if time.monotonic() > deadline:
-                raise MavlinkLinkError(f"{self.endpoint}: not armed in GUIDED within {timeout_s:g} s (armed={self._armed}, mode={self._custom_mode})")
-            now_ms = self._boot_ms or 0
-            if last_attempt_ms is None or now_ms - last_attempt_ms >= _RETRY_INTERVAL_MS:
-                last_attempt_ms = now_ms
-                target_system, target_component = self._connection.target_system, self._connection.target_component
-                if self._custom_mode != ROVER_GUIDED_MODE:
-                    self._connection.mav.set_mode_send(target_system, mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, ROVER_GUIDED_MODE)
-                else:
-                    self._connection.mav.command_long_send(target_system, target_component, mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0, 1, _FORCE_ARM_MAGIC, 0, 0, 0, 0, 0)
-            self.poll(0.5)
-        self.engaged_boot_ms = self._boot_ms
-        return int(self._boot_ms or 0)
+        self._last_attempt_ms = None
+        self._guided_requested = False
+        self.engaged_boot_ms = None
+
+    def advance_engagement(self) -> bool:
+        """One non-blocking step toward armed in HOLD, retried every 2 s of SITL time. True once engaged."""
+        now_ms = self._boot_ms or 0
+        if self._armed and self._custom_mode == ROVER_HOLD_MODE:
+            if self.engaged_boot_ms is None:
+                self.engaged_boot_ms = now_ms
+            return True
+        if self._last_attempt_ms is None or now_ms - self._last_attempt_ms >= _RETRY_INTERVAL_MS:
+            self._last_attempt_ms = now_ms
+            connection = self._require_connection()
+            if self._custom_mode != ROVER_HOLD_MODE:
+                connection.mav.set_mode_send(connection.target_system, mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, ROVER_HOLD_MODE)
+            else:
+                connection.mav.command_long_send(connection.target_system, connection.target_component, mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0, 1, _FORCE_ARM_MAGIC, 0, 0, 0, 0, 0)
+        return False
+
+    @property
+    def in_guided(self) -> bool:
+        """The latest heartbeat reports armed in GUIDED."""
+        return self._armed and self._custom_mode == ROVER_GUIDED_MODE
 
     # Simulated time and states
 
@@ -183,12 +209,42 @@ class MavlinkLink:
             self._cursor += 1
         return self.samples[self._cursor] if self._cursor < len(self.samples) else None
 
+    def state_at(self, boot_ms: int) -> Optional[StampedState]:
+        """The state at exactly boot_ms, interpolated between the samples around it, or None until a later sample arrived.
+
+        Samples come every second scheduler loop, in a phase set by when ArduPilot handled the
+        stream request, which is wall-timed. Interpolating to the boundary leaves only the
+        curvature within one sample interval of that phase in the observation.
+        """
+        after = self.first_sample_at(boot_ms)
+        if after is None:
+            return None
+        if after.boot_ms == boot_ms or self._cursor == 0:
+            return StampedState(boot_ms=boot_ms, state=after.state)
+        before = self.samples[self._cursor - 1]
+        fraction = (boot_ms - before.boot_ms) / (after.boot_ms - before.boot_ms)
+        a, b = before.state, after.state
+        state = ActorState(
+            x=a.x + (b.x - a.x) * fraction,
+            y=a.y + (b.y - a.y) * fraction,
+            speed=a.speed + (b.speed - a.speed) * fraction,
+            heading=rotate_heading(a.heading, heading_diff(b.heading, a.heading) * fraction),
+        )
+        return StampedState(boot_ms=boot_ms, state=state)
+
     # Commands
 
     def send_heading_speed(self, command: HeadingSpeedCommand, boot_ms: int = 0) -> None:
-        """GUIDED heading and speed target. Heading is in the SceneGEMS local frame (radians, counterclockwise from east)."""
-        yaw = _wrap_pi(to_true_north(command.heading))
+        """GUIDED heading and speed target. Heading is in the SceneGEMS local frame (radians, counterclockwise from east).
+
+        The first target is preceded by the switch from HOLD to GUIDED, on the same stream, so
+        ArduPilot handles both in order.
+        """
         connection = self._require_connection()
+        if not self._guided_requested:
+            connection.mav.set_mode_send(connection.target_system, mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, ROVER_GUIDED_MODE)
+            self._guided_requested = True
+        yaw = _wrap_pi(to_true_north(command.heading))
         connection.mav.set_position_target_local_ned_send(
             int(boot_ms) & 0xFFFFFFFF,
             connection.target_system,
@@ -210,8 +266,11 @@ class MavlinkLink:
 
     def send_position_target(self, position_xy: Tuple[float, float], boot_ms: int = 0) -> None:
         """GUIDED position target in the local frame; ArduPilot drives there at its waypoint speed."""
-        latitude, longitude = self.reference_geofence.to_lat_long((float(position_xy[0]), float(position_xy[1])))
         connection = self._require_connection()
+        if not self._guided_requested:
+            connection.mav.set_mode_send(connection.target_system, mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, ROVER_GUIDED_MODE)
+            self._guided_requested = True
+        latitude, longitude = self.reference_geofence.to_lat_long((float(position_xy[0]), float(position_xy[1])))
         connection.mav.set_position_target_global_int_send(
             int(boot_ms) & 0xFFFFFFFF,
             connection.target_system,

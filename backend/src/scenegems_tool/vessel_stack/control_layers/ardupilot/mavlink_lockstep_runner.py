@@ -2,9 +2,9 @@
 
 Every vessel has a MavlinkLink to its SITL instance and an in-process participant (the
 ReplayFollower for replay). The runner keeps the step index in a LockstepClock and acts on
-step k once every vessel's SITL time has reached its boundary: the observation is the first
-state sample at or after the boundary, each participant computes its command, acknowledges
-the step, and the command is sent. Which sample is observed depends only on SITL time.
+step k once every vessel's SITL time has reached its boundary: the observation is the state
+interpolated to the boundary between the samples around it (MavlinkLink.state_at), each
+participant computes its command, acknowledges the step, and the command is sent.
 
 SITL is free-running, so the acknowledgement does not hold the physics: a command arrives a
 wall-clock latency (times the speedup) after its boundary. That is why the tier is bounded.
@@ -29,12 +29,13 @@ from scenegems_tool.vessel_stack.contracts.ports import HeadingSpeedCommand, Ves
 from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, SimulationLayerId
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import AgentConnection, EnvironmentConfig, SimulationInstanceConfig, VesselConfig, VesselStackConfig
-from scenegems_tool.vessel_stack.control_layers.ardupilot.mavlink_link import MavlinkLink, MavlinkLinkError, StampedState, sitl_mavlink_endpoint
+from scenegems_tool.vessel_stack.control_layers.ardupilot.mavlink_link import GUIDED_TARGET_TIMEOUT_S, MavlinkLink, MavlinkLinkError, StampedState, sitl_mavlink_endpoint
 from scenegems_tool.vessel_stack.registry.catalog import default_resolver
 from scenegems_tool.vessel_stack.registry.resolver import StackResolver, StackUnavailableError
 
 START_QUANTUM_S = 5.0  # scenario time 0 is put on a multiple of this SITL time, so repeats share it
 START_MARGIN_S = 1.0  # at least this much SITL time between arming and scenario time 0
+GUIDED_CHECK_MS = 2500  # scenario time by which every vessel must report GUIDED
 
 
 @dataclass(frozen=True)
@@ -79,9 +80,9 @@ def run_mavlink_lockstep(
     ready_timeout_s: float = 600.0,
     step_timeout_s: float = 120.0,
 ) -> MavlinkRunResult:
-    """Connect, wait for readiness, arm in GUIDED, then run `steps` steps of dt seconds of SITL time.
+    """Connect, wait for readiness, arm in HOLD, then run `steps` steps of dt seconds of SITL time.
 
-    links, participants and vessels are keyed by vessel id. Scenario time 0 is start_boot_s of
+    The first command of each vessel switches it to GUIDED. links, participants and vessels are keyed by vessel id. Scenario time 0 is start_boot_s of
     SITL time on the lowest vessel id when given, else the first multiple of START_QUANTUM_S
     at least START_MARGIN_S after every vessel is armed; the other vessels start at the same
     instant of their own SITL clock as measured at that moment.
@@ -95,12 +96,11 @@ def run_mavlink_lockstep(
         participant = participants[vessel_id]
         seeds[participant.participant_id] = derive_seed(run_seed, participant.participant_id)
         participant.start(seeds[participant.participant_id])
+    dt_ms = int(round(dt * 1000))
+    if dt_ms <= 0 or abs(dt_ms - dt * 1000) > 1e-6 or dt >= GUIDED_TARGET_TIMEOUT_S:
+        raise ValueError(f"dt must be a whole number of milliseconds below Rover's {GUIDED_TARGET_TIMEOUT_S:g} s GUIDED target timeout, got {dt}")
     _engage(links, vessel_ids, ready_timeout_s)
     epochs = _epochs(links, vessel_ids, start_boot_s)
-
-    dt_ms = int(round(dt * 1000))
-    if dt_ms <= 0 or abs(dt_ms - dt * 1000) > 1e-6:
-        raise ValueError(f"dt must be a positive whole number of milliseconds, got {dt}")
     recorded: List[Tuple[StampedState, ...]] = []
     wall_start: Optional[float] = None
     for index in range(steps + 1):
@@ -108,6 +108,11 @@ def run_mavlink_lockstep(
         observed = _wait_for_boundaries(links, boundaries, step_timeout_s)
         if wall_start is None:
             wall_start = time.monotonic()
+        if index * dt_ms >= GUIDED_CHECK_MS and index * dt_ms < GUIDED_CHECK_MS + dt_ms:
+            # Heartbeats come once a second, so two seconds after the first command every vessel must report GUIDED.
+            not_guided = [vessel_id for vessel_id in vessel_ids if not links[vessel_id].in_guided]
+            if not_guided:
+                raise MavlinkLinkError(f"vessels {not_guided} did not switch from HOLD to GUIDED with their first command")
         recorded.append(tuple(observed[vessel_id] for vessel_id in vessel_ids))
         if index == steps:
             break
@@ -225,12 +230,18 @@ def run_mavlink_replay(
 
 
 def _engage(links: Mapping[int, MavlinkLink], vessel_ids: Tuple[int, ...], timeout_s: float) -> None:
+    """Connect, wait for readiness and arm every vessel in HOLD."""
     # SITL boots only once its SERIAL0 client connects, so connect every vessel before waiting on any.
     for vessel_id in vessel_ids:
         links[vessel_id].connect(timeout_s)
     for vessel_id in vessel_ids:
         links[vessel_id].wait_until_ready(timeout_s)
-        links[vessel_id].engage_guided(timeout_s)
+        links[vessel_id].begin_engagement()
+    deadline = time.monotonic() + timeout_s
+    while not all([links[vessel_id].advance_engagement() for vessel_id in vessel_ids]):
+        if time.monotonic() > deadline:
+            raise MavlinkLinkError(f"vessels {[vessel_id for vessel_id in vessel_ids if links[vessel_id].engaged_boot_ms is None]} not armed in HOLD within {timeout_s:g} s")
+        _read_available(links, vessel_ids, 0.5)
 
 
 def _step_commands(
@@ -271,6 +282,15 @@ def _epochs(links: Mapping[int, MavlinkLink], vessel_ids: Iterable[int], start_b
     return {vessel_id: reference_epoch + now[vessel_id] - now[reference] for vessel_id in vessel_ids}
 
 
+def _read_available(links: Mapping[int, MavlinkLink], vessel_ids: Iterable[int], timeout_s: float) -> None:
+    """Wait up to timeout_s until a link has data, then handle what every readable link received."""
+    vessel_ids = tuple(vessel_ids)
+    readable, _, _ = select.select([links[vessel_id].fileno() for vessel_id in vessel_ids], [], [], timeout_s)
+    for vessel_id in vessel_ids:
+        if links[vessel_id].fileno() in readable:
+            links[vessel_id].drain()
+
+
 def _wait_for_boundaries(links: Mapping[int, MavlinkLink], boundaries: Mapping[int, int], timeout_s: float) -> Dict[int, StampedState]:
     """Read every link until each has a sample at or after its boundary."""
     deadline = time.monotonic() + timeout_s
@@ -278,7 +298,7 @@ def _wait_for_boundaries(links: Mapping[int, MavlinkLink], boundaries: Mapping[i
     while True:
         for vessel_id, boundary in boundaries.items():
             if vessel_id not in observed:
-                sample = links[vessel_id].first_sample_at(boundary)
+                sample = links[vessel_id].state_at(boundary)
                 if sample is not None:
                     observed[vessel_id] = sample
         pending = [vessel_id for vessel_id in boundaries if vessel_id not in observed]
@@ -287,7 +307,4 @@ def _wait_for_boundaries(links: Mapping[int, MavlinkLink], boundaries: Mapping[i
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise MavlinkLinkError(f"no state at SITL times {[boundaries[vessel_id] for vessel_id in pending]} ms from vessels {pending} within {timeout_s:g} s")
-        readable, _, _ = select.select([links[vessel_id].fileno() for vessel_id in pending], [], [], min(remaining, 1.0))
-        for vessel_id in pending:
-            if links[vessel_id].fileno() in readable:
-                links[vessel_id].drain()
+        _read_available(links, pending, min(remaining, 1.0))
