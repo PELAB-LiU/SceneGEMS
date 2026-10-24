@@ -2,7 +2,7 @@ from typing import Any, Callable, Dict, Sequence
 
 from concrete_level.models.concrete_scene import ConcreteScene
 from scenegems_tool.gateway.protocol import ServerMessage
-from scenegems_tool.monitoring.monitor_session import MonitorSession
+from scenegems_tool.subsystems.monitoring.monitor_session import MonitorSession
 
 
 class EmptyMonitorSession(MonitorSession):

@@ -3,8 +3,8 @@ from typing import Callable
 
 from scenegems_tool.gateway.protocol import ServerMessage
 from scenegems_tool.workbench.scenario_session import ScenarioSession
-from scenegems_tool.monitoring.empty_monitor_session import EmptyMonitorSession
-from scenegems_tool.monitoring.monitor_session import MonitorSession
+from scenegems_tool.subsystems.monitoring.empty_monitor_session import EmptyMonitorSession
+from scenegems_tool.subsystems.monitoring.monitor_session import MonitorSession
 from scenegems_tool.simulators.empty_simulation_session import EmptySimulationSession
 from scenegems_tool.simulators.simulation_config import SimulationConfig
 from scenegems_tool.simulators.simulation_session import SimulationSession

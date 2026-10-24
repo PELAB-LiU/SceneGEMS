@@ -1,6 +1,6 @@
 from typing import Callable
 from concrete_level.models.trajectories import Trajectories
-from scenegems_tool.monitoring.monitor_session import MonitorSession
+from scenegems_tool.subsystems.monitoring.monitor_session import MonitorSession
 from scenegems_tool.gateway.protocol import ServerMessage
 from scenegems_tool.workbench.scenario_session import ScenarioSession
 

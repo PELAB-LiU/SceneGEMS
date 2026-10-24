@@ -12,7 +12,7 @@ from scenegems_tool.gateway.protocol import (
     make_simulation_status_message,
 )
 from scenegems_tool.workbench.scenario_session import ScenarioSession
-from scenegems_tool.monitoring.monitor_session import MonitorSession, iter_scene_batches
+from scenegems_tool.subsystems.monitoring.monitor_session import MonitorSession, iter_scene_batches
 from scenegems_tool.simulators.scenario_execution_subsystem_container import (
     ScenarioExecutionSubsystemContainer,
 )

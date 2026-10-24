@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from typing import Callable, Optional
 
 from concrete_level.models.trajectories import Trajectories
-from scenegems_tool.monitoring.monitor_session import MonitorSession
+from scenegems_tool.subsystems.monitoring.monitor_session import MonitorSession
 from scenegems_tool.gateway.protocol import ServerMessage
 
 

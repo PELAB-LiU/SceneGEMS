@@ -7,7 +7,7 @@ from concrete_level.models.concrete_scene import ConcreteScene
 from functional_level.models.model_parser import ModelParser
 from scenegems_tool.gateway.protocol import ServerMessage, make_error_message
 from scenegems_tool.workbench.scenario_session import ScenarioSession
-from scenegems_tool.monitoring.live_monitor_session import LiveMonitorSession
+from scenegems_tool.subsystems.monitoring.live_monitor_session import LiveMonitorSession
 from scenegems_tool.subsystems.scene_generation.scenario_generation_session import ScenarioGenerationSession
 from scenegems_tool.simulators.live_simulation_session import LiveSimulationSession
 from scenegems_tool.simulators.simulation_config import SimulationConfig

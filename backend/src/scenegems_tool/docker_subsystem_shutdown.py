@@ -69,7 +69,7 @@ def shutdown_all_docker_subsystems() -> None:
         _shutdown_done = True
 
     try:
-        from scenegems_tool.monitoring.monitor_subsystem_container import (
+        from scenegems_tool.subsystems.monitoring.monitor_subsystem_container import (
             force_destroy_monitor_subsystem_stack,
         )
         from scenegems_tool.subsystems.scene_generation.scenario_generation_container import (
