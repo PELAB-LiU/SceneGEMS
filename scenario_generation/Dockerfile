@@ -18,4 +18,4 @@ COPY backend/src ./src
 COPY backend/assets/runtime_assets/scenario_generation ./assets/runtime_assets/scenario_generation
 RUN pip install --no-cache-dir --no-deps -e .
 
-CMD ["python", "-m", "scenegems_tool.scenario_generation.scenario_generation_service_main"]
+CMD ["python", "-m", "scenegems_tool.subsystems.scene_generation.scenario_generation_service_main"]

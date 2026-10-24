@@ -16,4 +16,4 @@ COPY backend/src ./src
 COPY backend/assets/domain_config ./assets/domain_config
 RUN pip install --no-cache-dir --no-deps -e .
 
-CMD ["python", "-m", "scenegems_tool.trajectory_generation.trajectory_generation_service_main"]
+CMD ["python", "-m", "scenegems_tool.subsystems.trajectory_generation.trajectory_generation_service_main"]
