@@ -114,6 +114,19 @@ UNSUPPORTED_CONNECTIONS = (
 )
 
 
+# Runtime loaders import on first use, so resolving a stack stays free of the code that runs it.
+def _kinematic_simulation():
+    from scenegems_tool.vessel_stack.simulation_layers.kinematic.kinematic_simulation import KinematicSimulation
+
+    return KinematicSimulation
+
+
+def _replay_follower():
+    from scenegems_tool.vessel_stack.asv_software.replay.replay_follower import ReplayFollower
+
+    return ReplayFollower
+
+
 def build_registry(measurements: Optional[Mapping[str, CapabilityMeasurement]] = None) -> AdapterRegistry:
     registry = AdapterRegistry(load_capability_measurements() if measurements is None else measurements)
 
@@ -123,11 +136,11 @@ def build_registry(measurements: Optional[Mapping[str, CapabilityMeasurement]] =
     registry.register_layer(ARDUPILOT_CONTROL_LAYER)
     registry.register_layer(CUSTOM_CONTROL_LAYER)
     registry.register_layer(NONE_CONTROL_LAYER)
-    registry.register_layer(KINEMATIC_LAYER)
+    registry.register_layer(KINEMATIC_LAYER, runtime=_kinematic_simulation)
     registry.register_layer(GAZEBO_LAYER)
     registry.register_layer(ARDUPILOT_SIM_LAYER)
 
-    registry.register_adapter(REPLAY_STATE_FOLLOWER)
+    registry.register_adapter(REPLAY_STATE_FOLLOWER, runtime=_replay_follower)
     registry.register_adapter(REPLAY_ARDUAGENT_FOLLOWER)
     registry.register_adapter(MISSION_PLANNER_MAVLINK_PORT)
     registry.register_adapter(KINEMATIC_COMMAND_INPUT)
