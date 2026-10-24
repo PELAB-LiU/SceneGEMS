@@ -16,7 +16,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from scenegems_tool.gateway.protocol import make_waraps_status_message
 from scenegems_tool.gateway.web_socket_session_manager import WebSocketSessionManager
-from scenegems_tool.docker_subsystem_shutdown import shutdown_all_docker_subsystems
+from scenegems_tool.cluster.node.docker_subsystem_shutdown import shutdown_all_docker_subsystems
 from utils.file_system_utils import ensure_directories
 
 websocket_session_manager = WebSocketSessionManager()

@@ -166,7 +166,7 @@ shutdown_stack() {
     echo "Shutting down SceneGEMS stack..."
     if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "scenegems_backend"; then
         docker exec scenegems_backend python - <<'PY' 2>/dev/null || true
-from scenegems_tool.docker_subsystem_shutdown import shutdown_all_docker_subsystems
+from scenegems_tool.cluster.node.docker_subsystem_shutdown import shutdown_all_docker_subsystems
 shutdown_all_docker_subsystems()
 PY
     fi
