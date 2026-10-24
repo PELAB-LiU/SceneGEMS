@@ -39,6 +39,18 @@ kinematic_command_input:
     PYTHONHASHSEED values. 14,000 to 16,000 two-vessel steps per second on one core at a
     1 s step: over 10,000 times real time, limited only by the CPU.
 
+usv_navigation_in_process:
+  repeatability_tier: exact
+  max_speedup: .inf
+  evidence: >-
+    WP5a, 2026-10-24, colav_automaton 54866f2: closed-loop runs of USV Navigation against a
+    replaying target on the kinematic layer (head-on, crossing from starboard, crossing from
+    port, overtaking; 1,000 steps at 1 s) are bit-identical across repeats and across
+    processes with PYTHONHASHSEED 0, 1, 4242 and random (same state digests and run
+    records). 1,350 to 2,000 two-vessel steps per second on one core (replay alone: 21,000
+    to 23,000), so over 1,000 times real time, limited only by the CPU. About 80 percent of
+    a step is the runtime's G11 guard (unsafe set and convex hull).
+
 simulation_layer/ardupilot_sim:
   wind: unsupported
   waves: supported
