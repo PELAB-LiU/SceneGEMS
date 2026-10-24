@@ -7,6 +7,7 @@ Everything needed to build and run SceneGEMS lives here. The repository root kee
 | Path | Content |
 |------|---------|
 | `images/` | One folder per Docker image: `arduagent`, `gazebo`, `sitl`, `mavproxy`, `mqtt_broker`, and the four subsystem images `monitoring`, `scenario_generation`, `scenario_execution`, `trajectory_generation` |
+| `images/upstream_pins.env` | Upstream commits and base image digest the Gazebo and SITL images build from; passed as build arguments and written into `org.scenegems.*` image labels. apt and pip packages stay unpinned; their installed versions are recorded in `/etc/scenegems/package_versions` inside both images |
 | `master/docker-compose.yml` | The main stack: frontend, MQTT broker, backend |
 | `scripts/build.sh` | Builds the images, skipping any whose inputs did not change |
 | `scripts/start.sh` | Starts the main stack and tails the backend logs |
