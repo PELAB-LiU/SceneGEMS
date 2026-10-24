@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Literal, NotRequired, Optional, Required, Ty
 
 import numpy as np
 
-from scenegems_tool.gateway.workbench_stack_mapping import control_mode_label, simulation_layer_from_simulator_type, simulator_type_label, workbench_stack
+from scenegems_tool.gateway.workbench_stack_mapping import control_mode_label, simulation_layer_from_simulator_type, simulator_type_label, workbench_adapter_ids, workbench_stack
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import AgentConnection, AgentContext, EnvironmentConfig, SimulationInstanceConfig, VesselConfig, WaveConfig
 
 
@@ -340,8 +340,8 @@ def _parse_agent_context(connection: SimulationConnectionInfo) -> AgentContext:
 def simulation_config_from_body(body: SimulationModelsBody) -> SimulationInstanceConfig:
     """Convert an inbound simulation-models body (initialize_simulation /
     generate_simulation_models / simulation_models) into a typed simulation instance.
-    simulatorType and each agent's controlMode become one stack triple per vessel
-    (see gateway.workbench_stack_mapping)."""
+    simulatorType and each agent's controlMode become one stack triple per vessel, with
+    the ArduAgent adapters the workbench uses (see gateway.workbench_stack_mapping)."""
     wave = body["wave"]
     wind_vector = list(body["windVector"])
     if len(wind_vector) != 3:
@@ -366,6 +366,7 @@ def simulation_config_from_body(body: SimulationModelsBody) -> SimulationInstanc
                 context=_parse_agent_context(connection),
                 connection=AgentConnection(agent_name=connection["agentName"], topic=connection["topic"], port=_parse_agent_port(connection)),
                 gazebo_vessel_model=connection.get("gazeboVesselModel", None),
+                adapter_ids=workbench_adapter_ids(connection["controlMode"]),
             )
             for agent_id, connection in body["connectionsByAgentId"].items()
         },

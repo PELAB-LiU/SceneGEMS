@@ -59,6 +59,7 @@ dependencies = [
     "svgpath2mpl",
     "uvicorn[standard]",
     "pyproj",
+    "pymavlink>=2.4.50",
 ]
 
 [project.optional-dependencies]

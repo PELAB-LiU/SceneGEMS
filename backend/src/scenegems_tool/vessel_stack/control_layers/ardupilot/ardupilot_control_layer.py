@@ -1,4 +1,4 @@
-"""ArduPilot control layer adapter: SITL with its parameter file, MAVProxy and ArduAgent per vessel."""
+"""ArduPilot control layer adapter: SITL with its parameter file per vessel, plus MAVProxy and ArduAgent for ArduAgent-driven vessels."""
 
 from concrete_level.models.actor_state import ActorState
 from concrete_level.models.concrete_actors import ConcreteVessel
@@ -7,9 +7,10 @@ from scenegems_tool.vessel_stack.contracts.docker_stack import DockerStackArtifa
 from scenegems_tool.vessel_stack.contracts.roles import SimulationLayerId
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import VesselConfig
 from scenegems_tool.vessel_stack.control_layers.ardupilot.ardu_param_generator import generate_ardu_params
-from scenegems_tool.vessel_stack.control_layers.ardupilot.arduagent_control_mode import arduagent_control_mode
+from scenegems_tool.vessel_stack.control_layers.ardupilot.arduagent_control_mode import ARDUAGENT_ADAPTER_IDS, arduagent_control_mode
 from scenegems_tool.vessel_stack.control_layers.ardupilot.ardupilot_specs import ARDUPILOT_CONTROL_LAYER
 from scenegems_tool.vessel_stack.control_layers.ardupilot.vessel_service_generator import generate_vessel_service
+from scenegems_tool.vessel_stack.registry.catalog import default_resolver
 from utils.file_system_utils import SIMULATION_GEN_FOLDER
 
 
@@ -43,4 +44,10 @@ class ArduPilotControlLayer:
 
         # sitl_internal_physics homes SITL at the start pose; ardupilot_gazebo_plugin runs SITL's JSON backend against Gazebo.
         sitl_internal_physics = vessel_config.stack.simulation_layer == SimulationLayerId.ARDUPILOT_SIM
-        artifacts.services.update(generate_vessel_service(agent_stub, connection.port, params_file, request.simulation.speedup, sitl_internal_physics))
+        services = generate_vessel_service(agent_stub, connection.port, params_file, request.simulation.speedup, sitl_internal_physics)
+        asv_adapter = default_resolver().resolve(vessel_config.stack, vessel_config.adapter_ids).asv_adapter
+        if asv_adapter is None or asv_adapter.id not in ARDUAGENT_ADAPTER_IDS:
+            # The ASV software talks MAVLink to SITL's SERIAL0 itself (mavlink_link.py), so the
+            # vessel gets SITL only: no MAVProxy, no ArduAgent and no ground control station port.
+            services = {connection.agent_name: services[connection.agent_name]}
+        artifacts.services.update(services)
