@@ -127,18 +127,36 @@ def _replay_follower():
     return ReplayFollower
 
 
+def _ardupilot_control_layer():
+    from scenegems_tool.vessel_stack.control_layers.ardupilot.ardupilot_control_layer import ArduPilotControlLayer
+
+    return ArduPilotControlLayer
+
+
+def _gazebo_simulation_layer():
+    from scenegems_tool.vessel_stack.simulation_layers.gazebo.gazebo_simulation_layer import GazeboSimulationLayer
+
+    return GazeboSimulationLayer
+
+
+def _ardupilot_sim_layer():
+    from scenegems_tool.vessel_stack.simulation_layers.ardupilot_sim.ardupilot_sim_layer import ArduPilotSimLayer
+
+    return ArduPilotSimLayer
+
+
 def build_registry(measurements: Optional[Mapping[str, CapabilityMeasurement]] = None) -> AdapterRegistry:
     registry = AdapterRegistry(load_capability_measurements() if measurements is None else measurements)
 
     registry.register_layer(REPLAY_LAYER)
     registry.register_layer(USV_NAVIGATION_LAYER)
     registry.register_layer(MISSION_PLANNER_LAYER)
-    registry.register_layer(ARDUPILOT_CONTROL_LAYER)
+    registry.register_layer(ARDUPILOT_CONTROL_LAYER, runtime=_ardupilot_control_layer)
     registry.register_layer(CUSTOM_CONTROL_LAYER)
     registry.register_layer(NONE_CONTROL_LAYER)
     registry.register_layer(KINEMATIC_LAYER, runtime=_kinematic_simulation)
-    registry.register_layer(GAZEBO_LAYER)
-    registry.register_layer(ARDUPILOT_SIM_LAYER)
+    registry.register_layer(GAZEBO_LAYER, runtime=_gazebo_simulation_layer)
+    registry.register_layer(ARDUPILOT_SIM_LAYER, runtime=_ardupilot_sim_layer)
 
     registry.register_adapter(REPLAY_STATE_FOLLOWER, runtime=_replay_follower)
     registry.register_adapter(REPLAY_ARDUAGENT_FOLLOWER)

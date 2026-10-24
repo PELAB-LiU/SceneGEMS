@@ -6,10 +6,10 @@ from concrete_level.models.concrete_actors import ConcreteVessel
 from concrete_level.models.concrete_scene import ConcreteScene
 from concrete_level.models.trajectories import Trajectories
 from concrete_level.trajectory_generation.scene_builder import SceneBuilder
-from concrete_level.trajectory_generation.trajectory_builder import TrajectoryBuilder
-from scenegems_tool.vessel_stack.asv_software.replay.path_simplification import simplify_state_path
+from scenegems_tool.vessel_stack.asv_software.replay.replay_mission import cap_mission_trajectories, replay_mission_waypoints
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import SimulationInstanceConfig
 from scenegems_tool.vessel_stack.control_layers.ardupilot.arduagent_control_mode import arduagent_control_mode
+from scenegems_tool.vessel_stack.registry.catalog import default_resolver
 from scenegems_tool.vessel_stack.simulation_docker_stack import (
     _STANDALONE_COMPOSE_FILENAME,
     SIMULATION_COMPOSE_PROJECT,
@@ -21,7 +21,7 @@ from scenegems_tool.vessel_stack.simulation_docker_stack import (
 __all__ = ["SimulationParser", "SimulationParentClient", "SIMULATION_COMPOSE_PROJECT"]
 from scenegems_tool.messaging.mqtt_agent_client import ExecutionState, MqttAgentClient
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence, waypoint_from_state
+from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 
 _logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class SimulationParentClient(Protocol):
 class SimulationParser:
 
     HEADLESS = True
-    """Owns MQTT agent clients and optionally Docker Compose lifecycle for the Gazebo/SITL stack."""
+    """Owns the ArduAgent MQTT clients of a resolved instance and optionally the Docker Compose lifecycle of its stack."""
 
     def __init__(
         self,
@@ -51,7 +51,10 @@ class SimulationParser:
         self._shutdown = threading.Event()
         self._lifecycle_thread: Optional[threading.Thread] = None
 
-        builder = TrajectoryBuilder.from_trajectories(trajectories).convert_to_max_scene_number(400)
+        resolution = default_resolver().require_instance(simulation_config)
+        for warning in resolution.warnings:
+            _logger.warning("Simulation stack: %s", warning)
+        mission_trajectories = cap_mission_trajectories(trajectories)
 
         pending_writes = None
         docker_compose = None
@@ -72,20 +75,8 @@ class SimulationParser:
                 raise ValueError(f"Vessel {vessel} is not a ConcreteVessel.")
 
             state = trajectories.initial_scene[vessel]
-            max_speed = trajectories.get_max_speed(vessel)
-
-            state_list = builder.build().state_list(vessel)
-            first_index_with_max_speed = next((i for i, s in enumerate(state_list) if s.speed > max_speed * 0.9), 0)
-            path_states = state_list[first_index_with_max_speed:]
-
-            # Thin the densely sampled path so ArduPilot waypoint navigation can
-            # build smooth legs instead of treating every 1-2 s sample as a
-            # corner (which makes skid-steer hulls pivot and crawl). Straight
-            # runs collapse to their endpoints; real corners are kept.
-            epsilon_m = max(vessel.length * 0.5, 1.0)
-            path_states = simplify_state_path(path_states, epsilon_m=epsilon_m)
-
-            mission_waypoints = [waypoint_from_state(s, parent_client.reference_geofence) for s in path_states]
+            # Replay follows the whole mission; external control (mission_planner) is sent to its last waypoint.
+            mission_waypoints = replay_mission_waypoints(mission_trajectories, vessel, trajectories.get_max_speed(vessel), parent_client.reference_geofence)
 
             agent_config = vessel_config.require_connection()
             client = MqttAgentClient(

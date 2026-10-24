@@ -2,6 +2,7 @@ import numpy as np
 
 from scenegems_tool.messaging.mqtt_agent_client import MqttAgentClient
 from scenegems_tool.vessel_stack.contracts.sim_utils import to_true_north
+from scenegems_tool.vessel_stack.control_layers.ardupilot.ardupilot_specs import ARDUAGENT_CONTAINER, MAVPROXY_CONTAINER, SITL_CONTAINER
 from utils.file_system_utils import SITL_ENTRYPOINT_CONTAINER_PATH, docker_volume_path, runtime_assets_volume_mount
 
 _MAVPROXY_DEFAULT_MODULES = "link,log,signing,wp,rally,fence,ftp,param,relay,tuneopt,arm,mode," "calibration,rc,auxopt,misc,cmdlong,battery,output,layout"
@@ -79,7 +80,7 @@ def generate_vessel_service(
 
     docker_services = {
         ardupilot: {
-            "image": "${SITL_IMAGE:-scenegems-ardupilot-sitl:latest}",
+            "image": SITL_CONTAINER.image,
             "restart": "unless-stopped",
             "environment": sitl_env,
             "volumes": [runtime_assets_volume_mount(read_only=True)],
@@ -92,7 +93,7 @@ def generate_vessel_service(
             "networks": ["maritime_net"],
         },
         mavproxy: {
-            "image": "${MAVPROXY_IMAGE:-scenegems-mavproxy:latest}",
+            "image": MAVPROXY_CONTAINER.image,
             "tty": True,
             "stdin_open": True,
             "restart": "unless-stopped",
@@ -110,12 +111,12 @@ def generate_vessel_service(
             ],
         },
         arduagent: {
-            "image": "${ARDUAGENT_IMAGE:-scenegems-arduagent:latest}",
+            "image": ARDUAGENT_CONTAINER.image,
             "depends_on": [mavproxy],
             "restart": "unless-stopped",
             "environment": env_list,
             "networks": ["maritime_net"],
-            "command": "python -B -u /app/main.py",
+            "command": ARDUAGENT_CONTAINER.entrypoint,
         },
     }
     return docker_services

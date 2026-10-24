@@ -1,3 +1,10 @@
+"""Simulation instance builder for Docker-based stacks: a thin caller of the adapter registry.
+
+The instance is resolved first, so an unavailable stack or an unsupported environment is
+rejected before anything is generated. The simulation layer adapter and each vessel's
+control layer adapter then contribute their files and compose services.
+"""
+
 import json
 import logging
 import os
@@ -7,25 +14,28 @@ from typing import List, Optional, Tuple
 
 import yaml
 
-from concrete_level.models.actor_state import ActorState
 from concrete_level.models.concrete_actors import ConcreteVessel
 from concrete_level.models.trajectories import Trajectories
-from scenegems_tool.messaging.mqtt_agent_client import MqttAgentClient
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
-from scenegems_tool.vessel_stack.contracts.roles import SimulationLayerId
+from scenegems_tool.vessel_stack.contracts.docker_stack import DockerControlLayer, DockerSimulationLayer, DockerStackArtifacts, DockerStackRequest
+from scenegems_tool.vessel_stack.contracts.roles import LayerRef
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import SimulationInstanceConfig
-from scenegems_tool.vessel_stack.control_layers.ardupilot.ardu_param_generator import generate_ardu_params
-from scenegems_tool.vessel_stack.control_layers.ardupilot.arduagent_control_mode import arduagent_control_mode
-from scenegems_tool.vessel_stack.control_layers.ardupilot.vessel_service_generator import generate_vessel_service
-from scenegems_tool.vessel_stack.simulation_layers.gazebo.generators.gazebo_service_generator import generate_gazebo_service
-from scenegems_tool.vessel_stack.simulation_layers.gazebo.generators.vessel_model_generator import generate_vessel_model
-from scenegems_tool.vessel_stack.simulation_layers.gazebo.generators.world_generator import generate_world
-from utils.file_system_utils import GAZEBO_GEN_MOUNT, SIMULATION_GEN_FOLDER, merge_compose_volumes
+from scenegems_tool.vessel_stack.registry.adapter_registry import AdapterRegistry
+from scenegems_tool.vessel_stack.registry.catalog import default_resolver
+from scenegems_tool.vessel_stack.registry.resolver import StackUnavailableError
+from utils.file_system_utils import SIMULATION_GEN_FOLDER, merge_compose_volumes
 
 SIMULATION_COMPOSE_PROJECT = "asv_maritime_net"
 _logger = logging.getLogger(__name__)
 _STANDALONE_COMPOSE_FILENAME = f"{SIMULATION_GEN_FOLDER}/docker-compose.yml"
+
+
+def _docker_runtime(registry: AdapterRegistry, ref: LayerRef, kind: type) -> object:
+    runtime_class = registry.runtime(str(ref))
+    if not issubclass(runtime_class, kind):
+        raise StackUnavailableError([f"{ref} has no Docker stack adapter"])
+    return runtime_class()
 
 
 def build_simulation_docker_stack_artifacts(
@@ -37,89 +47,33 @@ def build_simulation_docker_stack_artifacts(
     headless: bool = True,
     embedded_in_subsystem: bool = False,
 ) -> Tuple[List[Tuple[str, str]], dict]:
-    docker_services = {}
-    vessel_includes: List[Tuple[str, ActorState]] = []
-    pending_writes: List[Tuple[str, str]] = []
+    resolver = default_resolver()
+    resolution = resolver.require_instance(simulation_config)
+    for warning in resolution.warnings:
+        _logger.warning("Simulation stack: %s", warning)
 
-    environment = simulation_config.environment
-    is_ardupilot_sim = simulation_config.simulation_layer == SimulationLayerId.ARDUPILOT_SIM
+    request = DockerStackRequest(
+        simulation=simulation_config,
+        trajectories=trajectories,
+        mqtt_connection=mqtt_connection,
+        reference_geofence=reference_geofence,
+        headless=headless,
+    )
+    artifacts = DockerStackArtifacts()
+    simulation_layer = _docker_runtime(resolver.registry, LayerRef.of(simulation_config.simulation_layer), DockerSimulationLayer)
     for agent_id, vessel_config in simulation_config.vessels.items():
         vessel = trajectories.initial_scene.get_by_id(agent_id)
         if not isinstance(vessel, ConcreteVessel):
             raise ValueError(f"Vessel {vessel} is not a ConcreteVessel.")
-
-        state = trajectories.initial_scene[vessel]
         if not vessel_config.is_simulated:
             continue
-
-        agent_config = vessel_config.require_connection()
-        agent_stub = MqttAgentClient(
-            vessel=vessel,
-            mqtt_connection=mqtt_connection,
-            topic=agent_config.topic,
-            control_mode=arduagent_control_mode(vessel_config.stack.asv_software),
-            agent_name=agent_config.agent_name,
-            reference_geofence=reference_geofence,
-            initial_state=state,
-            parent_service_name="scenario_execution_service",
-            mission_waypoints=[],
-        )
-
-        if vessel_config.gazebo_vessel_model is not None:
-            vessel_model = vessel_config.gazebo_vessel_model
-        else:
-            vessel_model = generate_vessel_model(vessel, agent_config.agent_name)
-        vessel_model_filename = f"{agent_config.agent_name}_model.sdf"
-        vessel_model_file = f"{SIMULATION_GEN_FOLDER}/{vessel_model_filename}"
-        pending_writes.append((vessel_model_file, vessel_model))
-        vessel_includes.append((f"{GAZEBO_GEN_MOUNT}/{vessel_model_filename}", state))
-
-        ardu_params = generate_ardu_params(
-            vessel,
-            trajectories.get_max_speed(vessel),
-            environment.wind_vector,
-            environment.wave,
-        )
-        params_file = f"{SIMULATION_GEN_FOLDER}/params-{agent_config.agent_name}.params"
-        lines = []
-        for key, value in ardu_params.items():
-            if value is not None:
-                lines.append(f"{key}\t{value}\n")
-        pending_writes.append((params_file, "".join(lines)))
-        docker_services.update(
-            generate_vessel_service(
-                agent_stub,
-                agent_config.port,
-                params_file,
-                simulation_config.speedup,
-                is_ardupilot_sim,
-            )
-        )
-
-    os_state = trajectories.initial_scene.os_state
-    lat_long = reference_geofence.to_lat_long(os_state.p)
-    world_model = generate_world(
-        lat_long,
-        vessel_includes,
-        environment.wind_vector,
-        environment.wave,
-        simulation_config.speedup,
-        headless=headless,
-    )
-    world_file = f"{SIMULATION_GEN_FOLDER}/ocean_world.sdf"
-    pending_writes.append((world_file, world_model))
-    trajectories_file = f"{SIMULATION_GEN_FOLDER}/trajectories.json"
-    pending_writes.append((trajectories_file, json.dumps(trajectories.to_dict())))
-
-    if simulation_config.simulation_layer == SimulationLayerId.GAZEBO:
-        gazebo_service = generate_gazebo_service(
-            world_file,
-            [vessel_config.require_connection().agent_name for vessel_config in simulation_config.vessels.values()],
-            headless=headless,
-            display="host.docker.internal:0.0",
-            verbose=4,
-        )
-        docker_services.update(gazebo_service)
+        state = trajectories.initial_scene[vessel]
+        control_layer = _docker_runtime(resolver.registry, LayerRef.of(vessel_config.stack.control_layer), DockerControlLayer)
+        simulation_layer.add_vessel(artifacts, request, vessel_config, vessel, state)
+        control_layer.add_vessel(artifacts, request, vessel_config, vessel, state)
+    simulation_layer.finish(artifacts, request)
+    # The scenario execution worker reads the trajectories from the shared gen folder.
+    artifacts.pending_writes.append((f"{SIMULATION_GEN_FOLDER}/trajectories.json", json.dumps(trajectories.to_dict())))
 
     if embedded_in_subsystem:
         maritime_network = {"maritime_net": {"driver": "bridge"}}
@@ -128,11 +82,11 @@ def build_simulation_docker_stack_artifacts(
 
     docker_compose = merge_compose_volumes(
         {
-            "services": docker_services,
+            "services": artifacts.services,
             "networks": maritime_network,
         }
     )
-    return pending_writes, docker_compose
+    return artifacts.pending_writes, docker_compose
 
 
 def write_simulation_gen_files(pending_writes: List[Tuple[str, str]]) -> None:

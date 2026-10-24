@@ -1,10 +1,11 @@
+from scenegems_tool.vessel_stack.simulation_layers.gazebo.gazebo_specs import GAZEBO_CONTAINER
 from utils.file_system_utils import GAZEBO_ENTRYPOINT_CONTAINER_PATH, docker_volume_path, runtime_assets_volume_mount
 
 
 def generate_gazebo_service(world_file: str, vessel_services: list[str], headless: bool = True, display: str = "", verbose: int = 4) -> dict:
 
     gazebo = {
-        "image": "${GAZEBO_IMAGE:-scenegems-gazebo-harmonic:latest}",
+        "image": GAZEBO_CONTAINER.image,
         "container_name": "gazebo",
         "hostname": "gazebo",
         "environment": {
