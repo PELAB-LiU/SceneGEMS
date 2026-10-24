@@ -1,4 +1,3 @@
-from asyncio import Event
 import json
 import os
 import socket
@@ -6,12 +5,18 @@ import ssl
 import traceback
 import uuid
 from abc import ABC, abstractmethod
+from threading import Event
 from typing import Any, List, Set
+
 import paho.mqtt.client as mqtt
-from scenegems_tool.waraps_integration.sim_utils import Geofence
+
+from scenegems_tool.subsystems_integration.sim_utils import Geofence
 
 _LOOPBACK_ALIASES = frozenset({"localhost", "127.0.0.1", "::1"})
 _DOCKER_HOST_GATEWAY = "host.docker.internal"
+_COMPOSE_BROKER_HOSTNAME = "broker"
+_COMPOSE_BROKER_INTERNAL_PORT = 1883
+_COMPOSE_BROKER_HOST_PORT = 1882
 
 _CONNACK_REASONS = {
     1: "broker refused the connection: incorrect protocol version",
@@ -65,21 +70,37 @@ def resolve_mqtt_broker_endpoints(
     started by another compose project such as the OTG stack. The in-compose broker
     service is substituted only when the typed port is the one it listens on internally
     and its name actually resolves, so an absent compose broker never hides a working
-    address. The port the user typed is always preserved.
+    address. The compose hostname `broker` is rewritten to the host gateway (and
+    internal port 1883 to host port 1882) when that service is not running, so the
+    default local connection still reaches a broker already published on the host.
     """
     compose_host = os.environ.get("MQTT_BROKER_HOST", "").strip()
     compose_port = os.environ.get("MQTT_BROKER_PORT", "").strip()
     prefer_compose = bool(compose_host) and compose_port.isdigit() and int(compose_port) == port and _host_resolves(compose_host)
+    compose_broker_up = _host_resolves(_COMPOSE_BROKER_HOSTNAME)
 
     def normalize_host(host: str) -> str:
         trimmed = host.strip()
         if tls_connection or not _running_in_container():
             return trimmed
-        if trimmed.lower() not in _LOOPBACK_ALIASES:
-            return trimmed
-        return compose_host if prefer_compose else _DOCKER_HOST_GATEWAY
+        lowered = trimmed.lower()
+        if lowered in _LOOPBACK_ALIASES:
+            return compose_host if prefer_compose else _DOCKER_HOST_GATEWAY
+        if lowered == _COMPOSE_BROKER_HOSTNAME and not compose_broker_up:
+            return _DOCKER_HOST_GATEWAY
+        return trimmed
 
-    return normalize_host(agent_broker), normalize_host(client_broker), port
+    resolved_port = port
+    if (
+        not tls_connection
+        and _running_in_container()
+        and not compose_broker_up
+        and port == _COMPOSE_BROKER_INTERNAL_PORT
+        and (agent_broker.strip().lower() == _COMPOSE_BROKER_HOSTNAME or client_broker.strip().lower() == _COMPOSE_BROKER_HOSTNAME)
+    ):
+        resolved_port = _COMPOSE_BROKER_HOST_PORT
+
+    return normalize_host(agent_broker), normalize_host(client_broker), resolved_port
 
 
 class MQttConnectionInfo:
@@ -92,6 +113,7 @@ class MQttConnectionInfo:
         self.tls_connection = tls_connection
         self.allow_certificates = allow_certificates
 
+
 class MqttClient(ABC):
     def __init__(self, name: str, topic: str, mqtt_connection: MQttConnectionInfo, reference_geofence: Geofence):
         self.name = name
@@ -101,17 +123,19 @@ class MqttClient(ABC):
         self.mqtt_connection = mqtt_connection
         self.reference_geofence = reference_geofence
         self.connected_event = Event()
-        self.client = mqtt.Client(client_id=self.name + "_" + self.uuid)
+        self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id=self.name + "_" + self.uuid)
         self.client.user_data_set("waraps")
         self.client.on_connect = self.on_connect
         self.client.on_disconnect = self.on_disconnect
         self.client.on_message = self.on_message
+        self.client.reconnect_delay_set(min_delay=1, max_delay=30)
         self.last_broker_refusal: str | None = None
 
     def connect(self):
         """Connect to the broker using the mqtt client"""
-        if self.mqtt_connection.tls_connection:
+        if self.mqtt_connection.user or self.mqtt_connection.password:
             self.client.username_pw_set(self.mqtt_connection.user, self.mqtt_connection.password)
+        if self.mqtt_connection.tls_connection:
             self.client.tls_set(
                 cert_reqs=(ssl.CERT_NONE if self.mqtt_connection.allow_certificates else ssl.CERT_REQUIRED),
             )
@@ -139,9 +163,9 @@ class MqttClient(ABC):
             msg_str = msg.payload.decode("utf-8")
             return json.loads(msg_str)
         except json.JSONDecodeError:
-            if msg_str.lower() == 'true':
+            if msg_str.lower() == "true":
                 return True
-            elif msg_str.lower() == 'false':
+            elif msg_str.lower() == "false":
                 return False
             return None
 
@@ -162,9 +186,13 @@ class MqttClient(ABC):
 
     def on_disconnect(self, client, userdata, rc):
         """Is triggered when the client gets disconnected from the broker"""
+        self.connected_event.clear()
         if rc != mqtt.MQTTErrorCode.MQTT_ERR_SUCCESS:
-            self.last_broker_refusal = _CONNACK_REASONS.get(rc, mqtt.error_string(rc))
-        print(f"{self.name} got disconnected from {self.endpoint} with code {rc}: {self.last_broker_refusal or 'clean disconnect'}")
+            # `rc` here is a paho error code (CONN_LOST, NO_CONN, ...), not a CONNACK code.
+            self.last_broker_refusal = mqtt.error_string(rc)
+            print(f"{self.name} got disconnected from {self.endpoint} with code {rc}: {self.last_broker_refusal}")
+            return
+        print(f"{self.name} got disconnected from {self.endpoint} with code {rc}: clean disconnect")
 
     def on_message(self, client, userdata, msg: mqtt.MQTTMessage):
         """Is triggered when a message is published on topics agent subscribes to"""
@@ -194,103 +222,103 @@ class MqttClient(ABC):
 
     def disconnect(self):
         self.client.disconnect()
-        
+
     @property
     def is_connected(self) -> bool:
         return self.client.is_connected() and self.connected_event.is_set()
-    
+
     @property
     def heartbeat_topic(self) -> str:
         return f"{self.topic}/heartbeat"
-        
+
     @property
     def sensor_topic(self) -> str:
         return f"{self.topic}/sensor"
-        
+
     @property
     def direct_execution_topic(self) -> str:
         return f"{self.topic}/direct_execution"
-        
+
     @property
     def sensor_info_topic(self) -> str:
         return f"{self.sensor_topic}/sensor_info"
-    
+
     @property
     def exec_topic(self) -> str:
         return f"{self.topic}/exec"
-    
+
     @property
     def exec_response_topic(self) -> str:
         return f"{self.exec_topic}/response"
-    
+
     @property
     def exec_feedback_topic(self) -> str:
         return f"{self.exec_topic}/feedback"
-    
+
     @property
     def exec_command_topic(self) -> str:
         return f"{self.exec_topic}/command"
-    
+
     @property
     def position_topic(self) -> str:
         return f"{self.sensor_topic}/position"
-    
+
     @property
     def heading_topic(self) -> str:
         return f"{self.sensor_topic}/heading"
-    
+
     @property
     def clock_topic(self) -> str:
         return f"{self.sensor_topic}/clock"
-    
+
     @property
     def speed_topic(self) -> str:
         return f"{self.sensor_topic}/speed"
-    
+
     @property
     def mode_topic(self) -> str:
         return f"{self.sensor_topic}/mode"
-    
+
     @property
     def state_topic(self) -> str:
         return f"{self.sensor_topic}/state"
-    
+
     @property
     def waypoints_topic(self) -> str:
         return f"{self.sensor_topic}/waypoints"
-    
+
     @property
     def energy_level_topic(self) -> str:
         return f"{self.sensor_topic}/energy_level"
-    
+
     @property
     def battery_status_topic(self) -> str:
         return f"{self.sensor_topic}/battery_status"
-    
+
     @property
     def cargo_topic(self) -> str:
         return f"{self.sensor_topic}/cargo"
-    
+
     @property
     def control_system_version_topic(self) -> str:
         return f"{self.sensor_topic}/control_system_version"
-    
+
     @property
     def course_topic(self) -> str:
         return f"{self.sensor_topic}/course"
-    
+
     @property
     def videoserver_url_topic(self) -> str:
         return f"{self.sensor_topic}/videoserver_url"
-    
+
     @property
     def ip_address_topic(self) -> str:
         return f"{self.sensor_topic}/ip_address"
-    
+
     @property
     def armable_topic(self) -> str:
         return f"{self.sensor_topic}/armable"
-    
+
     @property
     def generated_scene_topic(self) -> str:
         return f"{self.sensor_topic}/generated_scene"
@@ -302,16 +330,15 @@ class MqttClient(ABC):
     @property
     def planned_trajectory_preview_topic(self) -> str:
         return f"{self.sensor_topic}/planned_trajectory_preview"
-    
+
     @property
     def obstacle_distances_topic(self) -> str:
         return f"{self.sensor_topic}/obstacle_distances"
-    
+
     @property
     def rc_override_topic(self) -> str:
         return f"{self.sensor_topic}/rc_override"
-    
+
     @abstractmethod
     def _on_message(self, msg: mqtt.MQTTMessage, payload: Any):
         pass
-        

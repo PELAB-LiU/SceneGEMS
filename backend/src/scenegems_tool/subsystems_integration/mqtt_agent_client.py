@@ -9,8 +9,8 @@ from haversine import Unit
 
 from concrete_level.models.actor_state import ActorState
 from concrete_level.models.concrete_actors import ConcreteVessel
-from scenegems_tool.waraps_integration.mqtt_client import MqttClient, MQttConnectionInfo
-from scenegems_tool.waraps_integration.sim_utils import Geofence, from_true_north, normalized_to_pwm
+from scenegems_tool.subsystems_integration.mqtt_client import MqttClient, MQttConnectionInfo
+from scenegems_tool.subsystems_integration.sim_utils import Geofence, from_true_north, normalized_to_pwm
 
 
 class ExecutionState(Enum):

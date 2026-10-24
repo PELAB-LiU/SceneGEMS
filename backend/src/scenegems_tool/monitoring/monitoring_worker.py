@@ -4,13 +4,13 @@ from typing import Dict, List, Optional, Tuple
 
 from concrete_level.colregs_monitoring.colregs_monitor_runtime import ColregsMonitorRuntime, MonitoringTask
 from concrete_level.colregs_monitoring.monitored_trajectory import MonitoredSceneWithResults
-from scenegems_tool.waraps_integration.mqtt_client import MQttConnectionInfo
-from scenegems_tool.waraps_integration.mqtt_monitor_service import (
+from scenegems_tool.subsystems_integration.mqtt_client import MQttConnectionInfo
+from scenegems_tool.subsystems_integration.mqtt_monitor_service import (
     MqttMonitoringBatchTask,
     MqttMonitoringTask,
     MqttMonitorService,
 )
-from scenegems_tool.waraps_integration.sim_utils import Geofence
+from scenegems_tool.subsystems_integration.sim_utils import Geofence
 from utils.colregs_approximations import COLREGSConstraints
 from utils.global_constants import ONE_SECOND
 
@@ -106,11 +106,14 @@ class MonitoringWorker:
         self._heartbeat_thread = None
 
     def _heartbeat_loop(self) -> None:
-        next_publish_time = time.monotonic()
+        # Wait a full period after connect/reconnect before the first publish, matching
+        # the generation worker. Publishing in the on_connect window on the live WARA-PS
+        # broker drops the TCP session immediately.
+        next_publish_time = time.monotonic() + self.publish_period
         while not self._stop_event.is_set():
             if not self.mqtt_service.is_connected:
                 self._stop_event.wait(0.1)
-                next_publish_time = time.monotonic()
+                next_publish_time = time.monotonic() + self.publish_period
                 continue
 
             now = time.monotonic()

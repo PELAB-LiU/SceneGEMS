@@ -1,7 +1,7 @@
 import asyncio
 import unittest
 
-from scenegems_tool.waraps_integration.mqtt_session import OldWARAPSSession
+from scenegems_tool.subsystems_integration.mqtt_session import OldWARAPSSession
 
 
 class TestMqttSessionTaskLifecycle(unittest.IsolatedAsyncioTestCase):

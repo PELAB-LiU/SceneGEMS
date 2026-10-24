@@ -8,8 +8,8 @@ import paho.mqtt.client as mqtt
 
 from concrete_level.models.concrete_scene import ConcreteScene
 from scenegems_tool.backend_service.protocol import ServerMessage, make_generated_scene_message, make_preview_chunk_message, make_simulation_chunk_message
-from scenegems_tool.waraps_integration.mqtt_client import MqttClient, MQttConnectionInfo
-from scenegems_tool.waraps_integration.sim_utils import Geofence
+from scenegems_tool.subsystems_integration.mqtt_client import MqttClient, MQttConnectionInfo
+from scenegems_tool.subsystems_integration.sim_utils import Geofence
 
 # Every generated scene is monitored under this one scenario id, so the monitor keeps a
 # single runtime for them (it resets on each timestamp-0 scene) instead of one per request.
@@ -18,18 +18,22 @@ GENERATED_SCENE_SCENARIO_ID = "generated-scene"
 
 class MqttMonitorClient(MqttClient):
     def __init__(self, mqtt_connection: MQttConnectionInfo, topic: str, agent_name: str, reference_geofence: Geofence, parent_service_name: str, send_payload: Callable[[ServerMessage], None]):
-        super().__init__(name=agent_name, topic=topic, mqtt_connection=mqtt_connection, reference_geofence=reference_geofence)
+        super().__init__(name=f"{agent_name}_client", topic=topic, mqtt_connection=mqtt_connection, reference_geofence=reference_geofence)
+        self.agent_name = agent_name
         self.parent_service_name = parent_service_name
         self.send_payload = send_payload
         self.last_heartbeat_timestamp = 0.0
         self.timeout_sec = 10.0
         # Internal monitor Docker + TLS to the broker is often slower than 10 s.
         self.startup_timeout_sec = 60.0
-        self.heartbeat_interval_sec = 5.0
+        # Worker publishes every 1 s; allow a brief CONN_LOST reconnect before the UI drops.
+        self.heartbeat_stale_sec = 20.0
         self._stop_wait = threading.Event()
         self._heartbeat_wait_failed = False
+        self._batch_wait_failed = False
         # request id to (evaluation data, valid), held until the monitored frame returns.
         self._pending_generated_scenes: Dict[str, Tuple[Dict[str, Any], bool]] = {}
+        self._pending_batch_events: Dict[str, threading.Event] = {}
         self._pending_lock = threading.Lock()
 
     @property
@@ -43,27 +47,32 @@ class MqttMonitorClient(MqttClient):
     def _on_message(self, msg: mqtt.MQTTMessage, payload: Any):
         match msg.topic:
             case self.monitored_scene_topic:
-                if payload["task_sender"] != self.name:
-                    return
-                is_simulation_frame = payload["is-simulation-frame"]
-                is_multi_frame = "monitored-frames" in payload
-                frames = payload["monitored-frames"] if is_multi_frame else [payload["monitored-frame"]]
-                if not frames:
-                    return
-                request_id = payload.get("request-id")
-                if request_id is not None:
-                    self._send_monitored_generated_scene(request_id, frames[0])
-                    return
-                scenario_id = frames[0]["scenarioId"]
-                from_timestamp = frames[0]["timestamp"]
-                to_timestamp = frames[-1]["timestamp"]
-                if is_simulation_frame:
-                    self.send_payload(make_simulation_chunk_message(scenario_id=scenario_id, from_timestamp=from_timestamp, to_timestamp=to_timestamp, frames=frames))
-                else:
-                    self.send_payload(make_preview_chunk_message(scenario_id=scenario_id, from_timestamp=from_timestamp, to_timestamp=to_timestamp, frames=frames))
+                self._handle_monitored_scene(payload)
             case self.heartbeat_topic:
                 self.last_heartbeat_timestamp = time.time()
                 self._heartbeat_wait_failed = False
+                self._batch_wait_failed = False
+
+    def _handle_monitored_scene(self, payload: Any) -> None:
+        if payload["task_sender"] != self.agent_name:
+            return
+        is_simulation_frame = payload["is-simulation-frame"]
+        is_multi_frame = "monitored-frames" in payload
+        frames = payload["monitored-frames"] if is_multi_frame else [payload["monitored-frame"]]
+        if not frames:
+            return
+        request_id = payload.get("request-id")
+        if request_id is not None:
+            self._send_monitored_generated_scene(request_id, frames[0])
+        else:
+            scenario_id = frames[0]["scenarioId"]
+            from_timestamp = frames[0]["timestamp"]
+            to_timestamp = frames[-1]["timestamp"]
+            if is_simulation_frame:
+                self.send_payload(make_simulation_chunk_message(scenario_id=scenario_id, from_timestamp=from_timestamp, to_timestamp=to_timestamp, frames=frames))
+            else:
+                self.send_payload(make_preview_chunk_message(scenario_id=scenario_id, from_timestamp=from_timestamp, to_timestamp=to_timestamp, frames=frames))
+        self._notify_batch_done(payload.get("task-uuid"))
 
     def _send_monitored_generated_scene(self, request_id: str, frame: Dict[str, Any]) -> None:
         with self._pending_lock:
@@ -99,7 +108,7 @@ class MqttMonitorClient(MqttClient):
 
     @property
     def is_heartbeat_valid(self) -> bool:
-        return time.time() - self.last_heartbeat_timestamp < self.heartbeat_interval_sec
+        return time.time() - self.last_heartbeat_timestamp < self.heartbeat_stale_sec
 
     def publish_step_monitor_command(self, scenario_id: str, scene: ConcreteScene, timestamp: int, time_step: int, is_simulation_frame: bool):
         self.wait_for_heartbeat()
@@ -109,7 +118,7 @@ class MqttMonitorClient(MqttClient):
             "task_sender": self.parent_service_name,
             "task-uuid": str(uuid.uuid4()),
             "command": "start-task",
-            "execution-unit": self.name,
+            "execution-unit": self.agent_name,
             "task": {
                 "name": "step-monitor",
                 "params": {"scenario-id": scenario_id, "scene": scene.to_dict(), "scene-timestamp": timestamp, "time-step": time_step, "is-simulation-frame": bool(is_simulation_frame)},
@@ -127,13 +136,17 @@ class MqttMonitorClient(MqttClient):
         is_simulation_frame: bool,
     ) -> None:
         self.wait_for_heartbeat()
+        if self._batch_wait_failed:
+            raise ValueError("Timeout: monitor did not return monitored frames")
 
+        task_uuid = str(uuid.uuid4())
+        event = self._register_batch_wait(task_uuid)
         step_monitor_batch_command = {
             "stamp": time.time(),
             "task_sender": self.parent_service_name,
-            "task-uuid": str(uuid.uuid4()),
+            "task-uuid": task_uuid,
             "command": "start-task",
-            "execution-unit": self.name,
+            "execution-unit": self.agent_name,
             "task": {
                 "name": "step-monitor-batch",
                 "params": {
@@ -146,6 +159,7 @@ class MqttMonitorClient(MqttClient):
             },
         }
         self.client.publish(self.exec_command_topic, json.dumps(step_monitor_batch_command), qos=1)
+        self._await_batch_event(event, task_uuid)
 
     def publish_monitor_generated_scene_command(self, request_id: str, scene: ConcreteScene, evaluation_data: Dict[str, Any], valid: bool) -> None:
         """Monitor one scene as the initial scene of a trajectory.
@@ -162,7 +176,7 @@ class MqttMonitorClient(MqttClient):
             "task_sender": self.parent_service_name,
             "task-uuid": str(uuid.uuid4()),
             "command": "start-task",
-            "execution-unit": self.name,
+            "execution-unit": self.agent_name,
             "task": {
                 "name": "step-monitor-batch",
                 "params": {
@@ -176,3 +190,48 @@ class MqttMonitorClient(MqttClient):
             },
         }
         self.client.publish(self.exec_command_topic, json.dumps(monitor_generated_scene_command), qos=1)
+        self._wait_for_generated_scene_reply(request_id)
+
+    def _notify_batch_done(self, task_uuid: Any) -> None:
+        if not isinstance(task_uuid, str) or not task_uuid:
+            return
+        with self._pending_lock:
+            event = self._pending_batch_events.pop(task_uuid, None)
+        if event is not None:
+            self._batch_wait_failed = False
+            event.set()
+
+    def _register_batch_wait(self, task_uuid: str) -> threading.Event:
+        event = threading.Event()
+        with self._pending_lock:
+            self._pending_batch_events[task_uuid] = event
+        return event
+
+    def _await_batch_event(self, event: threading.Event, task_uuid: str) -> None:
+        deadline = time.monotonic() + self.timeout_sec
+        while time.monotonic() < deadline:
+            if self._stop_wait.is_set():
+                break
+            if event.wait(timeout=0.1):
+                return
+            if not self.is_heartbeat_valid or not self.is_connected:
+                break
+        with self._pending_lock:
+            self._pending_batch_events.pop(task_uuid, None)
+        if not event.is_set():
+            self._batch_wait_failed = True
+            raise ValueError("Timeout: monitor did not return monitored frames")
+
+    def _wait_for_generated_scene_reply(self, request_id: str) -> None:
+        deadline = time.monotonic() + self.timeout_sec
+        while time.monotonic() < deadline:
+            if self._stop_wait.is_set():
+                break
+            with self._pending_lock:
+                if request_id not in self._pending_generated_scenes:
+                    return
+            time.sleep(0.1)
+        with self._pending_lock:
+            pending = self._pending_generated_scenes.pop(request_id, None)
+        if pending is not None:
+            raise ValueError(f"Timeout: monitor did not return generated scene {request_id}")

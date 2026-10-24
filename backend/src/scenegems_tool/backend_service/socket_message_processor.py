@@ -4,7 +4,7 @@ import traceback
 
 from scenegems_tool.backend_service.protocol import ClientMessage, simulation_config_from_body
 from scenegems_tool.backend_service.socket_session import SocketSession
-from scenegems_tool.waraps_integration.sim_utils import Geofence
+from scenegems_tool.subsystems_integration.sim_utils import Geofence
 
 
 class SocketMessageProcessor:
@@ -57,7 +57,7 @@ class SocketMessageProcessor:
                     case "disconnect_from_waraps":
                         self.session.disconnect_from_waraps()
                     case "start_simulation":
-                        self.session.waraps_session.simulation_session.start_simulation_runtime()
+                        self.session.subsystem_integration_session.simulation_session.start_simulation_runtime()
                     case "reset_simulation":
                         asyncio.create_task(self._handle_reset_simulation())
                     case "initialize_simulation":
@@ -70,7 +70,7 @@ class SocketMessageProcessor:
                         self.session.shut_down_monitor()
                     case "generate_scene":
                         try:
-                            self.session.waraps_session.generate_scene(
+                            self.session.subsystem_integration_session.generate_scene(
                                 request_id=message["requestId"],
                                 functional_scenario_content=message["functionalScenarioContent"],
                                 colregs_constraints_content=message["colregsConstraintsContent"],
@@ -89,7 +89,7 @@ class SocketMessageProcessor:
                         asyncio.create_task(self._handle_monitor_scene(message["requestId"], message["scenarioContent"]))
                     case "generate_trajectories":
                         try:
-                            self.session.waraps_session.generate_trajectories(
+                            self.session.subsystem_integration_session.generate_trajectories(
                                 request_id=message["requestId"],
                                 scenario_content=message["scenarioContent"],
                                 colregs_constraints_content=message["colregsConstraintsContent"],
@@ -108,7 +108,7 @@ class SocketMessageProcessor:
 
     async def _handle_stop_scene_generation(self) -> None:
         try:
-            await self.session.waraps_session.stop_scene_generation()
+            await self.session.subsystem_integration_session.stop_scene_generation()
         except Exception as exc:
             self.session.send_runtime_error(f"Failed to stop scene generation: {str(exc)}")
 
@@ -120,13 +120,13 @@ class SocketMessageProcessor:
 
     async def _handle_stop_trajectory_generation(self) -> None:
         try:
-            await self.session.waraps_session.stop_trajectory_generation()
+            await self.session.subsystem_integration_session.stop_trajectory_generation()
         except Exception as exc:
             self.session.send_runtime_error(f"Failed to stop trajectory generation: {str(exc)}")
 
     async def _handle_reset_simulation(self) -> None:
         try:
-            await self.session.waraps_session.reset_simulation_session_async()
+            await self.session.subsystem_integration_session.reset_simulation_session_async()
         except Exception as exc:
             self.session.send_runtime_error(f"Failed to reset simulation: {str(exc)}")
 

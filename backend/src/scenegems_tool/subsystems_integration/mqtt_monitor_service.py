@@ -10,8 +10,8 @@ import paho.mqtt.client as mqtt
 from concrete_level.colregs_monitoring.monitored_trajectory import MonitoredSceneWithResults
 from concrete_level.models.concrete_scene import ConcreteScene
 from scenegems_tool.backend_service.serialization import serialize_monitored_frame
-from scenegems_tool.waraps_integration.mqtt_client import MqttClient, MQttConnectionInfo
-from scenegems_tool.waraps_integration.sim_utils import Geofence
+from scenegems_tool.subsystems_integration.mqtt_client import MqttClient, MQttConnectionInfo
+from scenegems_tool.subsystems_integration.sim_utils import Geofence
 
 
 @dataclass(frozen=True)

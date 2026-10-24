@@ -13,8 +13,8 @@ from logical_level.constraint_satisfaction.evaluation_data import EvaluationData
 from scenegems_tool.backend_service.serialization import serialize_frame
 from scenegems_tool.scenario_generation.scenario_generation_types import MqttSceneGenerationTask
 from scenegems_tool.scenario_generation.scene_generation_worker import run_scene_generation_worker
-from scenegems_tool.waraps_integration.mqtt_client import MqttClient, MQttConnectionInfo
-from scenegems_tool.waraps_integration.sim_utils import Geofence
+from scenegems_tool.subsystems_integration.mqtt_client import MqttClient, MQttConnectionInfo
+from scenegems_tool.subsystems_integration.sim_utils import Geofence
 
 _logger = logging.getLogger(__name__)
 MAX_SCENE_GENERATION_WORKERS = 5

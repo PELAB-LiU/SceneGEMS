@@ -10,8 +10,8 @@ from typing import Optional
 
 import yaml
 
-from scenegems_tool.waraps_integration.mqtt_client import MQttConnectionInfo
-from scenegems_tool.waraps_integration.sim_utils import Geofence
+from scenegems_tool.subsystems_integration.mqtt_client import MQttConnectionInfo
+from scenegems_tool.subsystems_integration.sim_utils import Geofence
 from utils.docker_compose_network import attach_broker_network_to_compose
 from utils.file_system_utils import MONITORING_GEN_FOLDER
 
@@ -98,6 +98,7 @@ class MonitorSubsystemContainer:
             "MONITOR_AGENT_NAME": self.agent_name,
             "MONITOR_TOPIC": self.topic,
             "COLREGS_CONSTRAINTS_YAML_B64": constraints_b64,
+            "PYTHONUNBUFFERED": "1",
         }
         service = {
             "image": image,
@@ -105,24 +106,24 @@ class MonitorSubsystemContainer:
             "hostname": self.container_name,
             "environment": environment,
             "cpus": _SERVICE_CPU,
-            "networks": ["monitoring_net"],
+            "networks": [],
         }
 
+        # Only the SceneGEMS compose network. A per-instance bridge becomes the default
+        # route on Docker Desktop and TLS to broker.waraps.org then flaps (connection lost).
         return attach_broker_network_to_compose(
             {
                 "services": {
                     "monitoring": service,
-                },
-                "networks": {
-                    "monitoring_net": {
-                        "driver": "bridge",
-                    }
                 },
             }
         )
 
     def _run_container_lifecycle_startup(self, docker_compose: dict, compose_filename: str) -> None:
         try:
+            if self._shutdown.is_set():
+                return
+            self._reap_same_agent_containers()
             if self._shutdown.is_set():
                 return
             os.makedirs(self.compose_folder, exist_ok=True)
@@ -151,6 +152,28 @@ class MonitorSubsystemContainer:
             self._startup_complete.set()
         except BaseException:
             _logger.exception("MonitoringContainer container lifecycle startup failed")
+
+    def _reap_same_agent_containers(self) -> None:
+        """Drop leftover workers that share this WARA-PS agent name.
+
+        Unique compose projects no longer remove peers, so a previous live-broker
+        container can keep publishing as `scenario_monitor` and the live broker
+        drops the new session.
+        """
+        prefix = f"{_sanitize_docker_name(self.agent_name)[:54]}-"
+        result = subprocess.run(
+            ["docker", "ps", "-a", "--format", "{{.ID}}\t{{.Names}}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        container_ids: list[str] = []
+        for line in result.stdout.splitlines():
+            container_id, _, name = line.partition("\t")
+            if container_id and name.startswith(prefix) and name != self.container_name:
+                container_ids.append(container_id)
+        if container_ids:
+            subprocess.run(["docker", "rm", "-f", *container_ids], check=False)
 
     def _remove_owned_container(self) -> None:
         subprocess.run(["docker", "rm", "-f", self.container_name], check=False)

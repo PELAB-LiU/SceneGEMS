@@ -16,9 +16,9 @@ from scenegems_tool.simulators.gazeboo.vessel_model_generator import generate_ve
 from scenegems_tool.simulators.gazeboo.vessel_service_generator import generate_vessel_service
 from scenegems_tool.simulators.gazeboo.world_generator import generate_world
 from scenegems_tool.simulators.simulation_config import SimulationConfig
-from scenegems_tool.waraps_integration.mqtt_agent_client import MqttAgentClient
-from scenegems_tool.waraps_integration.mqtt_client import MQttConnectionInfo
-from scenegems_tool.waraps_integration.sim_utils import Geofence
+from scenegems_tool.subsystems_integration.mqtt_agent_client import MqttAgentClient
+from scenegems_tool.subsystems_integration.mqtt_client import MQttConnectionInfo
+from scenegems_tool.subsystems_integration.sim_utils import Geofence
 from utils.file_system_utils import GAZEBO_GEN_MOUNT, SIMULATION_GEN_FOLDER, merge_compose_volumes
 
 SIMULATION_COMPOSE_PROJECT = "asv_maritime_net"

@@ -18,9 +18,9 @@ from scenegems_tool.simulators.simulation_docker_stack import (
 )
 
 __all__ = ["SimulationParser", "SimulationParentClient", "SIMULATION_COMPOSE_PROJECT"]
-from scenegems_tool.waraps_integration.mqtt_agent_client import ExecutionState, MqttAgentClient
-from scenegems_tool.waraps_integration.mqtt_client import MQttConnectionInfo
-from scenegems_tool.waraps_integration.sim_utils import Geofence, waypoint_from_state
+from scenegems_tool.subsystems_integration.mqtt_agent_client import ExecutionState, MqttAgentClient
+from scenegems_tool.subsystems_integration.mqtt_client import MQttConnectionInfo
+from scenegems_tool.subsystems_integration.sim_utils import Geofence, waypoint_from_state
 
 _logger = logging.getLogger(__name__)
 

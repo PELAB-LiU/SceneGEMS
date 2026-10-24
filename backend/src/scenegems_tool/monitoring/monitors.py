@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
 
 from scenegems_tool.monitoring.monitor_subsystem_container import MonitorSubsystemContainer
-from scenegems_tool.waraps_integration.mqtt_client import MQttConnectionInfo
-from scenegems_tool.waraps_integration.sim_utils import Geofence
+from scenegems_tool.subsystems_integration.mqtt_client import MQttConnectionInfo
+from scenegems_tool.subsystems_integration.sim_utils import Geofence
 
 
 class MonitorBase(ABC):

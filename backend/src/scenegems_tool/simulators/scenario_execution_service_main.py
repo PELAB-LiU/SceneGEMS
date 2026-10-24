@@ -1,8 +1,8 @@
 import os
 
 from scenegems_tool.simulators.scenario_execution_worker import ScenarioExecutionWorker
-from scenegems_tool.waraps_integration.mqtt_client import MQttConnectionInfo
-from scenegems_tool.waraps_integration.sim_utils import Geofence
+from scenegems_tool.subsystems_integration.mqtt_client import MQttConnectionInfo
+from scenegems_tool.subsystems_integration.sim_utils import Geofence
 
 
 def _env_bool(name: str, default: bool = False) -> bool:

@@ -18,10 +18,10 @@ from scenegems_tool.simulators.scenario_execution_subsystem_container import (
 )
 from scenegems_tool.simulators.simulation_config import SimulationConfig
 from scenegems_tool.simulators.simulation_session import SimulationSession
-from scenegems_tool.waraps_integration.mqtt_client import MQttConnectionInfo
-from scenegems_tool.waraps_integration.mqtt_scenario_execution_client import MqttScenarioExecutionClient
-from scenegems_tool.waraps_integration.mqtt_scenario_execution_service import SCENARIO_EXECUTION_SERVICE_NAME
-from scenegems_tool.waraps_integration.sim_utils import Geofence
+from scenegems_tool.subsystems_integration.mqtt_client import MQttConnectionInfo
+from scenegems_tool.subsystems_integration.mqtt_scenario_execution_client import MqttScenarioExecutionClient
+from scenegems_tool.subsystems_integration.mqtt_scenario_execution_service import SCENARIO_EXECUTION_SERVICE_NAME
+from scenegems_tool.subsystems_integration.sim_utils import Geofence
 from utils.global_constants import ONE_SECOND
 
 _logger = logging.getLogger(__name__)

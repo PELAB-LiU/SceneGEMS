@@ -12,11 +12,11 @@ from scenegems_tool.backend_service.live_scenario_session import LiveScenarioSes
 from scenegems_tool.backend_service.protocol import ClientMessage, ServerMessage, make_error_message, make_monitor_status_message, make_waraps_status_message
 from scenegems_tool.backend_service.scenario_session import ScenarioSession
 from scenegems_tool.simulators.simulation_config import SimulationConfig
-from scenegems_tool.waraps_integration.empty_waraps_session import EmptyWARAPSSession
-from scenegems_tool.waraps_integration.live_waraps_session import LiveWARAPSSession
-from scenegems_tool.waraps_integration.mqtt_client import MQttConnectionInfo, resolve_mqtt_broker_endpoints
-from scenegems_tool.waraps_integration.sim_utils import Geofence
-from scenegems_tool.waraps_integration.waraps_session import WARAPSSession
+from scenegems_tool.subsystems_integration.empty_subsystem_integration_session import EmptySubsystemIntegrationSession
+from scenegems_tool.subsystems_integration.live_subsystem_integration_session import LiveSubsystemIntegrationSession
+from scenegems_tool.subsystems_integration.mqtt_client import MQttConnectionInfo, resolve_mqtt_broker_endpoints
+from scenegems_tool.subsystems_integration.sim_utils import Geofence
+from scenegems_tool.subsystems_integration.subsystem_integration_session import SubsystemIntegrationSession
 
 
 class SocketSession:
@@ -29,8 +29,8 @@ class SocketSession:
         self.waraps_connection_task: asyncio.Task[None] = asyncio.create_task(self._waraps_connection_loop())
 
         self.created_at_utc = datetime.now(timezone.utc).isoformat()
-        self.waraps_session: WARAPSSession = EmptyWARAPSSession(send_payload=self.send_payload)
-        self.scenario_session: ScenarioSession = EmptyScenarioSession(monitor_session=self.waraps_session.monitor_session, send_payload=self.send_payload)
+        self.subsystem_integration_session: SubsystemIntegrationSession = EmptySubsystemIntegrationSession(send_payload=self.send_payload)
+        self.scenario_session: ScenarioSession = EmptyScenarioSession(monitor_session=self.subsystem_integration_session.monitor_session, send_payload=self.send_payload)
 
     @property
     def connection_id(self) -> str:
@@ -39,7 +39,7 @@ class SocketSession:
     async def _waraps_connection_loop(self) -> None:
         while True:
             await asyncio.sleep(1)
-            if self.waraps_session.is_connected:
+            if self.subsystem_integration_session.is_connected:
                 status = "connected"
             else:
                 status = "disconnected"
@@ -77,8 +77,8 @@ class SocketSession:
         )
         if requested_broker and requested_broker.lower() != client_broker.lower():
             print(f"WARAPS broker {requested_broker} resolved to {client_broker} for this container")
-        self.waraps_session.cancel()
-        session = LiveWARAPSSession(
+        self.subsystem_integration_session.cancel()
+        session = LiveSubsystemIntegrationSession(
             mqtt_connection=MQttConnectionInfo(
                 user=user, password=password, agent_broker=agent_broker, client_broker=client_broker, port=port, tls_connection=tls_connection, allow_certificates=allow_certificates
             ),
@@ -91,30 +91,30 @@ class SocketSession:
             # Leave the slot empty so the next attempt starts clean instead of
             # inheriting half-connected MQTT clients from the failed one.
             session.cancel()
-            self.waraps_session = EmptyWARAPSSession(send_payload=self.send_payload)
-            self.scenario_session.set_monitor_session(self.waraps_session.monitor_session)
+            self.subsystem_integration_session = EmptySubsystemIntegrationSession(send_payload=self.send_payload)
+            self.scenario_session.set_monitor_session(self.subsystem_integration_session.monitor_session)
             raise
-        self.waraps_session = session
+        self.subsystem_integration_session = session
 
     def disconnect_from_waraps(self) -> None:
         self.send_payload(make_waraps_status_message(status="disconnected"))
-        self.waraps_session.cancel()
-        self.waraps_session = EmptyWARAPSSession(send_payload=self.send_payload)
-        self.scenario_session.set_monitor_session(self.waraps_session.monitor_session)
+        self.subsystem_integration_session.cancel()
+        self.subsystem_integration_session = EmptySubsystemIntegrationSession(send_payload=self.send_payload)
+        self.scenario_session.set_monitor_session(self.subsystem_integration_session.monitor_session)
 
     def set_monitor_session(self, name: str, topic: str, scope: str, colregs_constraints_content: str) -> None:
-        self.waraps_session.set_monitor_session(name=name, topic=topic, scope=scope, colregs_constraints_content=colregs_constraints_content)
-        self.scenario_session.set_monitor_session(self.waraps_session.monitor_session)
+        self.subsystem_integration_session.set_monitor_session(name=name, topic=topic, scope=scope, colregs_constraints_content=colregs_constraints_content)
+        self.scenario_session.set_monitor_session(self.subsystem_integration_session.monitor_session)
 
     def shut_down_monitor(self) -> None:
         self.send_payload(make_monitor_status_message(status="disconnected"))
-        self.waraps_session.reset_monitor_session()
-        self.scenario_session.set_monitor_session(self.waraps_session.monitor_session)
+        self.subsystem_integration_session.reset_monitor_session()
+        self.scenario_session.set_monitor_session(self.subsystem_integration_session.monitor_session)
 
     def set_scenario_session(self, scenario_id: str, file_name: str, file_path: str, file_content: str) -> None:
-        self.waraps_session.reset_simulation_session()
+        self.subsystem_integration_session.reset_simulation_session()
         self.scenario_session = LiveScenarioSession(
-            scenario_id=scenario_id, file_name=file_name, file_path=file_path, file_content=file_content, monitor_session=self.waraps_session.monitor_session, send_payload=self.send_payload
+            scenario_id=scenario_id, file_name=file_name, file_path=file_path, file_content=file_content, monitor_session=self.subsystem_integration_session.monitor_session, send_payload=self.send_payload
         )
 
     async def monitor_scene(self, request_id: str, scenario_content: str) -> None:
@@ -130,13 +130,13 @@ class SocketSession:
             eval_data = EvaluationData.from_dict(raw_data)
             scene = eval_data.best_scene
             valid = bool(eval_data.is_valid)
-        monitor_session = self.waraps_session.monitor_session
+        monitor_session = self.subsystem_integration_session.monitor_session
         # The live monitor can block while it waits for the monitor heartbeat.
         await asyncio.to_thread(monitor_session.monitor_generated_scene, request_id, scene, {}, valid)
 
     def set_simulation_session(self, simulation_config: SimulationConfig) -> None:
         if self.scenario_session.is_initialized:
-            self.waraps_session.set_simulation_session(scenario_session=self.scenario_session, simulation_config=simulation_config)
+            self.subsystem_integration_session.set_simulation_session(scenario_session=self.scenario_session, simulation_config=simulation_config)
             return
         self.send_runtime_error("No scenario loaded")
 
@@ -148,9 +148,9 @@ class SocketSession:
         if scene is None:
             self.send_runtime_error("No initial scene found")
             return
-        self.waraps_session.simulation_session.generate_vessel_models(scene, simulation_config)
+        self.subsystem_integration_session.simulation_session.generate_vessel_models(scene, simulation_config)
 
     def cancel(self) -> None:
-        self.waraps_session.cancel()
+        self.subsystem_integration_session.cancel()
         self.outbound_task.cancel()
         self.waraps_connection_task.cancel()

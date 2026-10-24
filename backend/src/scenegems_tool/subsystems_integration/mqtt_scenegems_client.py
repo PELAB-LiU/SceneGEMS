@@ -1,7 +1,7 @@
 from typing import List
 
-from scenegems_tool.waraps_integration.mqtt_client import MqttClient, MQttConnectionInfo
-from scenegems_tool.waraps_integration.sim_utils import Geofence
+from scenegems_tool.subsystems_integration.mqtt_client import MqttClient, MQttConnectionInfo
+from scenegems_tool.subsystems_integration.sim_utils import Geofence
 
 
 class MqttSceneGEMSClient(MqttClient):

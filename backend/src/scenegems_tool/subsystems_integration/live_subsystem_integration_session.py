@@ -11,19 +11,19 @@ from scenegems_tool.monitoring.live_monitor_session import LiveMonitorSession
 from scenegems_tool.scenario_generation.scenario_generation_session import ScenarioGenerationSession
 from scenegems_tool.simulators.live_simulation_session import LiveSimulationSession
 from scenegems_tool.simulators.simulation_config import SimulationConfig
+from scenegems_tool.subsystems_integration.mqtt_client import MQttConnectionInfo
+from scenegems_tool.subsystems_integration.mqtt_scenegems_client import MqttSceneGEMSClient
+from scenegems_tool.subsystems_integration.mqtt_scenegems_service import MqttSceneGEMSService
+from scenegems_tool.subsystems_integration.sim_utils import Geofence
+from scenegems_tool.subsystems_integration.subsystem_integration_session import SubsystemIntegrationSession
 from scenegems_tool.trajectory_generation.trajectory_generation_session import TrajectoryGenerationSession
 from scenegems_tool.trajectory_generation.trajectory_generation_types import TrajectoryGenerationParams
-from scenegems_tool.waraps_integration.mqtt_client import MQttConnectionInfo
-from scenegems_tool.waraps_integration.mqtt_scenegems_client import MqttSceneGEMSClient
-from scenegems_tool.waraps_integration.mqtt_scenegems_service import MqttSceneGEMSService
-from scenegems_tool.waraps_integration.sim_utils import Geofence
-from scenegems_tool.waraps_integration.waraps_session import WARAPSSession
 
 _CONNECT_TIMEOUT_SEC = 5.0
 _CONNECT_POLL_INTERVAL_SEC = 0.1
 
 
-class LiveWARAPSSession(WARAPSSession):
+class LiveSubsystemIntegrationSession(SubsystemIntegrationSession):
     def __init__(self, mqtt_connection: MQttConnectionInfo, reference_geofence: Geofence, send_payload: Callable[[ServerMessage], None]):
         super().__init__(send_payload)
 

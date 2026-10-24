@@ -3,10 +3,10 @@ from typing import Callable
 from scenegems_tool.backend_service.protocol import ServerMessage, make_error_message
 from scenegems_tool.backend_service.scenario_session import ScenarioSession
 from scenegems_tool.simulators.simulation_config import SimulationConfig
-from scenegems_tool.waraps_integration.waraps_session import WARAPSSession
+from scenegems_tool.subsystems_integration.subsystem_integration_session import SubsystemIntegrationSession
 
 
-class EmptyWARAPSSession(WARAPSSession):
+class EmptySubsystemIntegrationSession(SubsystemIntegrationSession):
     def __init__(self, send_payload: Callable[[ServerMessage], None]):
         super().__init__(send_payload)
 

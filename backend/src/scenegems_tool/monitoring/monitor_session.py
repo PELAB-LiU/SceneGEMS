@@ -12,6 +12,8 @@ from scenegems_tool.backend_service.protocol import (
 )
 from scenegems_tool.backend_service.serialization import serialize_frame
 
+# Keep MQTT payloads small on the live WARA-PS broker. Batches of 100 scenes were
+# large enough that the monitor worker lost the TLS session (paho CONN_LOST).
 SCENARIO_CHUNK_BATCH_SIZE = 100
 
 

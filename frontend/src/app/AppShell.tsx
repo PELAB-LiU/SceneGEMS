@@ -71,6 +71,7 @@ export function AppShell() {
   const sceneGenerationLivePreview = useUiStore((s) => s.sceneGenerationLivePreview);
   const setSceneGenerationLivePreview = useUiStore((s) => s.setSceneGenerationLivePreview);
   const sceneGenerationPaneView = useUiStore((s) => s.sceneGenerationPaneView);
+  const setControlPanelMode = useUiStore((s) => s.setControlPanelMode);
   const isSceneGenerationBusy =
     activeSceneGenerationRequestId !== null || batchGenerationRunning;
   const latestGeneratedScene = usePlaybackStore((s) => s.latestGeneratedScene);
@@ -163,12 +164,13 @@ export function AppShell() {
     let wasInitialized = usePlaybackStore.getState().simulationInitialized;
     const unsubscribe = usePlaybackStore.subscribe((state) => {
       if (!wasInitialized && state.simulationInitialized) {
+        setControlPanelMode("animation");
         setActiveView("simulation");
       }
       wasInitialized = state.simulationInitialized;
     });
     return unsubscribe;
-  }, [setActiveView]);
+  }, [setActiveView, setControlPanelMode]);
 
   useEffect(() => {
     if (
@@ -441,10 +443,11 @@ export function AppShell() {
         fileContent ?? formatScenarioJsonForExport(evaluationData, scene);
       const evaluationFile = new File([content], fileName, { type: "application/json" });
       await streamControls.loadScenarioFromFile(evaluationFile);
+      setControlPanelMode("animation");
       setActiveView("simulation");
       requestAutoFit();
     },
-    [streamControls, requestAutoFit, setActiveView]
+    [streamControls, requestAutoFit, setActiveView, setControlPanelMode]
   );
 
   const handleScenarioFileSelected = useCallback(
@@ -879,6 +882,7 @@ export function AppShell() {
                       colregsConstraintsContent={colregsConstraintsText}
                       onNavigateToSimulation={() => {
                         requestAutoFit();
+                        setControlPanelMode("animation");
                         setActiveView("simulation");
                       }}
                     />

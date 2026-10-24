@@ -10,7 +10,7 @@ from scenegems_tool.simulators.simulation_config import SimulationConfig
 from scenegems_tool.simulators.simulation_session import SimulationSession
 
 
-class WARAPSSession(ABC):
+class SubsystemIntegrationSession(ABC):
     def __init__(self, send_payload: Callable[[ServerMessage], None]):
         self.send_payload = send_payload
         self.monitor_session: MonitorSession = EmptyMonitorSession(send_payload)
