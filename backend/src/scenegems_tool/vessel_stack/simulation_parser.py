@@ -151,5 +151,6 @@ class SimulationParser:
             destroy_simulation_docker_stack()
 
     @property
-    def clock(self) -> float:
-        return max(client.clock for client in self.clients)
+    def simulator_clocks(self) -> List[float]:
+        """Simulated time each ArduAgent reports from its SITL (SYSTEM_TIME), in seconds; 0 until the first report."""
+        return [client.clock for client in self.clients]

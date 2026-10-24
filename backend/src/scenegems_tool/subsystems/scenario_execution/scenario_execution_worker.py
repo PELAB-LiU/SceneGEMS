@@ -29,6 +29,8 @@ class ScenarioExecutionWorker:
     """Runs simulation orchestration inside the scenario-execution Docker container."""
 
     AGENTS_READY_POLL_INTERVAL_SEC = 1.0
+    SIMULATOR_CLOCK_POLL_INTERVAL_SEC = 0.02
+    SIMULATOR_CLOCK_STALL_WARNING_SEC = 10.0
     OBSTACLE_DISTANCES_UPDATE_INTERVAL_SEC = 0.1
     OBSTACLE_DISTANCES_RAY_INCREMENT = 5
     EVASIVE_FORWARD_PWM = 0.12
@@ -186,26 +188,48 @@ class ScenarioExecutionWorker:
         return True
 
     def _stream_simulation_clock_ticks(self) -> None:
+        """Publish one state per time step of simulated time, read from the simulators.
+
+        Every ArduAgent reports its SITL clock (SYSTEM_TIME). The scenario clock is the time
+        that every vessel's simulator has advanced since the run started, so it slows down
+        with the simulators instead of following the wall clock scaled by the speedup.
+        Several steps that pass between two polls are published one by one, in order.
+        """
         self._running_simulation_clock = 0.0
-        self._sync_agent_clocks(0.0)
         self._publish_simulation_state()
-        tick_interval = float(self.time_step) / max(1, self.simulation_config.speedup)
-        next_emit_at = time.monotonic() + tick_interval
+        origins = self._wait_for_simulator_clocks()
+        if origins is None:
+            self._running_simulation_clock = None
+            return
+        step = float(self.time_step)
+        last_advance_at = time.monotonic()
         while not self._stop_event.is_set():
             if not self.simulation_parser.are_agents_running:
                 self._running_simulation_clock = None
                 return
-            now = time.monotonic()
-            if now >= next_emit_at:
-                self._running_simulation_clock += float(self.time_step)
-                self._sync_agent_clocks(self._running_simulation_clock)
-                next_emit_at += tick_interval
+            elapsed = [clock - origin for clock, origin in zip(self.simulation_parser.simulator_clocks, origins)]
+            while self._running_simulation_clock is not None and self._running_simulation_clock + step <= min(elapsed):
+                self._running_simulation_clock += step
+                # Publishing resets the clock to None when the agents stopped running.
                 self._publish_simulation_state()
-            time.sleep(min(tick_interval / 10.0, 0.05))
+                last_advance_at = time.monotonic()
+            if self._running_simulation_clock is None:
+                return
+            if time.monotonic() - last_advance_at > self.SIMULATOR_CLOCK_STALL_WARNING_SEC:
+                _logger.warning("Simulator clocks have not advanced a time step for %.0f s (elapsed per vessel: %s)", self.SIMULATOR_CLOCK_STALL_WARNING_SEC, elapsed)
+                last_advance_at = time.monotonic()
+            self._stop_event.wait(self.SIMULATOR_CLOCK_POLL_INTERVAL_SEC)
 
-    def _sync_agent_clocks(self, simulation_clock: float) -> None:
-        for client in self.simulation_parser.clients:
-            client.clock = simulation_clock
+    def _wait_for_simulator_clocks(self) -> Optional[List[float]]:
+        """Simulator clock of every vessel at the start of the run, once each has reported one."""
+        while not self._stop_event.is_set():
+            if not self.simulation_parser.are_agents_running:
+                return None
+            clocks = self.simulation_parser.simulator_clocks
+            if all(clock > 0 for clock in clocks):
+                return clocks
+            self._stop_event.wait(self.SIMULATOR_CLOCK_POLL_INTERVAL_SEC)
+        return None
 
     def _compute_status(self) -> SimulationStatus:
         if self.simulation_parser.are_agents_running:
