@@ -25,7 +25,7 @@ _CAPABILITY_PARSERS: Dict[str, Callable[[Any], Any]] = {
     "waves": EnvironmentSupport,
     "max_speedup": _optional_float,
 }
-_RECORD_FIELDS = {"notes", "deviation_bounds_m", "evidence"}
+_RECORD_FIELDS = {"notes", "deviation_bounds_m", "host_max_speedup", "evidence"}
 
 
 @dataclass(frozen=True)
@@ -34,7 +34,12 @@ class CapabilityMeasurement:
     overrides: Tuple[Tuple[str, Any], ...]  # (Capabilities field, measured value)
     notes: Tuple[Tuple[str, str], ...] = ()
     deviation_bounds_m: Tuple[Tuple[float, float], ...] = ()  # (speedup, max deviation in meters)
+    # (host label, max speedup) for stacks whose pace depends on the machine; max_speedup stays null for them.
+    host_max_speedup: Tuple[Tuple[str, float], ...] = ()
     evidence: str = ""
+
+    def max_speedup_on(self, host: Optional[str]) -> Optional[float]:
+        return dict(self.host_max_speedup).get(host) if host is not None else None
 
     def apply(self, capabilities: Capabilities) -> Capabilities:
         return dataclasses.replace(capabilities, **dict(self.overrides))
@@ -47,7 +52,15 @@ def parse_capability_measurement(spec_id: str, entry: Mapping[str, Any]) -> Capa
     overrides = tuple((name, parse(entry[name])) for name, parse in _CAPABILITY_PARSERS.items() if name in entry)
     notes = tuple((str(name), str(text)) for name, text in (entry.get("notes") or {}).items())
     bounds = tuple(sorted((float(speedup), float(deviation)) for speedup, deviation in (entry.get("deviation_bounds_m") or {}).items()))
-    return CapabilityMeasurement(spec_id=spec_id, overrides=overrides, notes=notes, deviation_bounds_m=bounds, evidence=str(entry.get("evidence", "")).strip())
+    host_limits = tuple(sorted((str(host), float(limit)) for host, limit in (entry.get("host_max_speedup") or {}).items()))
+    return CapabilityMeasurement(
+        spec_id=spec_id,
+        overrides=overrides,
+        notes=notes,
+        deviation_bounds_m=bounds,
+        host_max_speedup=host_limits,
+        evidence=str(entry.get("evidence", "")).strip(),
+    )
 
 
 def load_capability_measurements(path: str = MEASURED_CAPABILITIES_FILE) -> Dict[str, CapabilityMeasurement]:

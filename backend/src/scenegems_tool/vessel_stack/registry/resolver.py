@@ -140,8 +140,12 @@ class StackResolver:
                     reasons.append(f"{spec.id} is planned{phase} and not implemented yet")
         return ChainResolution(stack=stack, specs=specs, complete=complete, reasons=tuple(reasons))
 
-    def resolve_instance(self, instance: SimulationInstanceConfig, *, attended: bool = True) -> InstanceResolution:
-        """Validate a whole simulation instance. attended=False is an unattended campaign run."""
+    def resolve_instance(self, instance: SimulationInstanceConfig, *, attended: bool = True, host: Optional[str] = None) -> InstanceResolution:
+        """Validate a whole simulation instance.
+
+        attended=False is an unattended campaign run. host names the machine that will run it,
+        so a per-host max_speedup applies; without it a per-host value only warns.
+        """
         errors: List[str] = []
         warnings: List[str] = []
         chains: Dict[str, ChainResolution] = {}
@@ -158,15 +162,42 @@ class StackResolver:
         specs = _unique(spec for chain in chains.values() for spec in chain.specs)
         capabilities = weakest_link(spec.capabilities for spec in specs)
         _check_environment(specs, instance.environment, errors, warnings)
-        _check_speedup(specs, instance.speedup, errors, warnings)
+        self._check_speedup(specs, instance.speedup, host, errors, warnings)
         if capabilities.interactive_only and not attended:
             for spec in specs:
                 if spec.capabilities.interactive_only:
                     errors.append(_with_note(f"{spec.id} is interactive only and is rejected for unattended runs", spec, "interactive_only"))
         return InstanceResolution(instance=instance, chains=chains, capabilities=capabilities, errors=tuple(errors), warnings=tuple(warnings))
 
-    def require_instance(self, instance: SimulationInstanceConfig, *, attended: bool = True) -> InstanceResolution:
-        return self.resolve_instance(instance, attended=attended).require()
+    def require_instance(self, instance: SimulationInstanceConfig, *, attended: bool = True, host: Optional[str] = None) -> InstanceResolution:
+        return self.resolve_instance(instance, attended=attended, host=host).require()
+
+    def _check_speedup(self, specs: Iterable[AnySpec], speedup: float, host: Optional[str], errors: List[str], warnings: List[str]) -> None:
+        if speedup < 1:
+            errors.append(f"speedup {speedup:g} is below 1; slower than real time is not supported")
+            return
+        if speedup == 1:
+            return
+        real_time_only = [spec.id for spec in specs if not spec.capabilities.faster_than_real_time]
+        if real_time_only:
+            errors.append(f"speedup {speedup:g} requested, but {', '.join(real_time_only)} cannot run faster than real time, so this stack is capped at 1x")
+            return
+        unverified = []
+        exceeded = False
+        for spec in specs:
+            limit = spec.capabilities.max_speedup
+            measurement = self.registry.measurement(spec.id)
+            if limit is None and measurement is not None:
+                limit = measurement.max_speedup_on(host)
+            if limit is None:
+                per_host = ", ".join(f"{value:g}x on {label}" for label, value in measurement.host_max_speedup) if measurement is not None else ""
+                unverified.append(f"{spec.id} (measured per host: {per_host})" if per_host else spec.id)
+            elif speedup > limit:
+                exceeded = True
+                where = f" on {host}" if spec.capabilities.max_speedup is None else ""
+                errors.append(f"speedup {speedup:g} exceeds the measured max_speedup {limit:g} of {spec.id}{where}")
+        if unverified and not exceeded:
+            warnings.append(f"speedup {speedup:g} is unverified: max_speedup of {', '.join(unverified)} is not measured for this host")
 
     def availability_matrix(self) -> List[ChainResolution]:
         """Every combination of the three roles, in the order of the design's availability table."""
@@ -200,21 +231,3 @@ def _check_environment(specs: Iterable[AnySpec], environment: EnvironmentConfig,
                 errors.append(_with_note(f"{capability} requested, but {spec.id} does not support {capability}", spec, capability))
             elif support == EnvironmentSupport.UNMEASURED:
                 warnings.append(_with_note(f"{capability} requested, but support for {capability} in {spec.id} is unmeasured", spec, capability))
-
-
-def _check_speedup(specs: Iterable[AnySpec], speedup: float, errors: List[str], warnings: List[str]) -> None:
-    if speedup < 1:
-        errors.append(f"speedup {speedup:g} is below 1; slower than real time is not supported")
-        return
-    if speedup == 1:
-        return
-    real_time_only = [spec.id for spec in specs if not spec.capabilities.faster_than_real_time]
-    if real_time_only:
-        errors.append(f"speedup {speedup:g} requested, but {', '.join(real_time_only)} cannot run faster than real time, so this stack is capped at 1x")
-        return
-    exceeded = [spec for spec in specs if spec.capabilities.max_speedup is not None and speedup > spec.capabilities.max_speedup]
-    for spec in exceeded:
-        errors.append(f"speedup {speedup:g} exceeds the measured max_speedup {spec.capabilities.max_speedup:g} of {spec.id}")
-    unmeasured = [spec.id for spec in specs if spec.capabilities.max_speedup is None]
-    if unmeasured and not exceeded:
-        warnings.append(f"speedup {speedup:g} is unverified: max_speedup of {', '.join(unmeasured)} is not measured yet")

@@ -12,36 +12,81 @@
 # Fields, all optional:
 #   repeatability_tier     exact | bounded | none
 #   exact_up_to_speedup    a bounded stack that was measured bit-identical up to this speedup
-#   max_speedup            highest speedup measured to track the request; null means not measured yet
+#   max_speedup            highest speedup measured to track the request; .inf means no limit
+#                          of its own; null means not measured, or measured per host only
+#   host_max_speedup       {host label: max speedup} where the pace depends on the machine;
+#                          applies when the resolver is told the host, otherwise it warns
 #   lockstep, faster_than_real_time   true | false, when a measurement overrides the declaration
 #   wind, waves            supported | unmeasured | unsupported
 #   notes                  {capability field: reason shown when that field rejects a request}
 #   deviation_bounds_m     {speedup: max trajectory deviation in meters} behind a bounded tier
 #   evidence               how and when the values were measured
+#
+# Phase 0 measurements, 2026-10-24 (design doc section 10.5): one vessel, straight run,
+# MAVLink driver straight to SITL, 12-core Windows host with Docker Desktop.
+
+simulation_layer/kinematic:
+  wind: unsupported
+  waves: unsupported
+  evidence: >-
+    No environment model in ConcreteVessel.simulate (same as the spec declares).
 
 kinematic_command_input:
   repeatability_tier: exact
-  max_speedup: 10000
+  max_speedup: .inf
   evidence: >-
-    Phase 0, 2026-10-24: ConcreteVessel.simulate closed-loop runs are bit-identical across
-    repeats and across PYTHONHASHSEED values. 14,000 to 16,000 two-vessel steps per second
-    on one core at a 1 s step, so 10,000 times real time is a lower bound.
+    ConcreteVessel.simulate closed-loop runs are bit-identical across repeats and across
+    PYTHONHASHSEED values. 14,000 to 16,000 two-vessel steps per second on one core at a
+    1 s step: over 10,000 times real time, limited only by the CPU.
+
+simulation_layer/ardupilot_sim:
+  wind: unsupported
+  waves: supported
+  notes:
+    wind: 5 m/s cross wind had no measurable effect on the SITL boat (end position within 1 cm)
+  evidence: >-
+    Wind of 5 m/s from the south left the end position within 1 cm of the calm run. Waves of
+    0.5 m amplitude had a measurable effect (onset 0.9 s instead of 0.3 s, end position 0.9 m
+    further). Wave realism is not validated.
 
 sitl_internal_physics:
   repeatability_tier: bounded
   exact_up_to_speedup: 1
   max_speedup: 100
   deviation_bounds_m:
+    1: 0.0
     5: 0.083
     20: 0.17
   evidence: >-
-    Phase 0, 2026-10-24, ardupilot_sim with the ardupilot control layer: bit-identical at 1x.
-    Max deviation 0.083 m at 5x and 0.17 m at 20x over 90 s of straight travel, caused by
-    wall-clock command injection timing. Achieved speed tracks the request up to 100x.
+    ardupilot_sim with the ardupilot control layer: three repeats bit-identical at 1x. Max
+    deviation 0.083 m at 5x and 0.17 m at 20x over 90 s of straight travel, caused by
+    wall-clock command injection timing. Achieved 5.02x, 20.3x, 51.9x and 102.9x for
+    requests of 5, 20, 50 and 100, so max_speedup is at least 100.
+
+simulation_layer/gazebo:
+  wind: unsupported
+  waves: unsupported
+  notes:
+    wind: wind had no measurable effect (0.3 m, inside the 0.4 m repeat deviation); the hull links probably lack enable_wind
+    waves: the Gazebo waves system is commented out in world_generator.py and is not enabled yet
+  evidence: >-
+    Wind of 5 m/s moved the end position by about 0.3 m, inside the repeat deviation. Waves
+    have no effect because the waves system is commented out.
 
 ardupilot_gazebo_plugin:
   repeatability_tier: bounded
   max_speedup: null
+  host_max_speedup:
+    phase0_windows_12_core: 4.4
+  deviation_bounds_m:
+    1: 0.47
+    2: 0.41
+    5: 0.54
   evidence: >-
-    Pending: Phase 0 items 1 to 3 (repeatability over 5 seeded repeats, max_speedup at
-    1, 2, 5, 10 and 20 times, and which setting paces Gazebo and SITL under the JSON backend).
+    gazebo with the ardupilot control layer is not repeatable even at 1x (0.47 m over 85 s,
+    2 repeats). Paced by Gazebo physics under the JSON lockstep backend: about 4.4x per
+    instance on the 12-core host and about 7x in aggregate with two instances (the 5x
+    request achieved 3.5x per instance with two in parallel). max_speedup is a per-host
+    value; nodes measure and report their own in Phase 3. The vessel weaves (heading 45 to
+    116 degrees, up to 24 m cross-track), so Gazebo runs are not assurance evidence until
+    the control layer is tuned per vessel model.
