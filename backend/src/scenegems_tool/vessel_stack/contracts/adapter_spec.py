@@ -9,7 +9,7 @@ declared as an UnsupportedConnection, so the resolver can say why it is missing.
 import dataclasses
 from dataclasses import dataclass
 from enum import Enum
-from typing import FrozenSet, Optional, Tuple
+from typing import FrozenSet, Optional, Tuple, Union
 
 from scenegems_tool.vessel_stack.contracts.capabilities import Capabilities
 from scenegems_tool.vessel_stack.contracts.ports import Port
@@ -36,6 +36,8 @@ class LayerSpec:
     layer: LayerRef
     description: str
     capabilities: Capabilities = Capabilities()
+    # (capability field, reason) pairs, shown when that capability rejects a request.
+    restriction_notes: Tuple[Tuple[str, str], ...] = ()
     provides_ports: FrozenSet[Port] = frozenset()
     requires_ports: FrozenSet[Port] = frozenset()
     containers: Tuple[ContainerSpec, ...] = ()
@@ -46,8 +48,11 @@ class LayerSpec:
     def id(self) -> str:
         return str(self.layer)
 
-    def with_capabilities(self, capabilities: Capabilities) -> "LayerSpec":
-        return dataclasses.replace(self, capabilities=capabilities)
+    def note_for(self, capability: str) -> Optional[str]:
+        return dict(self.restriction_notes).get(capability)
+
+    def with_capabilities(self, capabilities: Capabilities, restriction_notes: Tuple[Tuple[str, str], ...] = ()) -> "LayerSpec":
+        return dataclasses.replace(self, capabilities=capabilities, restriction_notes=_merge_notes(self.restriction_notes, restriction_notes))
 
 
 @dataclass(frozen=True)
@@ -57,11 +62,15 @@ class AdapterSpec:
     target: LayerRef
     description: str
     capabilities: Capabilities = Capabilities()
+    restriction_notes: Tuple[Tuple[str, str], ...] = ()
     provides_ports: FrozenSet[Port] = frozenset()
     requires_ports: FrozenSet[Port] = frozenset()
     containers: Tuple[ContainerSpec, ...] = ()
     status: SpecStatus = SpecStatus.AVAILABLE
     planned_phase: Optional[int] = None
+
+    def note_for(self, capability: str) -> Optional[str]:
+        return dict(self.restriction_notes).get(capability)
 
     @property
     def from_role(self) -> Role:
@@ -79,8 +88,14 @@ class AdapterSpec:
     def to_impl(self) -> str:
         return self.target.impl
 
-    def with_capabilities(self, capabilities: Capabilities) -> "AdapterSpec":
-        return dataclasses.replace(self, capabilities=capabilities)
+    def with_capabilities(self, capabilities: Capabilities, restriction_notes: Tuple[Tuple[str, str], ...] = ()) -> "AdapterSpec":
+        return dataclasses.replace(self, capabilities=capabilities, restriction_notes=_merge_notes(self.restriction_notes, restriction_notes))
+
+
+def _merge_notes(base: Tuple[Tuple[str, str], ...], override: Tuple[Tuple[str, str], ...]) -> Tuple[Tuple[str, str], ...]:
+    merged = dict(base)
+    merged.update(override)
+    return tuple(merged.items())
 
 
 @dataclass(frozen=True)
@@ -90,3 +105,6 @@ class UnsupportedConnection:
     source: LayerRef
     target: LayerRef
     reason: str
+
+
+AnySpec = Union[LayerSpec, AdapterSpec]

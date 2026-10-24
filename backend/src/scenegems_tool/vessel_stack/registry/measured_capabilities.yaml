@@ -1,0 +1,47 @@
+# Measured capability values of the vessel stack specs.
+#
+# This file is the only place for measured numbers. Specs in code declare structural
+# capabilities and conservative defaults; an entry here replaces the named capability
+# fields of the spec with the same id when the registry is built.
+#
+# Keys are spec ids: "<role>/<impl>" for a layer (for example simulation_layer/gazebo),
+# the adapter id for an adapter. Measurements of a control and simulation pair go on the
+# adapter that links the two (for example sitl_internal_physics for ardupilot_sim with
+# the ardupilot control layer).
+#
+# Fields, all optional:
+#   repeatability_tier     exact | bounded | none
+#   exact_up_to_speedup    a bounded stack that was measured bit-identical up to this speedup
+#   max_speedup            highest speedup measured to track the request; null means not measured yet
+#   lockstep, faster_than_real_time   true | false, when a measurement overrides the declaration
+#   wind, waves            supported | unmeasured | unsupported
+#   notes                  {capability field: reason shown when that field rejects a request}
+#   deviation_bounds_m     {speedup: max trajectory deviation in meters} behind a bounded tier
+#   evidence               how and when the values were measured
+
+kinematic_command_input:
+  repeatability_tier: exact
+  max_speedup: 10000
+  evidence: >-
+    Phase 0, 2026-10-24: ConcreteVessel.simulate closed-loop runs are bit-identical across
+    repeats and across PYTHONHASHSEED values. 14,000 to 16,000 two-vessel steps per second
+    on one core at a 1 s step, so 10,000 times real time is a lower bound.
+
+sitl_internal_physics:
+  repeatability_tier: bounded
+  exact_up_to_speedup: 1
+  max_speedup: 100
+  deviation_bounds_m:
+    5: 0.083
+    20: 0.17
+  evidence: >-
+    Phase 0, 2026-10-24, ardupilot_sim with the ardupilot control layer: bit-identical at 1x.
+    Max deviation 0.083 m at 5x and 0.17 m at 20x over 90 s of straight travel, caused by
+    wall-clock command injection timing. Achieved speed tracks the request up to 100x.
+
+ardupilot_gazebo_plugin:
+  repeatability_tier: bounded
+  max_speedup: null
+  evidence: >-
+    Pending: Phase 0 items 1 to 3 (repeatability over 5 seeded repeats, max_speedup at
+    1, 2, 5, 10 and 20 times, and which setting paces Gazebo and SITL under the JSON backend).
