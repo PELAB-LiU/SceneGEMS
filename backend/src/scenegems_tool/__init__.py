@@ -12,10 +12,11 @@ Present now:
     subsystems/     one package per subsystem
         scene_generation/, trajectory_generation/, monitoring/, scenario_execution/
     vessel_stack/   ASV software, control layer and simulation layer as adapters
-        contracts/              shared types and geodetic helpers
-        simulation_layers/      gazebo/ (generators), later kinematic/ and ardupilot_sim/
+        contracts/              roles, ports, capabilities, adapter specs, clock, stack config
+        registry/               adapter registry, resolver, measured capability data
+        simulation_layers/      kinematic/ (in process), gazebo/ (generators), ardupilot_sim/
         control_layers/         ardupilot/, later custom/
-        asv_software/           replay/, later usv_navigation/ and mission_planner/
+        asv_software/           replay/, mission_planner/ (specs), later usv_navigation/
     cluster/        distributed integration layer
         node/                   local subsystem launcher teardown, later the node daemon
 
@@ -23,7 +24,7 @@ Planned (added by later phases):
     assurance/      campaign configuration and the per-scenario pipeline
     cluster/master/ scheduler, node registry, pairing
     persistence/    database access and artifact store
-    vessel_stack/registry/, vessel_stack/adapters/
+    vessel_stack/adapters/      shared edges between layers (mavlink, gz_transport)
 """
 
 __all__: list[str] = []
