@@ -14,7 +14,7 @@ from logical_level.mapping.instance_initializer import RandomInstanceInitializer
 from logical_level.mapping.logical_scenario_builder import LogicalScenarioBuilder
 from logical_level.mapping.static_obstacle import StaticObstacleTypeMap
 from logical_level.mapping.vessel_type import VesselTypeMap
-from scenegems_tool.scenario_generation.scenario_generation_types import MqttSceneGenerationTask
+from scenegems_tool.subsystems.scene_generation.scenario_generation_types import MqttSceneGenerationTask
 from utils.colregs_approximations import COLREGSConstraints
 
 _MSR_CDRS_PS = "rs-msr"

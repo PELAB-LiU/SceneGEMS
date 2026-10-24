@@ -4,7 +4,7 @@ import asyncio
 from typing import Callable
 
 from scenegems_tool.gateway.protocol import ServerMessage
-from scenegems_tool.scenario_generation.scenario_generation_container import ScenarioGenerationContainer
+from scenegems_tool.subsystems.scene_generation.scenario_generation_container import ScenarioGenerationContainer
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.messaging.mqtt_scenario_generation_client import GeneratedSceneHandler, MqttScenarioGenerationClient
 from scenegems_tool.messaging.mqtt_scenario_generation_service import SCENARIO_GENERATION_SERVICE_NAME, SCENARIO_GENERATION_SERVICE_TOPIC
