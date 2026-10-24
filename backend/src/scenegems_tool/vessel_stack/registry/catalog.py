@@ -10,6 +10,7 @@ from typing import Mapping, Optional
 
 from scenegems_tool.vessel_stack.asv_software.mission_planner.mission_planner_specs import MISSION_PLANNER_LAYER, MISSION_PLANNER_MAVLINK_PORT
 from scenegems_tool.vessel_stack.asv_software.replay.replay_specs import REPLAY_ARDUAGENT_FOLLOWER, REPLAY_LAYER, REPLAY_STATE_FOLLOWER
+from scenegems_tool.vessel_stack.asv_software.usv_navigation.usv_navigation_specs import USV_NAVIGATION_IN_PROCESS, USV_NAVIGATION_LAYER
 from scenegems_tool.vessel_stack.contracts.adapter_spec import AdapterSpec, LayerSpec, SpecStatus, UnsupportedConnection
 from scenegems_tool.vessel_stack.contracts.ports import Port
 from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, LayerRef, SimulationLayerId
@@ -38,28 +39,11 @@ NONE_CONTROL_LAYER = LayerSpec(
 
 # Planned for Phase 2 (design section 7).
 
-USV_NAVIGATION_LAYER = LayerSpec(
-    layer=_USV_NAVIGATION,
-    description="USV Navigation (colav_automaton.SyncColavRuntime) in process, stepped by the simulation clock.",
-    requires_ports=frozenset({Port.VESSEL_STATE, Port.CLOCK}),
-    status=SpecStatus.PLANNED,
-    planned_phase=2,
-)
 CUSTOM_CONTROL_LAYER = LayerSpec(
     layer=_CUSTOM,
     description="Own controller for real-scale vessels, Gazebo only.",
     provides_ports=frozenset({Port.ACTUATOR_CMD}),
     requires_ports=frozenset({Port.HEADING_SPEED_CMD, Port.WAYPOINT_MISSION}),
-    status=SpecStatus.PLANNED,
-    planned_phase=2,
-)
-USV_NAVIGATION_IN_PROCESS = AdapterSpec(
-    id="usv_navigation_in_process",
-    source=_USV_NAVIGATION,
-    target=_NONE,
-    description="In-process USV Navigation adapter, output as heading_speed_cmd.",
-    provides_ports=frozenset({Port.HEADING_SPEED_CMD}),
-    requires_ports=frozenset({Port.VESSEL_STATE, Port.CLOCK}),
     status=SpecStatus.PLANNED,
     planned_phase=2,
 )
@@ -127,6 +111,12 @@ def _replay_follower():
     return ReplayFollower
 
 
+def _usv_navigation_participant():
+    from scenegems_tool.vessel_stack.asv_software.usv_navigation.usv_navigation_participant import UsvNavigationParticipant
+
+    return UsvNavigationParticipant
+
+
 def _ardupilot_control_layer():
     from scenegems_tool.vessel_stack.control_layers.ardupilot.ardupilot_control_layer import ArduPilotControlLayer
 
@@ -159,12 +149,13 @@ def build_registry(measurements: Optional[Mapping[str, CapabilityMeasurement]] =
     registry.register_layer(ARDUPILOT_SIM_LAYER, runtime=_ardupilot_sim_layer)
 
     registry.register_adapter(REPLAY_STATE_FOLLOWER, runtime=_replay_follower)
+    registry.register_adapter(USV_NAVIGATION_IN_PROCESS, runtime=_usv_navigation_participant)
     registry.register_adapter(REPLAY_ARDUAGENT_FOLLOWER)
     registry.register_adapter(MISSION_PLANNER_MAVLINK_PORT)
     registry.register_adapter(KINEMATIC_COMMAND_INPUT)
     registry.register_adapter(SITL_INTERNAL_PHYSICS)
     registry.register_adapter(ARDUPILOT_GAZEBO_PLUGIN)
-    for planned in (USV_NAVIGATION_IN_PROCESS, USV_NAVIGATION_MAVLINK_GUIDED, CUSTOM_CONTROLLER_WAYPOINT_FOLLOWER, CUSTOM_CONTROLLER_HEADING_SPEED_INPUT, GZ_TRANSPORT_ACTUATOR):
+    for planned in (USV_NAVIGATION_MAVLINK_GUIDED, CUSTOM_CONTROLLER_WAYPOINT_FOLLOWER, CUSTOM_CONTROLLER_HEADING_SPEED_INPUT, GZ_TRANSPORT_ACTUATOR):
         registry.register_adapter(planned)
 
     for connection in UNSUPPORTED_CONNECTIONS:
