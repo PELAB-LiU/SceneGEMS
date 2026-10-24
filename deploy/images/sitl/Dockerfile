@@ -48,7 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /opt/ardupilot/ArduRover
 
-COPY gazebo/sitl_entrypoint.sh /scripts/sitl_entrypoint.sh
+COPY deploy/images/gazebo/sitl_entrypoint.sh /scripts/sitl_entrypoint.sh
 RUN chmod +x /scripts/sitl_entrypoint.sh
 
 CMD ["bash"]

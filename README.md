@@ -8,9 +8,10 @@ Monorepo for automated COLREGS scene generation, simulation orchestration, and t
 |-----------|------|-------------|
 | **Backend** | [`backend/`](backend/) | Python WebSocket service, scene generation, simulation orchestration |
 | **Frontend** | [`frontend/`](frontend/) | React/Vite UI for scenario exploration and playback |
-| **MQTT broker** | [`mqtt_broker/`](mqtt_broker/) | NanoMQ image used by the main compose stack |
-| **Simulation images** | `gazebo/`, `sitl/`, `mavproxy/`, `arduagent/` | Gazebo Harmonic + ArduPilot SITL Docker images |
-| **Subsystems** | `monitoring/`, `scenario_generation/`, `scenario_execution/` | Containerized worker images spawned by the backend |
+| **Deployment** | [`deploy/`](deploy/) | Docker images, master compose file, build and start scripts (see [`deploy/README.md`](deploy/README.md)) |
+| **MQTT broker** | [`deploy/images/mqtt_broker/`](deploy/images/mqtt_broker/) | NanoMQ image used by the main compose stack |
+| **Simulation images** | `deploy/images/gazebo/`, `sitl/`, `mavproxy/`, `arduagent/` | Gazebo Harmonic + ArduPilot SITL Docker images |
+| **Subsystems** | `deploy/images/monitoring/`, `scenario_generation/`, `scenario_execution/`, `trajectory_generation/` | Containerized worker images spawned by the backend |
 
 ## System requirements
 
@@ -62,7 +63,7 @@ Press **Ctrl+C** while `start.sh` is tailing backend logs to stop the stack. Shu
 
 ## Building images
 
-[`build.sh`](build.sh) rebuilds only when inputs change (fingerprints stored under `.docker-stamps/`). Use `--no-check` to force a rebuild.
+[`build.sh`](build.sh) (a wrapper for [`deploy/scripts/build.sh`](deploy/scripts/build.sh)) rebuilds only when inputs change (fingerprints stored under `.docker-stamps/`). Use `--no-check` to force a rebuild.
 
 ```bash
 ./build.sh --help
@@ -200,7 +201,7 @@ Large measurement datasets are not shipped in the repo; see [`backend/README.md`
 
 ## Configuration reference
 
-### Main compose stack ([`docker-compose.yml`](docker-compose.yml))
+### Main compose stack ([`deploy/master/docker-compose.yml`](deploy/master/docker-compose.yml))
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -227,7 +228,7 @@ Large measurement datasets are not shipped in the repo; see [`backend/README.md`
 | Scene generation hangs | Ensure `scenegems-scenario-generation-subsystem` image exists (`./build.sh --backend`); inspect `docker logs scenegems_backend` |
 | Simulation / Gazebo errors | Run `./build.sh --simulation` (and `--arduagent` if using ArduPilot agents); backend needs Docker socket access |
 | Stale behavior after code changes | `./build.sh --backend --no-check` (or relevant target with `--no-check`) |
-| Windows Gazebo GUI issues | Invalid `DISPLAY` falls back to headless in `gazebo/entrypoint.sh`; use `GZ_HEADLESS=1` for server-only mode |
+| Windows Gazebo GUI issues | Invalid `DISPLAY` falls back to headless in `deploy/images/gazebo/entrypoint.sh`; use `GZ_HEADLESS=1` for server-only mode |
 
 ## Further reading
 

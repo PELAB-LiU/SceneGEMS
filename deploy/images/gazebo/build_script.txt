@@ -1,0 +1,11 @@
+docker build -f deploy/images/gazebo/Dockerfile -t scenegems-gazebo-harmonic:latest .
+docker build -f deploy/images/sitl/Dockerfile -t scenegems-ardupilot-sitl:latest .
+docker build -f deploy/images/mavproxy/Dockerfile -t scenegems-mavproxy:latest deploy/images/mavproxy
+docker build -f deploy/images/gazebo/bridge/Dockerfile -t scenegems-gz-json-bridge:latest deploy/images/gazebo/bridge
+
+cd deploy/images/gazebo
+GZ_HEADLESS=0 docker compose -f docker-compose-gazebo.yml up
+
+DISPLAY=host.docker.internal:0.0 GZ_HEADLESS=0 docker compose -f docker-compose-gazebo.yml up
+
+DISPLAY=$(grep -m1 nameserver /etc/resolv.conf | awk '{print $2}'):0.0 GZ_HEADLESS=0 docker compose -f docker-compose-gazebo.yml up

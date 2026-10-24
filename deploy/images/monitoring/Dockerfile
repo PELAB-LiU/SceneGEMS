@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-COPY monitoring/requirements.txt ./requirements.txt
+COPY deploy/images/monitoring/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/pyproject.toml backend/setup.py backend/README.md ./

@@ -2,10 +2,10 @@
 # Shared Docker image fingerprinting and build helpers for build.sh / start.sh.
 
 docker_common_init() {
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
     cd "$SCRIPT_DIR"
     export REPO_ROOT="$SCRIPT_DIR"
-    COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
+    COMPOSE_FILE="$SCRIPT_DIR/deploy/master/docker-compose.yml"
     COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-scenegems}"
 }
 

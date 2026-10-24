@@ -1,0 +1,41 @@
+# Deployment
+
+Everything needed to build and run SceneGEMS lives here. The repository root keeps two thin wrappers, `./build.sh` and `./start.sh`, that call the scripts in `deploy/scripts/`.
+
+## Layout
+
+| Path | Content |
+|------|---------|
+| `images/` | One folder per Docker image: `arduagent`, `gazebo`, `sitl`, `mavproxy`, `mqtt_broker`, and the four subsystem images `monitoring`, `scenario_generation`, `scenario_execution`, `trajectory_generation` |
+| `master/docker-compose.yml` | The main stack: frontend, MQTT broker, backend |
+| `scripts/build.sh` | Builds the images, skipping any whose inputs did not change |
+| `scripts/start.sh` | Starts the main stack and tails the backend logs |
+| `scripts/docker-common.sh` | Shared helpers: fingerprints, compose wrapper, volume setup |
+
+Docker build contexts are the repository root for the Gazebo, SITL and subsystem images, because those images copy files from `backend/`. That is why `COPY` lines in the Dockerfiles start with `deploy/images/...`.
+
+## Run SceneGEMS on one machine
+
+Requirements: Docker with Compose v2 and Bash (Git Bash or WSL on Windows). From the repository root:
+
+```bash
+./build.sh
+./start.sh
+```
+
+`build.sh` records a fingerprint of every image's inputs under `.docker-stamps/` and rebuilds only what changed. The first build after pulling the `deploy/` layout rebuilds every image once, because the fingerprint includes file paths.
+
+Open http://localhost:5173 for the web console. Press Ctrl+C in the terminal that runs `start.sh` to stop the stack and the subsystem containers it started.
+
+Useful build options (`./build.sh --help` lists all):
+
+| Option | Builds |
+|--------|--------|
+| `--stack` | backend, subsystems and frontend, no simulation images |
+| `--simulation` | Gazebo, ArduPilot SITL, MAVProxy |
+| `--arduagent` | the ArduPilot agent |
+| `--no-check` | forces a rebuild |
+
+## Worker machines
+
+Setting up a worker machine is added together with the node daemon (phase 3 of `system_revision/architecture_design.md`). The target is three steps: clone the repository, run an install script with the master address and the one-time pairing token from the control panel, done. The install script will check Docker, build the images pinned by the campaign, write the node configuration and start the node daemon as a service. Scripts for Linux, macOS and Windows will live in `deploy/node/`.

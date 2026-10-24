@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Dependency layer: rebuilds when requirements.txt changes.
-COPY trajectory_generation/requirements.txt ./requirements.txt
+COPY deploy/images/trajectory_generation/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Application layer: fast rebuild when only src / assets change.

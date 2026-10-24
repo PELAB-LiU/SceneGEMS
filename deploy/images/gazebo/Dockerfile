@@ -85,8 +85,8 @@ ENV GZ_SIM_SYSTEM_PLUGIN_PATH=/usr/local/lib:/usr/local/lib/ardupilot_gazebo
 ENV GZ_SIM_RESOURCE_PATH=/worlds:/models:/opt/asv_wave_sim/gz-waves-models/models
 ENV LC_NUMERIC=C
 
-COPY gazebo/models /models
-COPY gazebo/gazebo_entrypoint_prod.sh /scripts/entrypoint.sh
+COPY deploy/images/gazebo/models /models
+COPY deploy/images/gazebo/gazebo_entrypoint_prod.sh /scripts/entrypoint.sh
 RUN chmod +x /scripts/entrypoint.sh
 
 WORKDIR /worlds

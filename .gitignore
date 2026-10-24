@@ -1,7 +1,7 @@
 .docker-stamps/
 
 # MQTT broker runtime data
-mqtt_broker/data/broker/
+deploy/images/mqtt_broker/data/broker/
 
 # Frontend
 frontend/.env
