@@ -5,6 +5,7 @@ import numpy as np
 
 from concrete_level.models.actor_state import ActorState
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import WaveConfig
+from scenegems_tool.vessel_stack.simulation_layers.gazebo.generators.vessel_dynamics import WIND_FORCE_SCALING
 from utils.global_constants import MAX_COORD
 
 
@@ -16,7 +17,33 @@ def _vessel_include(uri: str, state: ActorState) -> str:
     </include>"""
 
 
-def generate_world(center: np.ndarray, vessel_includes: List[Tuple[str, ActorState]], wind_vector: np.ndarray, wave: WaveConfig, speed_factor: int, headless: bool) -> str:
+def _waves_block(wave: WaveConfig) -> str:
+    """Regular waves from asv_wave_sim (gz-waves1). Gazebo Harmonic itself has no wave force system."""
+    direction = np.asarray(wave.direction, dtype=float) / max(float(np.linalg.norm(wave.direction)), 1e-9)
+    return f"""
+    <!-- Wave field (asv_wave_sim gz-waves1, regular sinusoid). Every vessel model carries the wave-aware
+         buoyancy system, so the flat Buoyancy system is not loaded. The wavelength follows the period by
+         deep-water dispersion; the WaveConfig speed and steepness are not used. -->
+    <model name="waves">
+      <static>true</static>
+      <plugin filename="gz-waves1-waves-model-system" name="gz::sim::systems::WavesModel">
+        <static>0</static>
+        <update_rate>30</update_rate>
+        <wave>
+          <tile_size>1024</tile_size>
+          <cell_count>128</cell_count>
+          <algorithm>sinusoid</algorithm>
+          <amplitude>{wave.amplitude}</amplitude>
+          <period>{wave.period}</period>
+          <direction>{direction[0]} {direction[1]}</direction>
+        </wave>
+      </plugin>
+      <link name="base_link"/>
+    </model>"""
+
+
+def generate_world(center: np.ndarray, vessel_includes: List[Tuple[str, ActorState]], wind_vector: np.ndarray, wave: WaveConfig, speed_factor: int, headless: bool, wave_forces: bool = False) -> str:
+    """The ocean world; wave_forces (gazebo_specs.wave_forces_enabled) swaps flat buoyancy for the asv_wave_sim wave field."""
     vessel_block = "\n".join(_vessel_include(uri, state) for uri, state in vessel_includes)
 
     scene_broadcaster_block = (
@@ -99,24 +126,22 @@ def generate_world(center: np.ndarray, vessel_includes: List[Tuple[str, ActorSta
     </spherical_coordinates>
     
 
-    <!-- Ocean Waves System (Visual & Physics) -->
-    <!-- <plugin filename="gz-sim-waves-system" name="gz::sim::systems::Waves">
-    <ocean_shape>
-        <mesh_size>{MAX_COORD} {MAX_COORD}</mesh_size>
-        <cell_count>0 0</cell_count>
-        <wave_amplitude>{wave.amplitude}</wave_amplitude>
-        <wave_period>{wave.period}</wave_period>
-        <direction>{wave.direction[0]} {wave.direction[1]}</direction>
-    </ocean_shape>
-    </plugin> -->
-
     <plugin filename="asv_sim2-wind-system"
       name="gz::sim::systems::Wind">
       <topic>/wind</topic>
     </plugin>
 
+    <!-- Wind force on links with enable_wind (each vessel's windage link): mass * factor *
+         (wind velocity - link velocity), wind from the <wind> element below. This system sets
+         the wind every step, so change it at runtime on /world/ocean_world/wind (gz.msgs.Wind),
+         not on the asv_sim2 /wind topic. -->
+    <plugin filename="gz-sim-wind-effects-system"
+      name="gz::sim::systems::WindEffects">
+      <force_approximation_scaling_factor>{WIND_FORCE_SCALING}</force_approximation_scaling_factor>
+    </plugin>
 
-    {buoyancy_block}
+
+    {_waves_block(wave) if wave_forces else buoyancy_block}
 
 
     <scene>
