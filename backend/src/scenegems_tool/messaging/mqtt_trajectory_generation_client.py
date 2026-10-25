@@ -67,6 +67,7 @@ class MqttTrajectoryGenerationClient(MqttClient):
                         trajectory_data=payload.get("trajectory-data"),
                         valid=bool(payload.get("valid", False)),
                         error_message=payload.get("error-message"),
+                        complete=bool(payload["complete"]) if "complete" in payload else None,
                     )
                 )
             case self.heartbeat_topic:

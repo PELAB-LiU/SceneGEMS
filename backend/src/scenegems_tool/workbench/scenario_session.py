@@ -48,3 +48,8 @@ class ScenarioSession(ABC):
     @abstractmethod
     def trajectories(self) -> Trajectories:
         pass
+
+    @property
+    def has_trajectories(self) -> bool:
+        """True when the scenario holds a trajectory to replay: more than its initial scene."""
+        return len(self.trajectories) > 1
