@@ -5,3 +5,5 @@ numpy
 portion
 pyproj
 haversine
+# Job payloads and the cluster protocol of per-job runner containers (scenegems_tool.cluster.node.jobs)
+pydantic==2.13.4

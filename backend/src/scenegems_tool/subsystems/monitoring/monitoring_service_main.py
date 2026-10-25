@@ -1,34 +1,15 @@
 import base64
 import os
 
+from scenegems_tool.cluster.node.launchers.container_environment import geofence_from_environment
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.subsystems.monitoring.monitoring_worker import MonitoringWorker
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 from utils.colregs_approximations import COLREGSConstraints
 
 
-def _env_bool(name: str, default: bool = False) -> bool:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes"}
-
-
 def main() -> None:
-    mqtt_connection = MQttConnectionInfo(
-        user=os.environ["MQTT_USER"],
-        password=os.environ["MQTT_PASSWORD"],
-        agent_broker=os.environ["MQTT_BROKER"],
-        client_broker=os.environ["MQTT_BROKER"],
-        port=int(os.environ["MQTT_PORT"]),
-        tls_connection=_env_bool("MQTT_TLS"),
-        allow_certificates=_env_bool("MQTT_ALLOW_CERTIFICATES"),
-    )
-    reference_geofence = Geofence(
-        latitude=float(os.environ["GEOFENCE_LATITUDE"]),
-        longitude=float(os.environ["GEOFENCE_LONGITUDE"]),
-        radius_meters=float(os.environ["GEOFENCE_RADIUS"]),
-    )
+    mqtt_connection = MQttConnectionInfo.from_environment()
+    reference_geofence = geofence_from_environment()
     agent_name = os.environ["MONITOR_AGENT_NAME"]
     topic = os.environ["MONITOR_TOPIC"]
     constraints_yaml = base64.b64decode(os.environ["COLREGS_CONSTRAINTS_YAML_B64"]).decode("utf-8")

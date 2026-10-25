@@ -77,7 +77,7 @@ class RecordingMonitor:
 @pytest.fixture
 async def setup(monkeypatch):
     monkeypatch.setattr(live_simulation_session, "MqttScenarioExecutionClient", FakeClient)
-    monkeypatch.setattr(live_simulation_session, "ScenarioExecutionSubsystemContainer", type("Container", (FakeContainer,), {"service_topic": FakeContainer.service_topic}))
+    monkeypatch.setattr(live_simulation_session, "SimulationSessionStack", type("Container", (FakeContainer,), {"service_topic": FakeContainer.service_topic}))
     sent: List[dict] = []
     monitor = RecordingMonitor()
     trajectories = encounter_trajectories("head_on", 30)

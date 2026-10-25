@@ -12,19 +12,22 @@ import paho.mqtt.client as mqtt
 from logical_level.constraint_satisfaction.evaluation_data import EvaluationData
 from scenegems_tool.gateway.serialization import serialize_frame
 from scenegems_tool.messaging.mqtt_client import MqttClient, MQttConnectionInfo
-from scenegems_tool.subsystems.scene_generation.scenario_generation_types import MqttSceneGenerationTask
+from scenegems_tool.subsystems.scene_generation.scenario_generation_types import (  # noqa: F401 (re-exported names)
+    MAX_SCENE_GENERATION_WORKERS,
+    SCENARIO_GENERATION_SERVICE_NAME,
+    SCENARIO_GENERATION_SERVICE_TOPIC,
+    MqttSceneGenerationTask,
+)
 from scenegems_tool.subsystems.scene_generation.scene_generation_worker import run_scene_generation_worker
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 
 _logger = logging.getLogger(__name__)
-MAX_SCENE_GENERATION_WORKERS = 5
-SCENARIO_GENERATION_SERVICE_NAME = "scenario_generation_service"
-SCENARIO_GENERATION_SERVICE_TOPIC = f"waraps/service/virtual/real/{SCENARIO_GENERATION_SERVICE_NAME}"
 
 
 class MqttScenarioGenerationService(MqttClient):
-    def __init__(self, mqtt_connection: MQttConnectionInfo, reference_geofence: Geofence):
+    def __init__(self, mqtt_connection: MQttConnectionInfo, reference_geofence: Geofence, max_workers: int = MAX_SCENE_GENERATION_WORKERS):
         self.info_update_rate = 1.0
+        self.max_workers = max_workers
         super().__init__(SCENARIO_GENERATION_SERVICE_NAME, SCENARIO_GENERATION_SERVICE_TOPIC, mqtt_connection, reference_geofence)
         self.scene_generation_task_queue: Queue[MqttSceneGenerationTask] = Queue()
         self.generated_scene_queue: Queue[Tuple[MqttSceneGenerationTask, EvaluationData]] = Queue()
@@ -145,7 +148,7 @@ class MqttScenarioGenerationService(MqttClient):
     def _manage_worker_pool(self) -> None:
         while not self._worker_pool_stop_event.is_set():
             self._active_workers = [worker for worker in self._active_workers if worker.is_alive()]
-            if len(self._active_workers) >= MAX_SCENE_GENERATION_WORKERS:
+            if len(self._active_workers) >= self.max_workers:
                 time.sleep(0.1)
                 continue
             try:

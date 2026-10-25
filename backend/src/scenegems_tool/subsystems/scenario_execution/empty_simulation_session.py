@@ -1,10 +1,10 @@
 from typing import Callable
 
-from scenegems_tool.gateway.protocol import ServerMessage, SimulationStatus, make_error_message
-from scenegems_tool.subsystems.scenario_execution.scenario_execution_subsystem_container import (
+from scenegems_tool.cluster.node.launchers.per_job.simulation_session_stack import (
     claim_stack_ownership,
     schedule_force_destroy_scenario_execution_stack,
 )
+from scenegems_tool.gateway.protocol import ServerMessage, SimulationStatus, make_error_message
 from scenegems_tool.subsystems.scenario_execution.simulation_session import SimulationSession
 
 

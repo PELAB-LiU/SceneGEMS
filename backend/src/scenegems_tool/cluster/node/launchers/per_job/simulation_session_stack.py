@@ -1,34 +1,36 @@
+"""The workbench's simulation stack: one compose stack per simulation session.
+
+It holds the generated vessel stack (SITL, MAVProxy, ArduAgent, Gazebo) and the scenario
+execution service, which the workbench drives over WARA-PS MQTT. There is one such stack
+per machine with fixed names, because ArduAgent publishes unscoped WARA-PS topics; the
+node runs simulations as scoped per-job stacks instead (per_job/job_stack.py).
+
+A new session takes ownership of the stack; a teardown scheduled by an older owner is
+skipped, so replacing a session never removes the stack its successor just started.
+"""
+
 import base64
 import json
 import logging
 import os
-import subprocess
 import threading
 
-import yaml
-
 from concrete_level.models.trajectories import Trajectories
+from scenegems_tool.cluster.node.launchers.compose_project import ComposeProject
+from scenegems_tool.cluster.node.launchers.container_environment import subsystem_environment
+from scenegems_tool.cluster.node.launchers.docker_cli import container_ids_for_compose_project, force_remove_compose_project
+from scenegems_tool.cluster.node.subsystem import Subsystem, subsystem_image
 from scenegems_tool.gateway.protocol import make_simulation_models_body
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.messaging.mqtt_scenario_execution_service import SCENARIO_EXECUTION_SERVICE_TOPIC
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import SimulationInstanceConfig
-from scenegems_tool.vessel_stack.simulation_docker_stack import (
-    SIMULATION_COMPOSE_PROJECT,
-    build_simulation_docker_stack_artifacts,
-    write_simulation_gen_files,
-)
+from scenegems_tool.vessel_stack.simulation_docker_stack import SIMULATION_COMPOSE_PROJECT, build_simulation_docker_stack_artifacts, write_simulation_gen_files
 from utils.docker_compose_network import attach_broker_network_to_compose
-from utils.file_system_utils import (
-    SCENARIO_EXECUTION_GEN_FOLDER,
-    docker_volume_path,
-    merge_compose_volumes,
-    runtime_assets_volume_mount,
-)
+from utils.file_system_utils import SCENARIO_EXECUTION_GEN_FOLDER, docker_volume_path, merge_compose_volumes, runtime_assets_volume_mount
 
 COMPOSE_PROJECT = "scenegems-scenario-execution-subsystem"
 SERVICE_NAME = "scenario_execution"
-DEFAULT_IMAGE = "scenegems-scenario-execution-subsystem:latest"
 SERVICE_CPU = 2
 TRAJECTORIES_GEN_FILE = f"{SCENARIO_EXECUTION_GEN_FOLDER}/trajectories.json"
 _logger = logging.getLogger(__name__)
@@ -45,26 +47,11 @@ def claim_stack_ownership() -> int:
         return _stack_generation
 
 
-def _container_ids_for_compose_project(project: str) -> list[str]:
-    result = subprocess.run(
-        ["docker", "ps", "-aq", "--filter", f"label=com.docker.compose.project={project}"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return [container_id for container_id in result.stdout.split() if container_id]
-
-
-def _force_remove_container_ids(container_ids: list[str]) -> None:
-    if container_ids:
-        subprocess.run(["docker", "rm", "-f", *container_ids], check=False)
-
-
 def force_destroy_scenario_execution_stack(compose_filename: str | None = None) -> None:
     """Fast teardown: force-remove containers by compose project label (no blocking compose down)."""
     del compose_filename
-    _force_remove_container_ids(_container_ids_for_compose_project(COMPOSE_PROJECT))
-    _force_remove_container_ids(_container_ids_for_compose_project(SIMULATION_COMPOSE_PROJECT))
+    force_remove_compose_project(COMPOSE_PROJECT)
+    force_remove_compose_project(SIMULATION_COMPOSE_PROJECT)
 
 
 def schedule_force_destroy_scenario_execution_stack(
@@ -90,7 +77,7 @@ def schedule_force_destroy_scenario_execution_stack(
     ).start()
 
 
-class ScenarioExecutionSubsystemContainer:
+class SimulationSessionStack:
     """Spawns and tears down the unified scenario-execution Docker Compose stack."""
 
     service_topic = SCENARIO_EXECUTION_SERVICE_TOPIC
@@ -103,7 +90,8 @@ class ScenarioExecutionSubsystemContainer:
         trajectories: Trajectories,
         time_step: int,
     ):
-        self.compose_filename = f"{SCENARIO_EXECUTION_GEN_FOLDER}/docker-compose.yml"
+        self.project = ComposeProject(COMPOSE_PROJECT, f"{SCENARIO_EXECUTION_GEN_FOLDER}/docker-compose.yml")
+        self.compose_filename = self.project.compose_filename
         self._destroyed = False
         self._shutdown = threading.Event()
         self._stack_generation = claim_stack_ownership()
@@ -129,7 +117,7 @@ class ScenarioExecutionSubsystemContainer:
             with _stack_lock:
                 if self._shutdown.is_set():
                     return
-                if _container_ids_for_compose_project(COMPOSE_PROJECT):
+                if container_ids_for_compose_project(COMPOSE_PROJECT):
                     force_destroy_scenario_execution_stack()
                 if self._shutdown.is_set():
                     return
@@ -156,88 +144,14 @@ class ScenarioExecutionSubsystemContainer:
         write_simulation_gen_files(pending_writes)
         self._verify_gen_files(pending_writes)
 
-        unified_compose = self._build_unified_compose(
-            stack_compose,
-            mqtt_connection,
-            reference_geofence,
-            simulation_config,
-            time_step,
-        )
-        with open(self.compose_filename, "w", encoding="utf-8") as file:
-            yaml.dump(unified_compose, file, default_flow_style=False, sort_keys=False, width=10000)
-
-        subprocess.run(
-            [
-                "docker-compose",
-                "-f",
-                self.compose_filename,
-                "--project-name",
-                COMPOSE_PROJECT,
-                "up",
-                "-d",
-                "--no-build",
-                "--force-recreate",
-            ],
-            check=False,
-        )
+        unified_compose = build_unified_compose(stack_compose, mqtt_connection, reference_geofence, simulation_config, time_step)
+        self.project.write(unified_compose)
+        self.project.up("--force-recreate")
 
     def _verify_gen_files(self, pending_writes: list[tuple[str, str]]) -> None:
         missing = [path for path, _ in pending_writes if not os.path.isfile(path)]
         if missing:
             raise FileNotFoundError(f"Simulation gen files missing before compose up: {missing}")
-
-    def _build_unified_compose(
-        self,
-        stack_compose: dict,
-        mqtt_connection: MQttConnectionInfo,
-        reference_geofence: Geofence,
-        simulation_config: SimulationInstanceConfig,
-        time_step: int,
-    ) -> dict:
-        image = os.environ.get("SCENARIO_EXECUTION_IMAGE", DEFAULT_IMAGE)
-        simulation_config_b64 = base64.b64encode(json.dumps(make_simulation_models_body(simulation_config)).encode("utf-8")).decode("ascii")
-
-        agent_service_names = list(stack_compose["services"].keys())
-        scenario_execution_service = {
-            "image": image,
-            "container_name": SERVICE_NAME,
-            "hostname": SERVICE_NAME,
-            "depends_on": agent_service_names,
-            "environment": {
-                "MQTT_USER": mqtt_connection.user,
-                "MQTT_PASSWORD": mqtt_connection.password,
-                "MQTT_BROKER": mqtt_connection.agent_broker,
-                "MQTT_PORT": str(mqtt_connection.port),
-                "MQTT_TLS": "1" if mqtt_connection.tls_connection else "0",
-                "MQTT_ALLOW_CERTIFICATES": "1" if mqtt_connection.allow_certificates else "0",
-                "GEOFENCE_LATITUDE": str(reference_geofence.latitude),
-                "GEOFENCE_LONGITUDE": str(reference_geofence.longitude),
-                "GEOFENCE_RADIUS": str(reference_geofence.radius_meters),
-                "SIMULATION_CONFIG_JSON_B64": simulation_config_b64,
-                "TRAJECTORIES_PATH": docker_volume_path(TRAJECTORIES_GEN_FILE),
-                "TIME_STEP": str(time_step),
-            },
-            "cpus": SERVICE_CPU,
-            "restart": "unless-stopped",
-            "extra_hosts": ["host.docker.internal:host-gateway"],
-            "volumes": [runtime_assets_volume_mount(read_only=True)],
-            "networks": ["scenario_execution_net"],
-        }
-
-        return merge_compose_volumes(
-            attach_broker_network_to_compose(
-                {
-                    "services": {
-                        **stack_compose["services"],
-                        SERVICE_NAME: scenario_execution_service,
-                    },
-                    "networks": {
-                        "scenario_execution_net": {"driver": "bridge"},
-                        **stack_compose.get("networks", {}),
-                    },
-                }
-            )
-        )
 
     def cancel(self) -> None:
         """Stop spawn without tearing down the shared Docker stack (session replace)."""
@@ -255,3 +169,48 @@ class ScenarioExecutionSubsystemContainer:
             self.compose_filename,
             owner_generation=self._stack_generation,
         )
+
+
+def build_unified_compose(
+    stack_compose: dict,
+    mqtt_connection: MQttConnectionInfo,
+    reference_geofence: Geofence,
+    simulation_config: SimulationInstanceConfig,
+    time_step: int,
+) -> dict:
+    """The vessel stack's services plus the scenario execution service that drives them."""
+    simulation_config_b64 = base64.b64encode(json.dumps(make_simulation_models_body(simulation_config)).encode("utf-8")).decode("ascii")
+
+    agent_service_names = list(stack_compose["services"].keys())
+    scenario_execution_service = {
+        "image": subsystem_image(Subsystem.SCENARIO_EXECUTION),
+        "container_name": SERVICE_NAME,
+        "hostname": SERVICE_NAME,
+        "depends_on": agent_service_names,
+        "environment": {
+            **subsystem_environment(mqtt_connection, reference_geofence),
+            "SIMULATION_CONFIG_JSON_B64": simulation_config_b64,
+            "TRAJECTORIES_PATH": docker_volume_path(TRAJECTORIES_GEN_FILE),
+            "TIME_STEP": str(time_step),
+        },
+        "cpus": SERVICE_CPU,
+        "restart": "unless-stopped",
+        "extra_hosts": ["host.docker.internal:host-gateway"],
+        "volumes": [runtime_assets_volume_mount(read_only=True)],
+        "networks": ["scenario_execution_net"],
+    }
+
+    return merge_compose_volumes(
+        attach_broker_network_to_compose(
+            {
+                "services": {
+                    **stack_compose["services"],
+                    SERVICE_NAME: scenario_execution_service,
+                },
+                "networks": {
+                    "scenario_execution_net": {"driver": "bridge"},
+                    **stack_compose.get("networks", {}),
+                },
+            }
+        )
+    )

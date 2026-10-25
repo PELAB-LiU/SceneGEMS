@@ -24,7 +24,7 @@ from scenegems_tool.vessel_stack.contracts.vessel_stack_config import Simulation
 from scenegems_tool.vessel_stack.registry.adapter_registry import AdapterRegistry
 from scenegems_tool.vessel_stack.registry.catalog import default_resolver
 from scenegems_tool.vessel_stack.registry.resolver import StackUnavailableError
-from utils.file_system_utils import SIMULATION_GEN_FOLDER, merge_compose_volumes
+from utils.file_system_utils import GAZEBO_GEN_MOUNT, SIMULATION_GEN_FOLDER, docker_volume_path, merge_compose_volumes
 
 SIMULATION_COMPOSE_PROJECT = "asv_maritime_net"
 _logger = logging.getLogger(__name__)
@@ -46,7 +46,9 @@ def build_simulation_docker_stack_artifacts(
     *,
     headless: bool = True,
     embedded_in_subsystem: bool = False,
+    gen_folder: str = SIMULATION_GEN_FOLDER,
 ) -> Tuple[List[Tuple[str, str]], dict]:
+    """The files to write and the compose services of one instance. gen_folder must lie on the runtime assets volume."""
     resolver = default_resolver()
     resolution = resolver.require_instance(simulation_config)
     for warning in resolution.warnings:
@@ -58,6 +60,8 @@ def build_simulation_docker_stack_artifacts(
         mqtt_connection=mqtt_connection,
         reference_geofence=reference_geofence,
         headless=headless,
+        gen_folder=gen_folder,
+        mounted_gen_folder=GAZEBO_GEN_MOUNT if gen_folder == SIMULATION_GEN_FOLDER else docker_volume_path(gen_folder),
     )
     artifacts = DockerStackArtifacts()
     simulation_layer = _docker_runtime(resolver.registry, LayerRef.of(simulation_config.simulation_layer), DockerSimulationLayer)
@@ -73,7 +77,7 @@ def build_simulation_docker_stack_artifacts(
         control_layer.add_vessel(artifacts, request, vessel_config, vessel, state)
     simulation_layer.finish(artifacts, request)
     # The scenario execution worker reads the trajectories from the shared gen folder.
-    artifacts.pending_writes.append((f"{SIMULATION_GEN_FOLDER}/trajectories.json", json.dumps(trajectories.to_dict())))
+    artifacts.pending_writes.append((f"{gen_folder}/trajectories.json", json.dumps(trajectories.to_dict())))
 
     if embedded_in_subsystem:
         maritime_network = {"maritime_net": {"driver": "bridge"}}
@@ -89,8 +93,8 @@ def build_simulation_docker_stack_artifacts(
     return artifacts.pending_writes, docker_compose
 
 
-def write_simulation_gen_files(pending_writes: List[Tuple[str, str]]) -> None:
-    os.makedirs(SIMULATION_GEN_FOLDER, exist_ok=True)
+def write_simulation_gen_files(pending_writes: List[Tuple[str, str]], gen_folder: str = SIMULATION_GEN_FOLDER) -> None:
+    os.makedirs(gen_folder, exist_ok=True)
     for path, content in pending_writes:
         parent = os.path.dirname(path)
         if parent:

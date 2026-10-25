@@ -11,7 +11,6 @@ from scenegems_tool.vessel_stack.control_layers.ardupilot.arduagent_control_mode
 from scenegems_tool.vessel_stack.control_layers.ardupilot.ardupilot_specs import ARDUPILOT_CONTROL_LAYER
 from scenegems_tool.vessel_stack.control_layers.ardupilot.vessel_service_generator import generate_vessel_service
 from scenegems_tool.vessel_stack.registry.catalog import default_resolver
-from utils.file_system_utils import SIMULATION_GEN_FOLDER
 
 
 class ArduPilotControlLayer:
@@ -35,7 +34,7 @@ class ArduPilotControlLayer:
 
         environment = request.simulation.environment
         ardu_params = generate_ardu_params(vessel, request.trajectories.get_max_speed(vessel), environment.wind_vector, environment.wave)
-        params_file = f"{SIMULATION_GEN_FOLDER}/params-{connection.agent_name}.params"
+        params_file = f"{request.gen_folder}/params-{connection.agent_name}.params"
         lines = []
         for key, value in ardu_params.items():
             if value is not None:

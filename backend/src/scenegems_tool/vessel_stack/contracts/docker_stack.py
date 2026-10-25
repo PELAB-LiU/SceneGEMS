@@ -14,6 +14,7 @@ from concrete_level.models.trajectories import Trajectories
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import SimulationInstanceConfig, VesselConfig
+from utils.file_system_utils import GAZEBO_GEN_MOUNT, SIMULATION_GEN_FOLDER
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,11 @@ class DockerStackRequest:
     mqtt_connection: MQttConnectionInfo
     reference_geofence: Geofence
     headless: bool
+    # Where the generated files go: the workbench's shared folder, or a per-job folder. Both
+    # lie on the runtime assets volume; mounted_gen_folder is the same folder as the
+    # simulator containers see it.
+    gen_folder: str = SIMULATION_GEN_FOLDER
+    mounted_gen_folder: str = GAZEBO_GEN_MOUNT
 
 
 @dataclass
