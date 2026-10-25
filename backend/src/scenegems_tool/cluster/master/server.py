@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import List, Optional, Sequence
 
 import uvicorn
+from sqlalchemy.orm import Session, sessionmaker
 
 from scenegems_tool.cluster.master.api.master_apps import MasterApps, create_master_apps
 from scenegems_tool.cluster.master.control_plane import ControlPlane
@@ -28,7 +29,7 @@ from scenegems_tool.cluster.security.command_line import load_env_file
 from scenegems_tool.cluster.security.master_security import MasterSecurity
 from scenegems_tool.cluster.security.security_layout import SecurityLayout
 from scenegems_tool.persistence.database import create_database_engine, create_session_factory
-from scenegems_tool.persistence.stores import JobStore, NodeStore
+from scenegems_tool.persistence.stores import AssuranceStores, JobStore, NodeStore
 
 logger = logging.getLogger(__name__)
 
@@ -48,11 +49,23 @@ def build_master(settings: MasterSettings, with_gateway: bool = True) -> MasterA
     security = MasterSecurity.load(settings.security_dir)
     sessions = create_session_factory(create_database_engine(settings.database_url))
     plane = ControlPlane(security.master_id, NodeStore(sessions), JobStore(sessions), ExpectedFingerprints.of_release(settings.release_manifest))
+    attach_campaigns(plane, sessions)
     gateway = None
     if with_gateway:
         from scenegems_tool.gateway.websocket_app import app as gateway
 
     return create_master_apps(plane, security, settings.broker_hook_secret, gateway=gateway)
+
+
+def attach_campaigns(plane: ControlPlane, sessions: sessionmaker[Session]) -> AssuranceStores:
+    """The master's one AssuranceStores, and the pipeline engine on it as a timer of the control plane.
+
+    Everything that works on campaigns (the engine, the campaign routes, the artifact sweep)
+    takes this instance.
+    """
+    stores = AssuranceStores.create(sessions)
+    plane.attach_pipeline(stores)
+    return stores
 
 
 def listeners(settings: MasterSettings, apps: MasterApps) -> List[uvicorn.Server]:

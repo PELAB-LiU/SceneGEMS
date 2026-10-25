@@ -8,12 +8,16 @@ serving sockets while Postgres works.
 A submission's payload is validated with its job type's payload model before it is stored;
 an artifact reference gets a structural check only, its content is checked on the node.
 The job type modules load on the first submission, so the master starts without them.
+
+With attach_pipeline the pipeline engine (assurance/pipeline) runs as one more timer on the
+same loop; it submits and cancels through this control plane like the operator does. It is
+loaded only then, for the same reason.
 """
 
 import asyncio
 import logging
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
 import anyio
 from pydantic import ValidationError
@@ -46,6 +50,10 @@ from scenegems_tool.cluster.protocol.messages import (
 )
 from scenegems_tool.persistence.clock import Clock, utc_now
 from scenegems_tool.persistence.stores import CancelOutcome, JobStore, NodeRecord, NodeStore, SubmitOutcome
+
+if TYPE_CHECKING:
+    from scenegems_tool.assurance.pipeline.pipeline_engine import NodeAvailability, PipelineEngine
+    from scenegems_tool.persistence.stores import AssuranceStores
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +104,7 @@ class ControlPlane:
         self.leases = LeaseManager(job_store, self.registry, self.backoff, self.activity, timing, on_change=self.scheduler.wake)
         self._clock = clock
         self._tasks: List[asyncio.Task] = []
+        self.pipeline: Optional["PipelineEngine"] = None
 
     # Lifetime
 
@@ -106,6 +115,8 @@ class ControlPlane:
             self._tasks.append(asyncio.create_task(self.scheduler.run()))
             self._tasks.append(asyncio.create_task(self._every(self.timing.expiry_sweep_interval_s, self.leases.sweep_expired)))
             self._tasks.append(asyncio.create_task(self._every(self.timing.offline_sweep_interval_s, self.registry.sweep_silent)))
+            if self.pipeline is not None:
+                self._tasks.append(asyncio.create_task(self.pipeline.run(self.timing.pipeline_tick_interval_s)))
 
     async def stop(self) -> None:
         for task in self._tasks:
@@ -203,3 +214,28 @@ class ControlPlane:
                 await session.send(Cancel(lease_id=outcome.lease_id, job_id=job_id, reason=reason))
             self.scheduler.wake()
         return outcome
+
+    # Campaigns
+
+    def attach_pipeline(self, stores: "AssuranceStores") -> "PipelineEngine":
+        """Runs the pipeline engine on the campaign stores as a timer of this control plane (from start on)."""
+        from scenegems_tool.assurance.pipeline.pipeline_engine import EngineSettings, PipelineEngine
+
+        self.pipeline = PipelineEngine(
+            stores,
+            self.jobs,
+            submit=self.submit,
+            cancel=self.cancel,
+            expected=self.expected.current,
+            nodes=self.node_availability,
+            wake=self.scheduler.wake,
+            clock=self._clock,
+            settings=EngineSettings(stall_after_s=self.timing.campaign_stall_after_s),
+        )
+        return self.pipeline
+
+    def node_availability(self) -> List["NodeAvailability"]:
+        """The connected nodes as the pipeline engine's stall check sees them."""
+        from scenegems_tool.assurance.pipeline.pipeline_engine import NodeAvailability
+
+        return [NodeAvailability(record=session.record, out_of_date=bool(session.out_of_date)) for session in self.registry.connected()]

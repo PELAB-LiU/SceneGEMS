@@ -10,6 +10,8 @@ on a slow network must not lose its leases by accident.
     expiry sweep every 2 s       an expired lease is requeued at most 2 s after its expiry
     silence sweep every 5 s      offline detection takes 15 to 20 s
     scheduling at least every 1 s, and at once after anything that may free or add work
+    pipeline tick every 2 s      the campaign engine (assurance/pipeline); at once again while it catches up
+    stalled after 60 s           a campaign whose needed job type no node runs (with its pinned fingerprints)
 
 So a node that dies right after renewing has its jobs back in the queue after at most
 32 s, and offered to another node about a second later. A lease is dead at its expiry
@@ -30,6 +32,8 @@ class ControlTiming:
     offline_sweep_interval_s: float = 5.0
     schedule_interval_s: float = 1.0
     hello_timeout_s: float = 10.0  # the node must send Hello this soon after the socket opens
+    pipeline_tick_interval_s: float = 2.0  # the pipeline engine's tick while it has nothing to catch up on
+    campaign_stall_after_s: float = 60.0  # a campaign is stalled after this long without a node for a job type it needs
 
     def __post_init__(self) -> None:
         for name, value in vars(self).items():

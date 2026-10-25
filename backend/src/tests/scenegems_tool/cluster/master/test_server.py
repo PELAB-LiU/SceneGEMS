@@ -11,7 +11,7 @@ import pytest
 from websockets.asyncio.client import connect
 
 from scenegems_tool.cluster.master.api.master_apps import create_master_apps
-from scenegems_tool.cluster.master.server import MAX_NODE_FRAME_BYTES, listeners
+from scenegems_tool.cluster.master.server import MAX_NODE_FRAME_BYTES, attach_campaigns, listeners
 from scenegems_tool.cluster.master.settings import Listener, MasterSettings
 from scenegems_tool.cluster.protocol.codec import decode_master_message, encode
 from scenegems_tool.cluster.protocol.jobs import JobSubmission
@@ -93,3 +93,11 @@ def test_a_client_that_trusts_another_ca_is_refused(https_node_api, tmp_path):
     other = make_master_security(tmp_path / "other-master")
     with pytest.raises(urllib.error.URLError, match="CERTIFICATE_VERIFY_FAILED"):
         urllib.request.urlopen(f"https://{https_node_api}{CA_CERTIFICATE_PATH}", context=ssl.create_default_context(cadata=other.ca_certificate_pem), timeout=10)
+
+
+def test_the_master_has_one_assurance_stores_shared_with_its_pipeline_engine(plane):
+    from sqlalchemy.orm import sessionmaker
+
+    sessions = sessionmaker()
+    stores = attach_campaigns(plane, sessions)
+    assert stores.session_factory is sessions and plane.pipeline.stores is stores

@@ -1,0 +1,197 @@
+"""The payload of each pipeline job, from the campaign's config and the case's earlier results.
+
+    scene_generation        the class content from the catalog (checked against the hash the
+                            campaign pinned), the domain contents, the timeout, enforce_low_tcpa,
+                            the case seed
+    trajectory_generation   the scene result's evaluation_data as scenario_content (a reference
+                            when the result holds one, otherwise its JSON text), the generator
+                            choice in params, a seed derived from the case seed, the timeout
+    simulation.kinematic    the trajectory result's trajectories (a reference into its
+                            trajectory_data with pointer /trajectories, or the inline list), the
+                            stack's mode and parameters, the run seed, the live monitor options
+    monitoring.post_hoc     the simulation result's trajectories, the COLREGS constants
+    calibration.deviation   the trajectories of the run's repeats
+
+Results come inline (before the artifact store) or with references in their declared fields;
+both work. Every payload is checked with its job type's model (references for shape only)
+before the engine writes the intent, so a payload the master would refuse never reaches the
+queue.
+"""
+
+import hashlib
+from typing import Any, Dict, List, Mapping, Optional, Sequence
+
+from pydantic import ValidationError
+
+from scenegems_tool.assurance.campaign.campaign_config import MAX_SEED, CampaignConfig
+from scenegems_tool.assurance.campaign.class_catalog import ClassCatalog
+from scenegems_tool.assurance.pipeline.stage_graph import Step
+from scenegems_tool.cluster.fingerprints.job_images import job_images
+from scenegems_tool.cluster.protocol.artifacts import ArtifactContent, encode_document, is_reference
+from scenegems_tool.cluster.protocol.jobs import JobRequirements, JobSubmission, JobType
+from scenegems_tool.persistence.schema import MonitorImplementation, TrajectoryGeneratorImplementation
+
+TRAJECTORIES_POINTER = "/trajectories"
+
+
+class PayloadError(ValueError):
+    """A payload that cannot be built from the case's results, or that its job type's model refuses."""
+
+
+def derived_seed(case_seed: int, purpose: str) -> int:
+    """A seed for one use within a case (the trajectory search, say), from the case seed: 31 bits of sha256."""
+    return int.from_bytes(hashlib.sha256(f"{case_seed}:{purpose}".encode("utf-8")).digest()[:4], "big") & MAX_SEED
+
+
+def _wire(reference: Any) -> Dict[str, Any]:
+    return reference.model_dump(mode="json") if hasattr(reference, "model_dump") else dict(reference)
+
+
+def _required(result: Mapping[str, Any], field: str, stage: str) -> Any:
+    value = result.get(field)
+    if value is None:
+        raise PayloadError(f"the {stage} result has no {field}")
+    return value
+
+
+def scenario_content_of(scene_result: Mapping[str, Any]) -> Any:
+    """trajectory_generation's scenario_content: the scene reference as it is, or the inline scene as JSON text."""
+    evaluation_data = _required(scene_result, "evaluation_data", "scene generation")
+    if is_reference(evaluation_data):
+        return _wire(evaluation_data)
+    if isinstance(evaluation_data, str):
+        return evaluation_data
+    return encode_document(evaluation_data, ArtifactContent.TEXT).decode("utf-8")  # the text a reference to it would resolve to
+
+
+def trajectories_of_trajectory_result(trajectory_result: Mapping[str, Any]) -> Any:
+    """The generated trajectories: a reference into trajectory_data at /trajectories, or the inline trajectories."""
+    trajectory_data = _required(trajectory_result, "trajectory_data", "trajectory generation")
+    if is_reference(trajectory_data):
+        reference = _wire(trajectory_data)
+        reference["pointer"] = (reference.get("pointer") or "") + TRAJECTORIES_POINTER
+        return reference
+    trajectories = trajectory_data.get("trajectories")
+    if trajectories is None:
+        raise PayloadError("the trajectory generation result's trajectory_data has no trajectories")
+    return trajectories
+
+
+def trajectories_of_simulation_result(simulation_result: Mapping[str, Any]) -> Any:
+    """A simulation's state log, inline or as its reference."""
+    trajectories = _required(simulation_result, "trajectories", "simulation")
+    return _wire(trajectories) if is_reference(trajectories) else trajectories
+
+
+def validate_payload(job_type: JobType, payload: Mapping[str, Any]) -> None:
+    """Checks the payload with its job type's model, as the master does at submission; raises PayloadError."""
+    from scenegems_tool.cluster.node.jobs.job_payload import validate_structure
+    from scenegems_tool.cluster.node.jobs.job_types import payload_model
+
+    try:
+        validate_structure(payload_model(job_type), payload)
+    except ValidationError as error:
+        problems = "; ".join(f"{'.'.join(str(part) for part in issue['loc'])}: {issue['msg']}" for issue in error.errors(include_url=False, include_input=False))
+        raise PayloadError(f"invalid {job_type.value} payload: {problems}") from error
+
+
+def required_fingerprints(job_type: JobType, payload: Mapping[str, Any], pinned: Mapping[str, str]) -> Dict[str, str]:
+    """The pinned fingerprints of the images the job runs in."""
+    return {image: pinned[image] for image in job_images(job_type, payload) if image in pinned}
+
+
+class PayloadBuilder:
+    def __init__(self, config: CampaignConfig, catalog: Optional[ClassCatalog] = None):
+        self.config = config
+        self.catalog = catalog or ClassCatalog.default()
+        self._contents: Dict[str, str] = {}
+
+    # Payloads
+
+    def scene_generation(self, class_id: str, content_hash: str, case_seed: int) -> Dict[str, Any]:
+        domain = self.config.domain
+        return {
+            "functional_scenario_content": self.class_content(class_id, content_hash),
+            "colregs_constraints_content": domain.colregs_constants,
+            "vessel_types_content": domain.vessel_types,
+            "obstacle_types_content": domain.obstacle_types,
+            "timeout_s": domain.scene_generation_timeout_s,
+            "enforce_low_tcpa": domain.enforce_low_tcpa,
+            "seed": case_seed,
+        }
+
+    def trajectory_generation(self, case_seed: int, scene_result: Mapping[str, Any]) -> Dict[str, Any]:
+        trajectories = self.config.trajectories
+        if trajectories.generator == TrajectoryGeneratorImplementation.STRAIGHT:
+            params: Dict[str, Any] = {"generator": trajectories.generator.value, "timespan": trajectories.timespan_s}
+        else:
+            params = {"generator": trajectories.generator.value, **trajectories.params}
+        return {
+            "scenario_content": scenario_content_of(scene_result),
+            "colregs_constraints_content": self.config.domain.colregs_constants,
+            "params": params,
+            "seed": derived_seed(case_seed, "trajectories"),
+            "timeout_s": trajectories.timeout_s,
+        }
+
+    def simulation(self, case_seed: int, run_index: int, trajectory_result: Mapping[str, Any]) -> Dict[str, Any]:
+        run = self.config.execution.runs[run_index]
+        stack = run.stack
+        payload: Dict[str, Any] = {"mode": stack.mode.value, "trajectories": trajectories_of_trajectory_result(trajectory_result), "seed": run.seed_for(case_seed, run_index)}
+        if stack.usv_navigation is not None:
+            payload["usv_navigation"] = stack.usv_navigation.model_dump(mode="json")
+        if stack.dt is not None:
+            payload["dt"] = stack.dt
+        if stack.steps is not None:
+            payload["steps"] = stack.steps
+        if run.monitor == MonitorImplementation.LIVE:
+            payload.update(monitor="live", early_stop=run.early_stop, colregs_constraints_content=self.config.domain.colregs_constants)
+        return payload
+
+    def post_hoc_monitoring(self, scenario_id: str, simulation_result: Mapping[str, Any]) -> Dict[str, Any]:
+        return {
+            "trajectories": trajectories_of_simulation_result(simulation_result),
+            "colregs_constraints_content": self.config.domain.colregs_constants,
+            "scenario_id": scenario_id,
+            "include_frames": self.config.policy.keep_frames,
+        }
+
+    def calibration(self, reference: str, stack: Mapping[str, Any], simulation_results: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+        return {"trajectories": [trajectories_of_simulation_result(result) for result in simulation_results], "stack": dict(stack), "reference": reference}
+
+    # Submissions
+
+    def submission(self, step: Step, payload: Dict[str, Any], key: str, pinned: Mapping[str, str]) -> JobSubmission:
+        """The job of a step, checked: its payload, the campaign's labels, the pinned fingerprints of its images, its priority."""
+        validate_payload(step.job_type, payload)
+        resources = self.config.resources
+        requirements = JobRequirements(labels=dict(resources.required_labels), fingerprints=required_fingerprints(step.job_type, payload, pinned))
+        return JobSubmission(job_type=step.job_type, payload=payload, requirements=requirements, priority=step.priority(resources.priority), idempotency_key=key)
+
+    # Helpers
+
+    def class_content(self, class_id: str, content_hash: str) -> str:
+        content = self._contents.get(class_id)
+        if content is None:
+            content = self.catalog.get(class_id).read_content()
+            self._contents[class_id] = content
+        found = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        if found != content_hash:
+            raise PayloadError(f"class {class_id} has changed in the catalog since the campaign pinned it (content hash {found}, pinned {content_hash})")
+        return content
+
+
+def stack_key(config: CampaignConfig, run_index: int) -> Dict[str, Any]:
+    """The run's stack as calibration results are keyed by it: the stack section of the run's config."""
+    return config.execution.runs[run_index].stack.model_dump(mode="json")
+
+
+def environment_of(config: CampaignConfig, run_index: int) -> Dict[str, Any]:
+    return config.execution.runs[run_index].environment.model_dump(mode="json")
+
+
+def references_in(value: Any) -> List[Dict[str, Any]]:
+    """Every reference in a result, in wire form."""
+    from scenegems_tool.cluster.protocol.artifacts import find_references
+
+    return [reference.model_dump(mode="json") for _, reference in find_references(value)]
