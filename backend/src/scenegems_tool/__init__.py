@@ -19,6 +19,7 @@ Present now:
         asv_software/           replay/, usv_navigation/ (in process), mission_planner/ (specs)
     cluster/        distributed integration layer
         protocol/               typed, versioned master-node messages, jobs and pairing
+        security/               master CA, pairing tokens, node credentials, broker accounts and access rules
         node/                   local subsystem launcher teardown, later the node daemon
         fingerprints/           image build fingerprints: label reader, expected set, comparison
     persistence/    the master's Postgres: tables, migrations, node and job stores

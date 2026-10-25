@@ -28,3 +28,6 @@ CLAUDE.md
 **/assets/figures/tool_paper/screen_captures
 
 system_revision
+
+# Master security folders: CA key, certificates, hashed credentials (SCENEGEMS_SECURITY_DIR)
+deploy/master/security_data/

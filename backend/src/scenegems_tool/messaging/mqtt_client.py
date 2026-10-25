@@ -6,7 +6,7 @@ import traceback
 import uuid
 from abc import ABC, abstractmethod
 from threading import Event
-from typing import Any, List, Set
+from typing import Any, List, Mapping, Optional, Set
 
 import paho.mqtt.client as mqtt
 
@@ -104,7 +104,26 @@ def resolve_mqtt_broker_endpoints(
 
 
 class MQttConnectionInfo:
-    def __init__(self, user: str, password: str, agent_broker: str, client_broker: str, port: int, tls_connection: bool, allow_certificates: bool):
+    """How a client reaches its broker.
+
+    Plain MQTT is the default (the workbench). With `tls_connection` and a
+    `ca_certificate_path`, the broker's certificate and host name are verified against that
+    CA, which is how cluster clients reach the master's broker. TLS without a CA keeps the
+    workbench's behaviour for external brokers such as WARA-PS: the system trust store, or
+    no verification when `allow_certificates` is set.
+    """
+
+    def __init__(
+        self,
+        user: str,
+        password: str,
+        agent_broker: str,
+        client_broker: str,
+        port: int,
+        tls_connection: bool,
+        allow_certificates: bool,
+        ca_certificate_path: Optional[str] = None,
+    ):
         self.user = user
         self.password = password
         self.agent_broker = agent_broker
@@ -112,6 +131,45 @@ class MQttConnectionInfo:
         self.port = port
         self.tls_connection = tls_connection
         self.allow_certificates = allow_certificates
+        self.ca_certificate_path = ca_certificate_path
+
+    def __repr__(self) -> str:
+        return (
+            f"MQttConnectionInfo(user={self.user!r}, password=<hidden>, client_broker={self.client_broker!r}, port={self.port}, "
+            f"tls_connection={self.tls_connection}, ca_certificate_path={self.ca_certificate_path!r})"
+        )
+
+    @classmethod
+    def from_environment(cls, environ: Optional[Mapping[str, str]] = None) -> "MQttConnectionInfo":
+        """The variables subsystem containers get: MQTT_BROKER, MQTT_PORT, MQTT_USER, MQTT_PASSWORD,
+        MQTT_TLS, MQTT_ALLOW_CERTIFICATES and, for the cluster broker, MQTT_CA_CERTIFICATE."""
+        environ = os.environ if environ is None else environ
+
+        def flag(name: str) -> bool:
+            return environ.get(name, "").strip().lower() in {"1", "true", "yes"}
+
+        return cls(
+            user=environ.get("MQTT_USER", ""),
+            password=environ.get("MQTT_PASSWORD", ""),
+            agent_broker=environ["MQTT_BROKER"],
+            client_broker=environ["MQTT_BROKER"],
+            port=int(environ["MQTT_PORT"]),
+            tls_connection=flag("MQTT_TLS"),
+            allow_certificates=flag("MQTT_ALLOW_CERTIFICATES"),
+            ca_certificate_path=environ.get("MQTT_CA_CERTIFICATE", "").strip() or None,
+        )
+
+    def apply_to(self, client: mqtt.Client) -> None:
+        """Set credentials and TLS on a paho client before it connects."""
+        if self.user or self.password:
+            client.username_pw_set(self.user, self.password)
+        if not self.tls_connection:
+            return
+        if self.ca_certificate_path:
+            client.tls_set(ca_certs=self.ca_certificate_path, cert_reqs=ssl.CERT_REQUIRED)
+            return
+        client.tls_set(cert_reqs=(ssl.CERT_NONE if self.allow_certificates else ssl.CERT_REQUIRED))
+        client.tls_insecure_set(True)
 
 
 class MqttClient(ABC):
@@ -133,13 +191,7 @@ class MqttClient(ABC):
 
     def connect(self):
         """Connect to the broker using the mqtt client"""
-        if self.mqtt_connection.user or self.mqtt_connection.password:
-            self.client.username_pw_set(self.mqtt_connection.user, self.mqtt_connection.password)
-        if self.mqtt_connection.tls_connection:
-            self.client.tls_set(
-                cert_reqs=(ssl.CERT_NONE if self.mqtt_connection.allow_certificates else ssl.CERT_REQUIRED),
-            )
-            self.client.tls_insecure_set(True)
+        self.mqtt_connection.apply_to(self.client)
         try:
             res: mqtt.MQTTErrorCode = self.client.connect(self.mqtt_connection.client_broker, self.mqtt_connection.port, 60)
         except Exception as exc:
