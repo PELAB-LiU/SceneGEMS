@@ -20,24 +20,29 @@ def free_job_types(slots: Mapping[JobType, int], active_leases: Mapping[JobType,
     return [job_type for job_type, count in slots.items() if active_leases.get(job_type, 0) < count and (only is None or job_type in only)]
 
 
-def next_queued_job_query(job_types: Collection[JobType], labels: Dict[str, str], fingerprints: Dict[str, str], free_memory_mb: int, cpus: float) -> Select:
+def next_queued_job_query(
+    job_types: Collection[JobType],
+    labels: Dict[str, str],
+    fingerprints: Dict[str, str],
+    free_memory_mb: int,
+    cpus: float,
+    exclude_job_ids: Collection[str] = (),
+) -> Select:
     """The highest-priority, oldest queued job a node with these facts may run, locked.
 
     A job matches when its type is among job_types, its required labels and fingerprints
-    are contained in the node's (JSONB containment) and its memory and CPU minimums fit the
-    node's free memory and CPUs.
+    are contained in the node's (JSONB containment), its memory and CPU minimums fit the
+    node's free memory and CPUs, and it is not among exclude_job_ids (jobs the scheduler
+    holds back from this node, for example after the node rejected them).
     """
-    return (
-        select(JobRow)
-        .where(
-            JobRow.state == JobState.QUEUED,
-            JobRow.job_type.in_(list(job_types)),
-            JobRow.required_labels.contained_by(labels),
-            JobRow.required_fingerprints.contained_by(fingerprints),
-            JobRow.min_memory_mb <= free_memory_mb,
-            JobRow.min_cpus <= cpus,
-        )
-        .order_by(JobRow.priority.desc(), JobRow.submitted_at, JobRow.seq)
-        .limit(1)
-        .with_for_update(skip_locked=True)
-    )
+    conditions = [
+        JobRow.state == JobState.QUEUED,
+        JobRow.job_type.in_(list(job_types)),
+        JobRow.required_labels.contained_by(labels),
+        JobRow.required_fingerprints.contained_by(fingerprints),
+        JobRow.min_memory_mb <= free_memory_mb,
+        JobRow.min_cpus <= cpus,
+    ]
+    if exclude_job_ids:
+        conditions.append(JobRow.id.notin_(list(exclude_job_ids)))
+    return select(JobRow).where(*conditions).order_by(JobRow.priority.desc(), JobRow.submitted_at, JobRow.seq).limit(1).with_for_update(skip_locked=True)

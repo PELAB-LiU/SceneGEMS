@@ -1,0 +1,111 @@
+"""A master on a test client: control plane, node API and operator routes, with scripted nodes.
+
+The `stores` fixture runs each test that uses it twice: on the in-memory stores (default
+run) and on a real Postgres (`-m postgres`). Timers are off: tests run the scheduler and
+the sweeps themselves, on the app's event loop, after moving the manual clock.
+"""
+
+from dataclasses import dataclass
+from typing import Callable, Dict, Iterator, Optional
+
+import pytest
+from starlette.testclient import TestClient
+
+from scenegems_tool.cluster.fingerprints.job_images import GAZEBO_IMAGE, MONITORING_IMAGE, SCENARIO_EXECUTION_IMAGE, SCENE_GENERATION_IMAGE, SITL_IMAGE, TRAJECTORY_GENERATION_IMAGE
+from scenegems_tool.cluster.master.api.master_apps import create_node_api_app
+from scenegems_tool.cluster.master.api.operator_routes import operator_router
+from scenegems_tool.cluster.master.control_plane import ControlPlane
+from scenegems_tool.cluster.master.scheduling.fingerprint_policy import ExpectedFingerprints
+from scenegems_tool.cluster.protocol.jobs import JobType
+from scenegems_tool.cluster.protocol.pairing import PairingRequest
+from scenegems_tool.cluster.security.credentials.pairing_tokens import create_pairing_token
+from scenegems_tool.cluster.security.pairing import pair_node
+from scenegems_tool.persistence.stores import JobStore, NodeStore
+from tests.scenegems_tool.cluster.master.fake_node import FakeNode
+from tests.scenegems_tool.cluster.master.fake_stores import InMemoryJobStore, InMemoryNodeStore
+from tests.scenegems_tool.cluster.security.conftest import make_master_security
+from tests.scenegems_tool.persistence.stores.builders import ManualClock, make_hello
+
+# The master's expected fingerprints in these tests; a node built from the same checkout reports them
+EXPECTED = {
+    SCENE_GENERATION_IMAGE: "fp-scene",
+    TRAJECTORY_GENERATION_IMAGE: "fp-trajectory",
+    SCENARIO_EXECUTION_IMAGE: "fp-execution",
+    MONITORING_IMAGE: "fp-monitoring",
+    SITL_IMAGE: "fp-sitl",
+    GAZEBO_IMAGE: "fp-gazebo",
+    "scenegems-backend:latest": "fp-backend",
+}
+SCENE = JobType.SCENE_GENERATION
+KINEMATIC = JobType.SIMULATION_KINEMATIC
+
+
+@dataclass
+class Stores:
+    nodes: object
+    jobs: object
+
+
+@pytest.fixture
+def clock() -> ManualClock:
+    return ManualClock()
+
+
+@pytest.fixture(params=["memory", pytest.param("postgres", marks=pytest.mark.postgres)])
+def stores(request, clock) -> Stores:
+    if request.param == "memory":
+        nodes = InMemoryNodeStore(clock)
+        return Stores(nodes, InMemoryJobStore(nodes, clock))
+    session_factory = request.getfixturevalue("session_factory")
+    return Stores(NodeStore(session_factory, clock), JobStore(session_factory, clock))
+
+
+@pytest.fixture
+def security(tmp_path):
+    return make_master_security(tmp_path / "security")
+
+
+@pytest.fixture
+def plane(stores, clock) -> ControlPlane:
+    return ControlPlane("lab-master", stores.nodes, stores.jobs, ExpectedFingerprints.fixed(EXPECTED), clock=clock)
+
+
+@pytest.fixture
+def client(plane, security) -> Iterator[TestClient]:
+    app = create_node_api_app(plane, security, run_timers=False)
+    app.include_router(operator_router(plane))
+    with TestClient(app) as client:
+        yield client
+
+
+@pytest.fixture
+def on_loop(client) -> Callable:
+    """Runs a coroutine function of the control plane on the app's event loop, as its timers would."""
+
+    def call(function, *arguments):
+        return client.portal.call(function, *arguments)
+
+    return call
+
+
+@pytest.fixture
+def schedule(on_loop, plane) -> Callable[[], int]:
+    return lambda: on_loop(plane.scheduler.run_once)
+
+
+@pytest.fixture
+def make_node(client, security) -> Iterator[Callable[..., FakeNode]]:
+    """Pairs a node with the master (one-time token to credential) and returns it as a scripted node."""
+    nodes = []
+
+    def make(name: str, slots: Optional[Dict[JobType, int]] = None, labels=None, fingerprints: Optional[Dict[str, str]] = None, resources=None) -> FakeNode:
+        token = create_pairing_token(security.store).token
+        response = pair_node(security, PairingRequest(token=token, node_name=name, labels=labels or {}))
+        hello = make_hello(response.node_id, slots=slots or {SCENE: 2}, labels=labels, fingerprints=dict(EXPECTED) if fingerprints is None else fingerprints, resources=resources, name=name)
+        nodes.append(FakeNode(client, response.node_credential, hello))
+        return nodes[-1]
+
+    yield make
+    # An open socket would keep the test client's event loop from stopping
+    for node in nodes:
+        node.close()

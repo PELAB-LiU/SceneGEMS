@@ -55,6 +55,7 @@ dependencies = [
     "isort",
     "pytest",
     "pytest-cov",
+    "httpx==0.28.1",  # starlette's TestClient, for the master's API tests
     "pre-commit",
     "portion",
     "svgpath2mpl",

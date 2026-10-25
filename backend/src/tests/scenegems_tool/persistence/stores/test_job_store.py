@@ -146,6 +146,14 @@ def test_claim_can_be_limited_to_job_types(job_store, node_a):
     assert job_store.claim_next("node-a", LEASE_S, job_types=[TRAJECTORY]) is None
 
 
+def test_claim_skips_excluded_jobs(job_store, node_a):
+    first = job_store.submit(make_submission(priority=9)).job
+    second = job_store.submit(make_submission()).job
+    assert job_store.claim_next("node-a", LEASE_S, exclude_job_ids=[first.job_id]).job.job_id == second.job_id
+    assert job_store.claim_next("node-a", LEASE_S, exclude_job_ids=[first.job_id]) is None
+    assert job_store.claim_next("node-a", LEASE_S).job.job_id == first.job_id
+
+
 def test_claim_respects_slots_per_job_type(job_store, node_store):
     node_store.register(make_hello("node-a", slots={SCENE: 2, KINEMATIC: 1}))
     for _ in range(3):

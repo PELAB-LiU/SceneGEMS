@@ -3,12 +3,13 @@ from datetime import timedelta
 import pytest
 
 from scenegems_tool.cluster.protocol.pairing import PairingRequest
-from scenegems_tool.cluster.security.command_line import load_env_file, main, parse_duration
+from scenegems_tool.cluster.security.certificates.certificate_pinning import certificate_sha256
+from scenegems_tool.cluster.security.command_line import load_env_file, main, master_url, parse_duration
 from scenegems_tool.cluster.security.credentials.broker_accounts import verify_broker_login
 from scenegems_tool.cluster.security.credentials.pairing_tokens import consume_pairing_token
 from scenegems_tool.cluster.security.master_security import MasterSecurity
 from scenegems_tool.cluster.security.pairing import pair_node
-from tests.scenegems_tool.cluster.security.conftest import HOOK_SECRET, MASTER_PASSWORD
+from tests.scenegems_tool.cluster.security.conftest import HOOK_SECRET, MASTER_PASSWORD, make_master_security
 
 
 @pytest.fixture
@@ -48,9 +49,13 @@ def test_init_then_create_token_then_pair(env_file, capsys):
 
     assert _run(env_file, "pairing-token", "create", "--lifetime", "10m", "--note", "lab-1") == 0
     output = capsys.readouterr()
-    token = output.out.strip()
-    assert len(token.splitlines()) == 1 and len(token) >= 43
-    assert "valid once until" in output.err and token not in output.err
+    node_env = dict(line.split("=", 1) for line in output.out.splitlines())
+    assert list(node_env) == ["SCENEGEMS_MASTER_ID", "SCENEGEMS_MASTER_URL", "SCENEGEMS_PAIRING_TOKEN", "SCENEGEMS_MASTER_CA_SHA256"]
+    assert node_env["SCENEGEMS_MASTER_ID"] == "lab-master"
+    token = node_env["SCENEGEMS_PAIRING_TOKEN"]
+    assert len(token) >= 43 and "valid once until" in output.err and token not in output.err
+    assert node_env["SCENEGEMS_MASTER_URL"] == "https://192.168.1.10:8443"
+    assert node_env["SCENEGEMS_MASTER_CA_SHA256"] == certificate_sha256(security.ca_certificate_pem)
     response = pair_node(security, PairingRequest(token=token, node_name="lab 1"))
 
     assert _run(env_file, "node", "revoke", response.node_id) == 0
@@ -93,9 +98,26 @@ def test_parse_duration(text, expected):
 def test_token_from_the_command_line_is_one_time(env_file, capsys):
     _run(env_file, "init")
     capsys.readouterr()
-    _run(env_file, "pairing-token", "create")
+    _run(env_file, "pairing-token", "create", "--token-only")
     token = capsys.readouterr().out.strip()
+    assert len(token.splitlines()) == 1 and len(token) >= 43
     security = MasterSecurity.load(env_file.parent / "security_data")
     consume_pairing_token(security.store, token)
     with pytest.raises(ValueError):
         consume_pairing_token(security.store, token)
+
+
+@pytest.mark.parametrize(
+    "environ, expected",
+    [
+        ({}, "https://192.168.1.10:8443"),
+        ({"SCENEGEMS_API_PORT": "9443"}, "https://192.168.1.10:9443"),
+        ({"SCENEGEMS_MASTER_URL": "https://master.lan:8443/"}, "https://master.lan:8443"),
+    ],
+)
+def test_master_url(master_security, environ, expected):
+    assert master_url(master_security, environ) == expected
+
+
+def test_master_url_of_an_ipv6_address(tmp_path):
+    assert master_url(make_master_security(tmp_path / "v6", addresses=("fd00::10",)), {}) == "https://[fd00::10]:8443"
