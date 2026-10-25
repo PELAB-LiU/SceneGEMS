@@ -109,11 +109,11 @@ fingerprint_hash_files() {
     texts=$(printf '%s\n' "$files" | grep -vxF -f <(printf '%s\n' "$binaries") || true)
     echo "text"
     if [ -n "$texts" ]; then
-        printf '%s\n' "$texts" | xargs -d '\n' sed -s -e '1F' -e 's/\r$//' | sha256sum
+        printf '%s\n' "$texts" | xargs -d '\n' sed -s -e '1F' -e 's/\r$//' | sha256sum | awk '{print $1}'
     fi
     echo "binary"
     if [ -n "$binaries" ]; then
-        printf '%s\n' "$binaries" | xargs -d '\n' sha256sum
+        printf '%s\n' "$binaries" | xargs -d '\n' sha256sum | sed 's/^\([0-9a-f]*\) [ *]/\1  /'
     fi
 }
 
