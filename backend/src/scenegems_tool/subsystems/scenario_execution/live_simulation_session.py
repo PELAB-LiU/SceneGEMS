@@ -5,6 +5,7 @@ from typing import Any, Callable, Dict, Optional
 from concrete_level.models.concrete_scene import ConcreteScene
 from concrete_level.models.trajectories import Trajectories
 from concrete_level.trajectory_generation.trajectory_builder import TrajectoryBuilder
+from scenegems_tool.cluster.node.launchers.per_job.simulation_session_stack import SimulationSessionStack
 from scenegems_tool.gateway.protocol import (
     ServerMessage,
     SimulationStatus,
@@ -15,9 +16,6 @@ from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.messaging.mqtt_scenario_execution_client import MqttScenarioExecutionClient
 from scenegems_tool.messaging.mqtt_scenario_execution_service import SCENARIO_EXECUTION_SERVICE_NAME
 from scenegems_tool.subsystems.monitoring.monitor_session import MonitorSession, iter_scene_batches
-from scenegems_tool.subsystems.scenario_execution.scenario_execution_subsystem_container import (
-    ScenarioExecutionSubsystemContainer,
-)
 from scenegems_tool.subsystems.scenario_execution.simulation_session import SimulationSession
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import SimulationInstanceConfig
@@ -57,7 +55,7 @@ class LiveSimulationSession(SimulationSession):
         self.live_trajectory_builder = TrajectoryBuilder(time_step=time_step)
         self._simulation_state_lock = threading.Lock()
         self._running_confirmed = False
-        self._container = ScenarioExecutionSubsystemContainer(
+        self._container = SimulationSessionStack(
             mqtt_connection,
             reference_geofence,
             simulation_config,
@@ -66,7 +64,7 @@ class LiveSimulationSession(SimulationSession):
         )
         self._client = MqttScenarioExecutionClient(
             mqtt_connection=mqtt_connection,
-            topic=ScenarioExecutionSubsystemContainer.service_topic,
+            topic=SimulationSessionStack.service_topic,
             reference_geofence=reference_geofence,
             parent_service_name=SCENARIO_EXECUTION_SERVICE_NAME,
             on_simulation_state=self._handle_simulation_state,

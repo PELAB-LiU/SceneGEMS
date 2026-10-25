@@ -48,6 +48,7 @@ dependencies = [
     "numpy",
     "uvicorn",
     "fastapi",
+    "pydantic==2.13.4",  # cluster protocol and job payloads (scenegems_tool.cluster), also in the runner images
     "omegaconf",
     "flake8",
     "black",

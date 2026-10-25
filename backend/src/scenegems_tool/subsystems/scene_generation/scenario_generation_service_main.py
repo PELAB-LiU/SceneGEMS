@@ -1,37 +1,18 @@
 import multiprocessing
-import os
 import time
 
-from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
+from scenegems_tool.cluster.node.launchers.container_environment import geofence_from_environment, worker_count_from_environment
+from scenegems_tool.messaging.mqtt_client import mqtt_connection_from_environment
 from scenegems_tool.messaging.mqtt_scenario_generation_service import MqttScenarioGenerationService
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.subsystems.scene_generation.scenario_generation_types import MAX_SCENE_GENERATION_WORKERS
 from utils.file_system_utils import ensure_directories
-
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes"}
 
 
 def main() -> None:
     ensure_directories()
-    mqtt_connection = MQttConnectionInfo(
-        user=os.environ["MQTT_USER"],
-        password=os.environ["MQTT_PASSWORD"],
-        agent_broker=os.environ["MQTT_BROKER"],
-        client_broker=os.environ["MQTT_BROKER"],
-        port=int(os.environ["MQTT_PORT"]),
-        tls_connection=_env_bool("MQTT_TLS"),
-        allow_certificates=_env_bool("MQTT_ALLOW_CERTIFICATES"),
-    )
-    reference_geofence = Geofence(
-        latitude=float(os.environ["GEOFENCE_LATITUDE"]),
-        longitude=float(os.environ["GEOFENCE_LONGITUDE"]),
-        radius_meters=float(os.environ["GEOFENCE_RADIUS"]),
-    )
-    service = MqttScenarioGenerationService(mqtt_connection, reference_geofence)
+    mqtt_connection = mqtt_connection_from_environment()
+    reference_geofence = geofence_from_environment()
+    service = MqttScenarioGenerationService(mqtt_connection, reference_geofence, worker_count_from_environment(MAX_SCENE_GENERATION_WORKERS))
     service.connect()
     service.start_runtime()
     tick_interval_sec = 1.0 / service.info_update_rate

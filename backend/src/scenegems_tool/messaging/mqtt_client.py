@@ -6,10 +6,11 @@ import traceback
 import uuid
 from abc import ABC, abstractmethod
 from threading import Event
-from typing import Any, List, Set
+from typing import Any, Dict, List, Set
 
 import paho.mqtt.client as mqtt
 
+from scenegems_tool.messaging.topic_scope import ScopedPahoClient, TopicScope
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 
 _LOOPBACK_ALIASES = frozenset({"localhost", "127.0.0.1", "::1"})
@@ -104,7 +105,17 @@ def resolve_mqtt_broker_endpoints(
 
 
 class MQttConnectionInfo:
-    def __init__(self, user: str, password: str, agent_broker: str, client_broker: str, port: int, tls_connection: bool, allow_certificates: bool):
+    def __init__(
+        self,
+        user: str,
+        password: str,
+        agent_broker: str,
+        client_broker: str,
+        port: int,
+        tls_connection: bool,
+        allow_certificates: bool,
+        topic_prefix: str = "",
+    ):
         self.user = user
         self.password = password
         self.agent_broker = agent_broker
@@ -112,6 +123,51 @@ class MQttConnectionInfo:
         self.port = port
         self.tls_connection = tls_connection
         self.allow_certificates = allow_certificates
+        # Instance scope on a shared broker (cluster/node/instance_scope.py); empty for the workbench.
+        self.topic_prefix = topic_prefix
+
+    def with_topic_prefix(self, topic_prefix: str) -> "MQttConnectionInfo":
+        return MQttConnectionInfo(self.user, self.password, self.agent_broker, self.client_broker, self.port, self.tls_connection, self.allow_certificates, topic_prefix=topic_prefix)
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes"}
+
+
+def mqtt_container_environment(mqtt_connection: MQttConnectionInfo) -> Dict[str, str]:
+    """Environment that hands a broker connection to a subsystem container (read by mqtt_connection_from_environment).
+
+    The container dials the agent broker. The topic prefix is set only when there is one, so
+    workbench containers get exactly the variables they got before instance scoping.
+    """
+    environment = {
+        "MQTT_USER": mqtt_connection.user,
+        "MQTT_PASSWORD": mqtt_connection.password,
+        "MQTT_BROKER": mqtt_connection.agent_broker,
+        "MQTT_PORT": str(mqtt_connection.port),
+        "MQTT_TLS": "1" if mqtt_connection.tls_connection else "0",
+        "MQTT_ALLOW_CERTIFICATES": "1" if mqtt_connection.allow_certificates else "0",
+    }
+    if mqtt_connection.topic_prefix:
+        environment["MQTT_TOPIC_PREFIX"] = mqtt_connection.topic_prefix
+    return environment
+
+
+def mqtt_connection_from_environment() -> MQttConnectionInfo:
+    """The broker connection of a subsystem container, from the variables of mqtt_container_environment."""
+    return MQttConnectionInfo(
+        user=os.environ["MQTT_USER"],
+        password=os.environ["MQTT_PASSWORD"],
+        agent_broker=os.environ["MQTT_BROKER"],
+        client_broker=os.environ["MQTT_BROKER"],
+        port=int(os.environ["MQTT_PORT"]),
+        tls_connection=_env_bool("MQTT_TLS"),
+        allow_certificates=_env_bool("MQTT_ALLOW_CERTIFICATES"),
+        topic_prefix=os.environ.get("MQTT_TOPIC_PREFIX", ""),
+    )
 
 
 class MqttClient(ABC):
@@ -123,11 +179,14 @@ class MqttClient(ABC):
         self.mqtt_connection = mqtt_connection
         self.reference_geofence = reference_geofence
         self.connected_event = Event()
-        self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id=self.name + "_" + self.uuid)
+        # Topics stay relative to the instance: the client adds the prefix on publish and
+        # subscribe and removes it from incoming messages.
+        self.topic_scope = TopicScope(mqtt_connection.topic_prefix)
+        self.client = ScopedPahoClient(self.topic_scope, mqtt.CallbackAPIVersion.VERSION1, client_id=self.name + "_" + self.uuid)
         self.client.user_data_set("waraps")
         self.client.on_connect = self.on_connect
         self.client.on_disconnect = self.on_disconnect
-        self.client.on_message = self.on_message
+        self.client.on_message = self._on_scoped_message
         self.client.reconnect_delay_set(min_delay=1, max_delay=30)
         self.last_broker_refusal: str | None = None
 
@@ -193,6 +252,12 @@ class MqttClient(ABC):
             print(f"{self.name} got disconnected from {self.endpoint} with code {rc}: {self.last_broker_refusal}")
             return
         print(f"{self.name} got disconnected from {self.endpoint} with code {rc}: clean disconnect")
+
+    def _on_scoped_message(self, client, userdata, msg: mqtt.MQTTMessage):
+        """Hand an incoming message to on_message with the instance prefix removed from its topic."""
+        scoped = self.topic_scope.strip_message(msg)
+        if scoped is not None:
+            self.on_message(client, userdata, scoped)
 
     def on_message(self, client, userdata, msg: mqtt.MQTTMessage):
         """Is triggered when a message is published on topics agent subscribes to"""

@@ -8,3 +8,5 @@ haversine
 colav-automaton @ https://github.com/michaelstolberger27/usv-navigation/archive/54866f24a04987334057ae5c5896dfc3ee8ca058.zip
 # MAVLink link of the lockstep ArduPilot adapter (vessel_stack/control_layers/ardupilot/mavlink_link.py); version measured in WP4
 pymavlink==2.4.50
+# Job payloads and the cluster protocol of per-job runner containers (scenegems_tool.cluster.node.jobs)
+pydantic==2.13.4

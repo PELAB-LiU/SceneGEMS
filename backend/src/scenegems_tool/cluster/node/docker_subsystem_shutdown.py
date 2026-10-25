@@ -1,63 +1,58 @@
-"""Force-remove Docker subsystem containers started by the SceneGEMS backend."""
+"""Force-remove Docker subsystem containers started by the SceneGEMS backend.
+
+These are the workbench's fixed-name containers. Scoped instances of a node belong to its
+NodeContext, which removes them in `shutdown`.
+"""
 
 from __future__ import annotations
 
 import logging
-import subprocess
 import threading
+
+from scenegems_tool.cluster.node.launchers.docker_cli import (
+    container_ids_by_name,
+    container_ids_for_compose_project,
+    container_ids_for_compose_project_prefix,
+    force_remove_compose_project,
+    force_remove_containers,
+)
 
 _logger = logging.getLogger(__name__)
 
 _MQTT_BROKER_COMPOSE_PROJECT = "mqtt_broker"
 _MQTT_BROKER_CONTAINER_NAME = "scenegems_local_mqtt_broker"
-_SCENARIO_GENERATION_COMPOSE_PROJECT = "scenegems-scenario-generation-subsystem"
-_TRAJECTORY_GENERATION_COMPOSE_PROJECT = "scenegems-trajectory-generation-subsystem"
 
 _shutdown_lock = threading.Lock()
 _shutdown_done = False
 
 
-def _container_ids_for_compose_project(project: str) -> list[str]:
-    result = subprocess.run(
-        ["docker", "ps", "-aq", "--filter", f"label=com.docker.compose.project={project}"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return [container_id for container_id in result.stdout.split() if container_id]
-
-
-def _container_ids_by_name(container_name: str) -> list[str]:
-    result = subprocess.run(
-        ["docker", "ps", "-aq", "--filter", f"name=^{container_name}$"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return [container_id for container_id in result.stdout.split() if container_id]
-
-
-def _force_remove_container_ids(container_ids: list[str]) -> None:
-    if container_ids:
-        subprocess.run(["docker", "rm", "-f", *container_ids], check=False)
-
-
 def force_destroy_mqtt_broker() -> None:
     """Stop the local MQTT broker container started via mqtt_broker/docker-compose.yml."""
-    container_ids = _container_ids_for_compose_project(_MQTT_BROKER_COMPOSE_PROJECT)
+    container_ids = container_ids_for_compose_project(_MQTT_BROKER_COMPOSE_PROJECT)
     if not container_ids:
-        container_ids = _container_ids_by_name(_MQTT_BROKER_CONTAINER_NAME)
-    _force_remove_container_ids(container_ids)
+        container_ids = container_ids_by_name(_MQTT_BROKER_CONTAINER_NAME)
+    force_remove_containers(container_ids)
 
 
 def force_destroy_scenario_generation_stack() -> None:
     """Fast teardown: force-remove scenario-generation subsystem containers."""
-    _force_remove_container_ids(_container_ids_for_compose_project(_SCENARIO_GENERATION_COMPOSE_PROJECT))
+    from scenegems_tool.cluster.node.launchers.pooled.scene_generation_pool import WORKBENCH_NAMES
+
+    force_remove_compose_project(WORKBENCH_NAMES.compose_project)
 
 
 def force_destroy_trajectory_generation_stack() -> None:
     """Fast teardown: force-remove trajectory-generation subsystem containers."""
-    _force_remove_container_ids(_container_ids_for_compose_project(_TRAJECTORY_GENERATION_COMPOSE_PROJECT))
+    from scenegems_tool.cluster.node.launchers.pooled.trajectory_generation_pool import WORKBENCH_NAMES
+
+    force_remove_compose_project(WORKBENCH_NAMES.compose_project)
+
+
+def force_destroy_monitor_subsystem_stack() -> None:
+    """Fast teardown: force-remove every COLREGS monitoring worker container of the workbench."""
+    from scenegems_tool.cluster.node.launchers.pooled.monitor_service import WORKBENCH_COMPOSE_PROJECT_PREFIX
+
+    force_remove_containers(container_ids_for_compose_project_prefix(WORKBENCH_COMPOSE_PROJECT_PREFIX))
 
 
 def shutdown_all_docker_subsystems() -> None:
@@ -69,18 +64,7 @@ def shutdown_all_docker_subsystems() -> None:
         _shutdown_done = True
 
     try:
-        from scenegems_tool.subsystems.monitoring.monitor_subsystem_container import (
-            force_destroy_monitor_subsystem_stack,
-        )
-        from scenegems_tool.subsystems.scenario_execution.scenario_execution_subsystem_container import (
-            force_destroy_scenario_execution_stack,
-        )
-        from scenegems_tool.subsystems.scene_generation.scenario_generation_container import (
-            force_destroy_scenario_generation_stack,
-        )
-        from scenegems_tool.subsystems.trajectory_generation.trajectory_generation_container import (
-            force_destroy_trajectory_generation_stack,
-        )
+        from scenegems_tool.cluster.node.launchers.per_job.simulation_session_stack import force_destroy_scenario_execution_stack
 
         force_destroy_scenario_execution_stack()
         force_destroy_scenario_generation_stack()

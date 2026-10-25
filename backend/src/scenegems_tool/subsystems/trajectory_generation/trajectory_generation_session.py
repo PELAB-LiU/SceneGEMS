@@ -3,11 +3,11 @@ from __future__ import annotations
 import asyncio
 from typing import Callable
 
+from scenegems_tool.cluster.node.launchers.pooled.trajectory_generation_pool import TrajectoryGenerationPool
 from scenegems_tool.gateway.protocol import ServerMessage
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.messaging.mqtt_trajectory_generation_client import MqttTrajectoryGenerationClient
 from scenegems_tool.messaging.mqtt_trajectory_generation_service import TRAJECTORY_GENERATION_SERVICE_NAME, TRAJECTORY_GENERATION_SERVICE_TOPIC
-from scenegems_tool.subsystems.trajectory_generation.trajectory_generation_container import TrajectoryGenerationContainer
 from scenegems_tool.subsystems.trajectory_generation.trajectory_generation_types import TrajectoryGenerationParams
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 
@@ -18,7 +18,7 @@ class TrajectoryGenerationSession:
         self.reference_geofence = reference_geofence
         self.send_payload = send_payload
 
-        self._container = TrajectoryGenerationContainer(mqtt_connection, reference_geofence)
+        self._container = TrajectoryGenerationPool.for_workbench(mqtt_connection, reference_geofence)
 
         self.client = MqttTrajectoryGenerationClient(
             mqtt_connection=mqtt_connection,

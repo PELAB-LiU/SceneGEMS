@@ -10,22 +10,23 @@ from typing import Any, List, Optional
 import paho.mqtt.client as mqtt
 
 from scenegems_tool.messaging.mqtt_client import MqttClient, MQttConnectionInfo
-from scenegems_tool.subsystems.trajectory_generation.trajectory_generation_types import MqttTrajectoryGenerationTask, TrajectoryGenerationParams
+from scenegems_tool.subsystems.trajectory_generation.trajectory_generation_types import (  # noqa: F401 (re-exported names)
+    MAX_TRAJECTORY_GENERATION_WORKERS,
+    TRAJECTORY_GENERATION_SERVICE_NAME,
+    TRAJECTORY_GENERATION_SERVICE_TOPIC,
+    MqttTrajectoryGenerationTask,
+    TrajectoryGenerationParams,
+)
 from scenegems_tool.subsystems.trajectory_generation.trajectory_generation_worker import run_trajectory_generation_worker
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 
 _logger = logging.getLogger(__name__)
 
-# Deliberately one worker only: RRT trajectory generation is a single long run and the
-# subsystem is scoped to one request at a time (see project spec).
-MAX_TRAJECTORY_GENERATION_WORKERS = 1
-TRAJECTORY_GENERATION_SERVICE_NAME = "trajectory_generation_service"
-TRAJECTORY_GENERATION_SERVICE_TOPIC = f"waraps/service/virtual/real/{TRAJECTORY_GENERATION_SERVICE_NAME}"
-
 
 class MqttTrajectoryGenerationService(MqttClient):
-    def __init__(self, mqtt_connection: MQttConnectionInfo, reference_geofence: Geofence):
+    def __init__(self, mqtt_connection: MQttConnectionInfo, reference_geofence: Geofence, max_workers: int = MAX_TRAJECTORY_GENERATION_WORKERS):
         self.info_update_rate = 1.0
+        self.max_workers = max_workers
         super().__init__(TRAJECTORY_GENERATION_SERVICE_NAME, TRAJECTORY_GENERATION_SERVICE_TOPIC, mqtt_connection, reference_geofence)
         self.task_queue: Queue[MqttTrajectoryGenerationTask] = Queue()
         self.preview_queue: Queue = Queue()
@@ -70,10 +71,14 @@ class MqttTrajectoryGenerationService(MqttClient):
                 colregs_constraints_content=task_params["colregs-constraints-content"],
                 params=TrajectoryGenerationParams.from_task_params(task_params.get("params", {})),
             )
-            # Single-worker subsystem: a new request supersedes whatever is running.
-            self.terminate_event.set()
-            self._drain_task_queue()
-            self.current_tasks = [task]
+            if self.max_workers == 1:
+                # Single-worker subsystem (the workbench): a new request supersedes whatever is running.
+                self.terminate_event.set()
+                self._drain_task_queue()
+                self.current_tasks = [task]
+            else:
+                # A node's pool: requests queue for the next free worker.
+                self.current_tasks.append(task)
             self.task_queue.put_nowait(task)
         elif payload["command"] == "signal-task" and payload.get("signal", {}).get("name") == "cancel":
             self.terminate_event.set()
@@ -139,7 +144,7 @@ class MqttTrajectoryGenerationService(MqttClient):
     def _manage_worker_pool(self) -> None:
         while not self._worker_pool_stop_event.is_set():
             self._active_workers = [worker for worker in self._active_workers if worker.is_alive()]
-            if len(self._active_workers) >= MAX_TRAJECTORY_GENERATION_WORKERS:
+            if len(self._active_workers) >= self.max_workers:
                 time.sleep(0.1)
                 continue
             try:

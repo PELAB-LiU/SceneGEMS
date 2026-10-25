@@ -1,6 +1,13 @@
 from dataclasses import dataclass
 from typing import Optional
 
+# Deliberately one worker in the workbench: RRT trajectory generation is a single long run
+# and the subsystem is scoped to one request at a time (see project spec). A node sizes
+# its pool by its slots. Kept apart from the service module, which imports the search.
+MAX_TRAJECTORY_GENERATION_WORKERS = 1
+TRAJECTORY_GENERATION_SERVICE_NAME = "trajectory_generation_service"
+TRAJECTORY_GENERATION_SERVICE_TOPIC = f"waraps/service/virtual/real/{TRAJECTORY_GENERATION_SERVICE_NAME}"
+
 
 @dataclass(frozen=True)
 class TrajectoryGenerationParams:

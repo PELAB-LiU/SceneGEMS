@@ -16,3 +16,4 @@ media/**
 **/*.synctex.gz
 
 **/assets/runtime_assets/**/gen_tmp/**
+**/assets/runtime_assets/instances/**

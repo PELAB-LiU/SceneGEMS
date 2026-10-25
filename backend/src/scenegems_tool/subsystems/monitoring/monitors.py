@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 
+from scenegems_tool.cluster.node.launchers.pooled.monitor_service import MonitorService
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
-from scenegems_tool.subsystems.monitoring.monitor_subsystem_container import MonitorSubsystemContainer
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 
 
@@ -25,7 +25,7 @@ class InternalMonitor(MonitorBase):
         agent_name: str,
         topic: str,
     ):
-        self._container = MonitorSubsystemContainer(
+        self._container = MonitorService.for_workbench(
             mqtt_connection=mqtt_connection,
             reference_geofence=reference_geofence,
             agent_name=agent_name,
