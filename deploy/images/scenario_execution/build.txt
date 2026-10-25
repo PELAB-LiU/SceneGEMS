@@ -1,1 +1,0 @@
-docker build -f deploy/images/scenario_execution/Dockerfile -t scenegems-scenario-execution-subsystem:latest .

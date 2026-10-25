@@ -1,5 +1,3 @@
-import subprocess
-
 from scenegems_tool.cluster.node.daemon.control.status_frames import UNKNOWN_REVISION, StatusFrames, software_revision
 from scenegems_tool.cluster.protocol.jobs import JobType
 from scenegems_tool.cluster.protocol.node_description import CapabilityOffer, NodeResources
@@ -51,14 +49,10 @@ def test_heartbeat_reports_slots_in_use_and_running_leases():
     assert heartbeat.running_lease_ids == ["lease-2", "lease-7"]
 
 
-def test_the_configured_revision_wins():
-    assert software_revision("v1.2", None) == "v1.2"
-    assert software_revision(None, None) == UNKNOWN_REVISION
+def test_the_configured_revision_is_reported():
+    assert software_revision("v1.2") == "v1.2"
 
 
-def test_the_revision_is_read_from_a_repository(tmp_path):
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "start"], check=True)
-    head = subprocess.run(["git", "-C", str(tmp_path), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
-    assert software_revision(None, tmp_path) == head
-    assert software_revision(None, tmp_path / "missing") == UNKNOWN_REVISION
+def test_without_a_configured_revision_the_node_reports_unknown():
+    assert software_revision(None) == UNKNOWN_REVISION
+    assert software_revision("") == UNKNOWN_REVISION

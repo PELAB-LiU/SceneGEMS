@@ -47,7 +47,7 @@ class _Listener(uvicorn.Server):
 def build_master(settings: MasterSettings, with_gateway: bool = True) -> MasterApps:
     security = MasterSecurity.load(settings.security_dir)
     sessions = create_session_factory(create_database_engine(settings.database_url))
-    plane = ControlPlane(security.master_id, NodeStore(sessions), JobStore(sessions), ExpectedFingerprints.of_checkout(settings.fingerprint_repo_root))
+    plane = ControlPlane(security.master_id, NodeStore(sessions), JobStore(sessions), ExpectedFingerprints.of_release(settings.release_manifest))
     gateway = None
     if with_gateway:
         from scenegems_tool.gateway.websocket_app import app as gateway

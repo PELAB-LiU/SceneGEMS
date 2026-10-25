@@ -10,7 +10,11 @@ BUILD_SIMULATION=0
 BUILD_ARDUAGENT=0
 BUILD_NODE=0
 BUILD_ALL=0
+BUILD_BROKER=0
 BUILD_NO_CHECK=0
+RELEASE_DIR=""
+# Images the release bundle needs that SceneGEMS does not build (cluster/release/roles.py)
+RELEASE_PULLED_IMAGES=("postgres:16.10-alpine")
 
 print_build_help() {
     cat <<'EOF'
@@ -42,6 +46,12 @@ Options:
 
   --all                   Build every image (same as no arguments)
 
+  --release <folder>      Build the images a cluster runs (broker, backend and
+                          subsystems, simulation, node daemon), pull Postgres, and
+                          write the release bundle into <folder>: release.json and
+                          the master and node stacks. The deployment tool installs
+                          the bundle on the machines.
+
   --fingerprints          Print "image fingerprint" for every image of this checkout
                           and exit; builds nothing and needs no Docker engine
 
@@ -58,7 +68,7 @@ Examples:
   ./build.sh --frontend             # after UI changes
   ./build.sh --stack                # backend + frontend, skip simulation
   ./build.sh --arduagent            # agent image only
-  ./build.sh --node --backend       # a worker machine: node daemon and subsystems
+  ./build.sh --release ../release   # images and bundle for the deployment tool
   ./build.sh --backend --simulation # backend stack + simulation images
   ./build.sh --backend --no-check   # force rebuild backend images
 EOF
@@ -100,6 +110,14 @@ parse_build_args() {
                 ;;
             --no-check)
                 BUILD_NO_CHECK=1
+                ;;
+            --release)
+                shift
+                RELEASE_DIR="${1:-}"
+                if [ -z "$RELEASE_DIR" ]; then
+                    echo "--release needs a folder" >&2
+                    exit 1
+                fi
                 ;;
             --fingerprints)
                 export DOCKER_FINGERPRINT_ONLY=1
@@ -171,6 +189,14 @@ build_frontend_image() {
 
 parse_build_args "$@"
 
+# A release builds what a cluster runs; the frontend and ArduAgent belong to the workbench.
+if [ -n "$RELEASE_DIR" ]; then
+    BUILD_BROKER=1
+    BUILD_BACKEND=1
+    BUILD_SIMULATION=1
+    BUILD_NODE=1
+fi
+
 # Modifier-only invocations (e.g. ./build.sh --no-check) should build everything,
 # same as running ./build.sh with no arguments.
 if [ "$BUILD_ALL" -eq 0 ] && [ "$BUILD_BACKEND" -eq 0 ] && [ "$BUILD_FRONTEND" -eq 0 ] \
@@ -183,6 +209,7 @@ if [ "$BUILD_NO_CHECK" -eq 1 ]; then
 fi
 
 if [ "$BUILD_ALL" -eq 1 ]; then
+    BUILD_BROKER=1
     BUILD_BACKEND=1
     BUILD_FRONTEND=1
     BUILD_SIMULATION=1
@@ -192,7 +219,7 @@ fi
 
 print_selected_build_targets() {
     local targets=()
-    if [ "$BUILD_ALL" -eq 1 ]; then
+    if [ "$BUILD_BROKER" -eq 1 ]; then
         targets+=("mqtt-broker")
     fi
     if [ "$BUILD_BACKEND" -eq 1 ]; then
@@ -227,7 +254,7 @@ if [ "${DOCKER_FINGERPRINT_ONLY:-0}" != "1" ]; then
 fi
 
 # Application stack first (broker, backend, frontend), then optional simulation images.
-if [ "$BUILD_ALL" -eq 1 ]; then
+if [ "$BUILD_BROKER" -eq 1 ]; then
     build_broker_image
 fi
 if [ "$BUILD_BACKEND" -eq 1 ]; then
@@ -247,6 +274,28 @@ if [ "$BUILD_NODE" -eq 1 ]; then
 fi
 
 if [ "${DOCKER_FINGERPRINT_ONLY:-0}" = "1" ]; then
+    exit 0
+fi
+
+# The Python of the backend's virtual environment, else the one on the PATH.
+release_python() {
+    local candidate
+    for candidate in "$SCRIPT_DIR/backend/env/Scripts/python.exe" "$SCRIPT_DIR/backend/env/bin/python"; do
+        if [ -x "$candidate" ]; then
+            echo "$candidate"
+            return
+        fi
+    done
+    command -v python3 || command -v python
+}
+
+if [ -n "$RELEASE_DIR" ]; then
+    for image in "${RELEASE_PULLED_IMAGES[@]}"; do
+        image_exists "$image" || docker pull "$image"
+    done
+    echo ""
+    echo "== Release bundle =="
+    PYTHONPATH="$SCRIPT_DIR/backend/src" "$(release_python)" -m scenegems_tool.cluster.release --out "$RELEASE_DIR"
     exit 0
 fi
 

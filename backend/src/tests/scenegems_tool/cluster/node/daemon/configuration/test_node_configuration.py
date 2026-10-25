@@ -88,7 +88,6 @@ def test_optional_values_are_read():
             SCENEGEMS_DOCKER_NETWORK="scenegems-node-lab-master-worker-1",
             SCENEGEMS_NODE_REFERENCE_GEOFENCE="57.7, 11.9, 2000",
             SCENEGEMS_SOFTWARE_REVISION="abc123",
-            SCENEGEMS_REPOSITORY_DIR="/repository",
         )
     )
     assert configuration.trust_dir == Path("/etc/scenegems/trust")
@@ -96,7 +95,6 @@ def test_optional_values_are_read():
     assert configuration.docker_network == "scenegems-node-lab-master-worker-1"
     assert configuration.reference_geofence == (57.7, 11.9, 2000.0)
     assert configuration.software_revision == "abc123"
-    assert configuration.repository_dir == Path("/repository")
 
 
 def test_without_a_trust_source_job_containers_mount_the_trust_folder_itself(tmp_path):

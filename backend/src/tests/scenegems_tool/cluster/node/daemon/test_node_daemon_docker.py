@@ -130,7 +130,6 @@ def node(cluster, tmp_path_factory):
         "SCENEGEMS_NODE_CAPABILITIES": "simulation.kinematic:2,scene_generation:1",
         "SCENEGEMS_NODE_LABELS": "test=docker",
         "SCENEGEMS_NODE_IMAGE_TAG": NODE_IMAGE_TAG,
-        "SCENEGEMS_CHECKOUT_DIR": Path(REPO_ROOT).resolve().as_posix(),
         "SCENEGEMS_SOFTWARE_REVISION": "docker-test",
         **{variable: _image(subsystem) for subsystem, variable in IMAGE_ENVIRONMENT_VARIABLES.items()},
     }

@@ -1,14 +1,35 @@
 """deploy/scripts/docker-common.sh run on small repository copies."""
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Dict
 
 import pytest
 
-from scenegems_tool.cluster.fingerprints.expected import _find_bash, parse_fingerprint_listing
-
 SCRIPTS = Path(__file__).resolve().parents[6] / "deploy" / "scripts"
+_GIT_BASH_CANDIDATES = (r"C:\Program Files\Git\bin\bash.exe", r"C:\Program Files (x86)\Git\bin\bash.exe")
+
+
+def _find_bash() -> str:
+    """bash for the scripts. On Windows the bash on the PATH may be WSL's, so Git Bash is preferred."""
+    override = os.environ.get("SCENEGEMS_BASH")
+    if override:
+        return override
+    for candidate in _GIT_BASH_CANDIDATES:
+        if os.path.exists(candidate):
+            return candidate
+    found = shutil.which("bash")
+    if found is None:
+        raise RuntimeError("bash is needed to run the build scripts; set SCENEGEMS_BASH")
+    return found
+
+
+def _parse_listing(text: str) -> Dict[str, str]:
+    """The 'image fingerprint' lines printed by build.sh --fingerprints."""
+    return dict(line.split() for line in text.splitlines() if len(line.split()) == 2)
+
 
 try:
     BASH = _find_bash()
@@ -65,14 +86,10 @@ def test_a_pin_the_dockerfile_does_not_declare_leaves_the_fingerprint_alone(tmp_
     assert _fingerprint(root) == before
 
 
-def test_parse_fingerprint_listing_reads_image_and_fingerprint():
-    assert parse_fingerprint_listing("a:latest abc\nnoise\nb:dev def\n") == {"a:latest": "abc", "b:dev": "def"}
-
-
 @pytest.mark.slow
 def test_build_script_lists_a_fingerprint_for_every_image():
-    from scenegems_tool.cluster.fingerprints.expected import expected_fingerprints
-
-    listing = expected_fingerprints()
+    root = SCRIPTS.parents[1]
+    completed = subprocess.run([BASH, (SCRIPTS / "build.sh").as_posix(), "--fingerprints"], cwd=root, capture_output=True, text=True, check=True)
+    listing = _parse_listing(completed.stdout)
     assert "scenegems-backend:latest" in listing and "scenegems-ardupilot-sitl:latest" in listing
     assert all(len(value) == 64 for value in listing.values())

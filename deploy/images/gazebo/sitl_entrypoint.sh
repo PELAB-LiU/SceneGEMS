@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ArduPilot SITL launcher for Gazebo JSON physics.
-# Env vars (defaults match docker-compose-gazebo.yml sitl1):
+# Env vars (the generated stacks of vessel_stack/simulation_docker_stack.py set them):
 #   SITL_RESOLVE_HOST   Docker DNS name for the Gazebo service (default: gazebo)
 #   SITL_SIM_ADDRESS      If set, used as --sim-address directly (skip DNS resolve; IPv4)
 #   SITL_VEHICLE          -v argument (default: Rover)

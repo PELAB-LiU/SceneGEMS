@@ -5,7 +5,7 @@ docker_common_init() {
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
     cd "$SCRIPT_DIR"
     export REPO_ROOT="$SCRIPT_DIR"
-    COMPOSE_FILE="$SCRIPT_DIR/deploy/master/docker-compose.yml"
+    COMPOSE_FILE="$SCRIPT_DIR/deploy/workbench/docker-compose.yml"
     COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-scenegems}"
     UPSTREAM_PINS_FILE="$SCRIPT_DIR/deploy/images/upstream_pins.env"
 }
@@ -26,7 +26,6 @@ fingerprint_find_excluded_files() {
         ! -path '*/__pycache__/*' \
         ! -path '*/env/*' \
         ! -path '*/venv/*' \
-        ! -path '*/.docker-stamps/*' \
         ! -path '*/dist/*' \
         ! -path '*/dist-ssr/*' \
         ! -path '*/.mypy_cache/*' \

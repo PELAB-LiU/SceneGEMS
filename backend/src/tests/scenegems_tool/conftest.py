@@ -15,11 +15,11 @@ import pytest
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.engine import make_url
 
+from scenegems_tool.cluster.release.roles import POSTGRES_IMAGE  # the image of deploy/master/docker-compose.yml
 from scenegems_tool.persistence.database import create_database_engine, create_session_factory, normalize_database_url
 from scenegems_tool.persistence.migrate import upgrade_database
 
 TEST_DATABASE_URL_ENV = "SCENEGEMS_TEST_DATABASE_URL"
-POSTGRES_IMAGE = "postgres:16.10-alpine"  # the image of deploy/master/docker-compose.yml
 STARTUP_TIMEOUT_S = 60.0
 
 

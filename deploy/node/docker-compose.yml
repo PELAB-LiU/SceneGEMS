@@ -1,12 +1,12 @@
 # One node instance of one master: the node daemon (scenegems_tool.cluster.node.daemon) in its
 # container. It holds the Docker socket and starts every job in a subsystem container next to it.
+# The deployment tool installs this file with .env into one folder per node
+# (scenegems_tool.cluster.release.roles) and runs `docker compose up -d` there.
 #
-#   docker compose -f deploy/node/docker-compose.yml --env-file deploy/node/.env up -d
-#
-# The values come from the env file (template: deploy/node/.env.example). The project, the
-# container, the network and the volumes are all named scenegems-node-<master id>-<node name>,
-# so one machine can run nodes for several masters, and several nodes of one master, side by
-# side: one env file each. Pairing state lives in the state volume; remove it to pair again.
+# The values come from .env (template: deploy/node/.env.example). The project, the container,
+# the network and the volumes are all named scenegems-node-<master id>-<node name>, so one
+# machine can run nodes for several masters, and several nodes of one master, side by side.
+# Pairing state lives in the state volume; remove it to pair again.
 name: scenegems-node-${SCENEGEMS_MASTER_ID:?set SCENEGEMS_MASTER_ID in the env file}-${SCENEGEMS_NODE_NAME:?set SCENEGEMS_NODE_NAME in the env file}
 
 services:
@@ -32,7 +32,6 @@ services:
       SCENEGEMS_NODE_TRUST_SOURCE: scenegems-node-${SCENEGEMS_MASTER_ID}-${SCENEGEMS_NODE_NAME}-trust
       SCENEGEMS_DOCKER_NETWORK: scenegems-node-${SCENEGEMS_MASTER_ID}-${SCENEGEMS_NODE_NAME}
       SCENEGEMS_RUNTIME_VOLUME: scenegems-node-${SCENEGEMS_MASTER_ID}-${SCENEGEMS_NODE_NAME}-runtime
-      SCENEGEMS_REPOSITORY_DIR: /repository
       # Subsystem images; empty means the locally built default (scenegems_tool/cluster/node/subsystem.py).
       SCENARIO_GENERATION_IMAGE: ${SCENARIO_GENERATION_IMAGE:-}
       TRAJECTORY_GENERATION_IMAGE: ${TRAJECTORY_GENERATION_IMAGE:-}
@@ -40,7 +39,6 @@ services:
       SCENARIO_EXECUTION_IMAGE: ${SCENARIO_EXECUTION_IMAGE:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ${SCENEGEMS_CHECKOUT_DIR:-../..}:/repository:ro
       # Generated compose files and stack files of the node's instances; SITL and Gazebo mount it too.
       - runtime:/app/assets/runtime_assets
       - state:/var/lib/scenegems-node

@@ -15,7 +15,7 @@ def test_defaults():
     settings = MasterSettings.from_environment(REQUIRED)
     assert settings.security_dir == Path("/etc/scenegems/security")
     assert (settings.node_api, settings.operator, settings.broker_hook) == (Listener("0.0.0.0", 8443), Listener("127.0.0.1", 5174), Listener("127.0.0.1", 8090))
-    assert settings.fingerprint_repo_root is None
+    assert settings.release_manifest is None
 
 
 def test_overrides():
@@ -25,11 +25,11 @@ def test_overrides():
         SCENEGEMS_OPERATOR_LISTEN_HOST="0.0.0.0",
         SCENEGEMS_BROKER_HOOK_LISTEN_HOST="0.0.0.0",
         SCENEGEMS_BROKER_HOOK_LISTEN_PORT="8091",
-        SCENEGEMS_FINGERPRINT_REPO_ROOT="/repo",
+        SCENEGEMS_RELEASE_MANIFEST="/etc/scenegems/release.json",
     )
     settings = MasterSettings.from_environment(environ)
     assert settings.node_api == Listener("0.0.0.0", 9443) and settings.operator == Listener("0.0.0.0", 5174) and settings.broker_hook == Listener("0.0.0.0", 8091)
-    assert settings.fingerprint_repo_root == Path("/repo")
+    assert settings.release_manifest == Path("/etc/scenegems/release.json")
 
 
 @pytest.mark.parametrize("missing", sorted(REQUIRED))

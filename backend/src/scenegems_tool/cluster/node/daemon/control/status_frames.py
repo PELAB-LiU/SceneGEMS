@@ -6,9 +6,7 @@ Heartbeats repeat the changing part at the interval the master's Welcome sets.
 """
 
 import logging
-import subprocess
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Callable, Dict, List, Optional, Protocol
 
 from scenegems_tool.cluster.protocol.jobs import JobType
@@ -60,21 +58,6 @@ class StatusFrames:
             return {}
 
 
-def software_revision(configured: Optional[str], repository_dir: Optional[Path]) -> str:
-    """The configured revision, else the repository's HEAD commit, else "unknown"."""
-    if configured:
-        return configured
-    if repository_dir is None:
-        return UNKNOWN_REVISION
-    try:
-        result = subprocess.run(
-            ["git", "-c", "safe.directory=*", "-C", str(repository_dir), "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return UNKNOWN_REVISION
-    revision = result.stdout.strip()
-    return revision if result.returncode == 0 and revision else UNKNOWN_REVISION
+def software_revision(configured: Optional[str]) -> str:
+    """The configured revision (the release's, written into the node's .env by the deployment tool), else "unknown"."""
+    return configured or UNKNOWN_REVISION

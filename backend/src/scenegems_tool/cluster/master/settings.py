@@ -8,8 +8,8 @@ The compose service sets the listeners and folders itself; the secrets come from
     SCENEGEMS_API_LISTEN_HOST, _PORT          node API, HTTPS (default 0.0.0.0:8443)
     SCENEGEMS_OPERATOR_LISTEN_HOST, _PORT     workbench gateway and operator API (default 127.0.0.1:5174)
     SCENEGEMS_BROKER_HOOK_LISTEN_HOST, _PORT  broker login hook (default 127.0.0.1:8090)
-    SCENEGEMS_FINGERPRINT_REPO_ROOT   the checkout whose image fingerprints the master requires
-                                      (default: the checkout this code runs from)
+    SCENEGEMS_RELEASE_MANIFEST        release.json of the release the master runs (cluster/release); its
+                                      image fingerprints are the ones the master requires of nodes and jobs
 """
 
 import os
@@ -38,7 +38,7 @@ class MasterSettings:
     node_api: Listener = Listener("0.0.0.0", 8443)
     operator: Listener = Listener("127.0.0.1", 5174)
     broker_hook: Listener = Listener("127.0.0.1", 8090)
-    fingerprint_repo_root: Optional[Path] = None
+    release_manifest: Optional[Path] = None
 
     @classmethod
     def from_environment(cls, environ: Optional[Mapping[str, str]] = None, env_file_folder: Optional[Path] = None) -> "MasterSettings":
@@ -47,7 +47,7 @@ class MasterSettings:
         security_dir = Path(_required(environ, "SCENEGEMS_SECURITY_DIR"))
         if not security_dir.is_absolute() and env_file_folder is not None:
             security_dir = env_file_folder / security_dir
-        repo_root = environ.get("SCENEGEMS_FINGERPRINT_REPO_ROOT", "").strip()
+        release_manifest = environ.get("SCENEGEMS_RELEASE_MANIFEST", "").strip()
         return cls(
             security_dir=security_dir,
             database_url=_required(environ, DATABASE_URL_ENV),
@@ -55,7 +55,7 @@ class MasterSettings:
             node_api=_listener(environ, "SCENEGEMS_API", cls.node_api),
             operator=_listener(environ, "SCENEGEMS_OPERATOR", cls.operator),
             broker_hook=_listener(environ, "SCENEGEMS_BROKER_HOOK", cls.broker_hook),
-            fingerprint_repo_root=Path(repo_root) if repo_root else None,
+            release_manifest=Path(release_manifest) if release_manifest else None,
         )
 
 

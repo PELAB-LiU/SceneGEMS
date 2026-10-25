@@ -1,10 +1,9 @@
 """Which image fingerprints the master requires, of a job and of a node.
 
-The master's required set is the expected fingerprints of its own checkout: the listing of
-`deploy/scripts/build.sh --fingerprints`, computed once when the master starts from the
-repository mounted into its container (design doc 13.8.3 says why the listing is not baked
-into the image). A node runs the same script on its checkout, so a node at the master's
-revision matches, and any other node is out of date and gets no jobs.
+The master's required set is the image fingerprints of the release it runs, read once at
+start from its release.json (cluster/release). The deployment tool installs the same
+release's images on every node, so a node of the master's release matches, and any other
+node is out of date and gets no jobs.
 
 A submission without fingerprints gets the expected ones of the images its job runs in; a
 submission that names fingerprints keeps them (a campaign's pinned set, Phase 4).
@@ -18,22 +17,22 @@ from typing import Callable, Dict, List, Optional
 import anyio
 
 from scenegems_tool.cluster.fingerprints.comparison import FingerprintMismatch, find_mismatches
-from scenegems_tool.cluster.fingerprints.expected import expected_fingerprints
 from scenegems_tool.cluster.fingerprints.job_images import capability_images, job_images
 from scenegems_tool.cluster.protocol.jobs import JobSubmission
+from scenegems_tool.cluster.release.manifest import read_release
 from scenegems_tool.persistence.stores import NodeRecord
 
 logger = logging.getLogger(__name__)
 
 
 class ListingState(str, Enum):
-    PENDING = "pending"  # being computed; nothing is leased meanwhile
+    PENDING = "pending"  # being read; nothing is leased meanwhile
     READY = "ready"
-    FAILED = "failed"  # nothing is leased until the master is restarted with a working checkout
+    FAILED = "failed"  # nothing is leased until the master is restarted with a readable release
 
 
 class ExpectedFingerprints:
-    """The master's expected image fingerprints, computed once in the background."""
+    """The master's expected image fingerprints, read once in the background."""
 
     def __init__(self, compute: Callable[[], Dict[str, str]]):
         self._compute = compute
@@ -42,8 +41,13 @@ class ExpectedFingerprints:
         self.error: Optional[str] = None
 
     @classmethod
-    def of_checkout(cls, repo_root: Optional[Path] = None) -> "ExpectedFingerprints":
-        return cls(lambda: expected_fingerprints(repo_root))
+    def of_release(cls, manifest: Optional[Path]) -> "ExpectedFingerprints":
+        def read() -> Dict[str, str]:
+            if manifest is None:
+                raise ValueError("SCENEGEMS_RELEASE_MANIFEST is not set, so the master knows no release")
+            return read_release(manifest).fingerprints()
+
+        return cls(read)
 
     @classmethod
     def fixed(cls, listing: Dict[str, str]) -> "ExpectedFingerprints":
@@ -62,11 +66,11 @@ class ExpectedFingerprints:
             listing = await anyio.to_thread.run_sync(self._compute)
         except Exception as error:  # the master keeps serving, but leases nothing
             self.state, self.error = ListingState.FAILED, f"{type(error).__name__}: {error}"
-            logger.error("Could not compute the expected image fingerprints, so no job will be leased: %s", self.error)
+            logger.error("Could not read the expected image fingerprints, so no job will be leased: %s", self.error)
             return
         if not listing:
-            self.state, self.error = ListingState.FAILED, "the fingerprint listing is empty"
-            logger.error("The expected image fingerprint listing is empty, so no job will be leased")
+            self.state, self.error = ListingState.FAILED, "the release lists no fingerprinted image"
+            logger.error("The release lists no fingerprinted image, so no job will be leased")
             return
         self._set(listing)
         logger.info("Expected image fingerprints ready for %d images", len(listing))

@@ -14,8 +14,7 @@ Variables (deploy/node/.env.example is the template):
     SCENEGEMS_NODE_TRUST_SOURCE   optional, the Docker volume or host folder behind the trust folder
     SCENEGEMS_DOCKER_NETWORK      optional, the Docker network pooled services join
     SCENEGEMS_NODE_REFERENCE_GEOFENCE  optional, latitude,longitude,radius of the pools' local frame
-    SCENEGEMS_SOFTWARE_REVISION   optional, the revision the node reports; read from the repository otherwise
-    SCENEGEMS_REPOSITORY_DIR      optional, the checkout the node was built from
+    SCENEGEMS_SOFTWARE_REVISION   optional, the revision the node reports (its release's revision)
 
 Process variables win over the file; an empty process variable counts as unset, since
 Compose passes unset optional variables as empty strings. Every problem is reported at
@@ -64,7 +63,6 @@ class NodeConfiguration:
     docker_network: Optional[str] = None
     reference_geofence: Tuple[float, float, float] = DEFAULT_REFERENCE_GEOFENCE
     software_revision: Optional[str] = None
-    repository_dir: Optional[Path] = None
 
     @property
     def docker_name(self) -> str:
@@ -129,7 +127,6 @@ class NodeConfiguration:
 
         state_dir = Path(state_text)
         trust_dir = Path(get("SCENEGEMS_NODE_TRUST_DIR") or state_dir / "trust")
-        repository = get("SCENEGEMS_REPOSITORY_DIR")
         return cls(
             master_url=master_url,
             master_id=master_id,
@@ -144,7 +141,6 @@ class NodeConfiguration:
             docker_network=get("SCENEGEMS_DOCKER_NETWORK") or None,
             reference_geofence=geofence,
             software_revision=get("SCENEGEMS_SOFTWARE_REVISION") or None,
-            repository_dir=Path(repository) if repository else None,
         )
 
 

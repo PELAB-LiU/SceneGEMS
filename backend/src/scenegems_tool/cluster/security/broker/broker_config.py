@@ -9,7 +9,7 @@ A denied subscription gets a failure code in its SUBACK (`deny_action = ignore`)
 publish closes the publisher's connection: NanoMQ 0.25 does that for every QoS whatever
 `deny_action` says (measured, design doc 13.8).
 
-The workbench keeps its own plain broker (deploy/master/docker-compose.yml, service
+The workbench keeps its own plain broker (deploy/workbench/docker-compose.yml, service
 `broker`, bound to 127.0.0.1): NanoMQ applies one authentication setting to all
 listeners, so a plain anonymous listener cannot live in the same broker as the cluster's.
 

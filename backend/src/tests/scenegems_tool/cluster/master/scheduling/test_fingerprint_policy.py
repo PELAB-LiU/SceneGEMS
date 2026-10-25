@@ -4,6 +4,7 @@ import pytest
 from scenegems_tool.cluster.fingerprints.job_images import GAZEBO_IMAGE, MONITORING_IMAGE, SCENARIO_EXECUTION_IMAGE, SCENE_GENERATION_IMAGE, SITL_IMAGE
 from scenegems_tool.cluster.master.scheduling.fingerprint_policy import ExpectedFingerprints, ListingState, node_mismatches, with_required_fingerprints
 from scenegems_tool.cluster.protocol.jobs import JobRequirements, JobSubmission, JobType
+from scenegems_tool.cluster.release.manifest import Release, ReleaseImage, write_release
 from tests.scenegems_tool.cluster.master.conftest import EXPECTED
 from tests.scenegems_tool.cluster.master.fake_stores import InMemoryNodeStore
 from tests.scenegems_tool.persistence.stores.builders import ManualClock, make_hello
@@ -27,11 +28,29 @@ def test_the_listing_is_computed_once_on_load():
     assert expected.current() == {"a:latest": "1"} and calls == [1]
 
 
-@pytest.mark.parametrize("compute, message", [(lambda: (_ for _ in ()).throw(RuntimeError("no bash")), "no bash"), (lambda: {}, "empty")])
+@pytest.mark.parametrize("compute, message", [(lambda: (_ for _ in ()).throw(RuntimeError("no bash")), "no bash"), (lambda: {}, "no fingerprinted image")])
 def test_a_failed_listing_leases_nothing_and_says_why(compute, message):
     expected = ExpectedFingerprints(compute)
     _load(expected)
     assert expected.state == ListingState.FAILED and expected.current() is None and message in expected.error
+
+
+def test_the_listing_is_read_from_the_release(tmp_path):
+    manifest = tmp_path / "release.json"
+    images = {SCENARIO_EXECUTION_IMAGE: ReleaseImage("sha256:1", "fp-execution"), "postgres:16.10-alpine": ReleaseImage("sha256:2")}
+    write_release(manifest, Release(name="scenegems", revision="abc", dirty=False, created_at="2026-10-25T12:00:00+00:00", images=images))
+    expected = ExpectedFingerprints.of_release(manifest)
+    _load(expected)
+    assert expected.state == ListingState.READY and expected.current() == {SCENARIO_EXECUTION_IMAGE: "fp-execution"}
+
+
+def test_without_a_release_nothing_is_leased_and_the_error_says_why(tmp_path):
+    unset = ExpectedFingerprints.of_release(None)
+    _load(unset)
+    assert unset.state == ListingState.FAILED and "SCENEGEMS_RELEASE_MANIFEST" in unset.error
+    missing = ExpectedFingerprints.of_release(tmp_path / "release.json")
+    _load(missing)
+    assert missing.state == ListingState.FAILED and "cannot read the release file" in missing.error
 
 
 def test_a_submission_gets_the_fingerprints_of_its_images():

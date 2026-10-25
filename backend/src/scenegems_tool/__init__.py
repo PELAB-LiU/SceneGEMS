@@ -21,7 +21,8 @@ Present now:
         protocol/               typed, versioned master-node messages, jobs and pairing
         security/               master CA, pairing tokens, node credentials, broker accounts and access rules
         node/                   instance scopes, launchers, job types and the node daemon
-        fingerprints/           image build fingerprints: label reader, expected set, comparison
+        fingerprints/           image build fingerprints: label reader, comparison, images per job type
+        release/                the release bundle a deployment tool installs: images, stacks, roles
         master/                 node registry, scheduler, lease manager and the master's API and process
     persistence/    the master's Postgres: tables, migrations, node and job stores
 

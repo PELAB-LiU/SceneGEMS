@@ -1,75 +1,19 @@
-name: scenegems
+name: scenegems-${SCENEGEMS_MASTER_ID:?set SCENEGEMS_MASTER_ID in .env}
 
-# Two kinds of stacks share this file:
-#   a master (postgres, cluster-broker, master-api): `docker compose up -d` from deploy/master,
-#     with deploy/master/.env; COMPOSE_PROJECT_NAME and SCENEGEMS_MASTER_ID scope the names,
-#     volumes and ports, so several masters can run on one machine;
-#   the single-machine workbench (frontend, broker, backend, profile "workbench"): started by
-#     ./start.sh, which names its services and runs as project "scenegems".
-# The workbench also runs through a master: the master's operator port serves the same
-# gateway, so start `docker compose up -d frontend broker` next to it instead of `backend`.
+# One master of a SceneGEMS cluster: Postgres, the cluster broker and master-api. The
+# deployment tool installs this file with release.json and .env into one folder per master
+# (scenegems_tool.cluster.release.roles) and runs, in that folder:
+#   docker compose --profile tools run --rm -T security init     (once, and after address changes)
+#   docker compose up -d
+# The master id scopes the project, container and volume names, and the ports come from .env,
+# so several masters can run on one machine.
 
 services:
-  frontend:
-    image: scenegems-frontend:dev
-    container_name: scenegems_frontend
-    profiles: ["workbench"]
-    ports:
-      - "5173:5173"
-    environment:
-      VITE_WS_URL: ws://127.0.0.1:5174/ws/scenegems_backend_service
-
-  # Workbench broker: plain MQTT without accounts, so it is published on 127.0.0.1 only and
-  # other hosts cannot reach it. Containers reach it as broker:1883 on the compose network.
-  broker:
-    image: scenegems-mqtt-broker:latest
-    container_name: scenegems_local_mqtt_broker
-    profiles: ["workbench"]
-    labels:
-      - group=Services
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:1882:1883"
-      - "127.0.0.1:8082:8083"
-    volumes:
-      - scenegems_broker_data:/data/broker/
-
-  backend:
-    image: scenegems-backend:latest
-    container_name: scenegems_backend
-    profiles: ["workbench"]
-    ports:
-      - "5174:5174"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - scenegems_runtime_assets:/app/assets/runtime_assets
-    environment:
-      PYTHONPATH: /app/src
-      MQTT_BROKER_HOST: broker
-      MQTT_BROKER_PORT: "1883"
-      SCENEGEMS_RUNTIME_VOLUME: scenegems_runtime_assets
-      SCENEGEMS_DOCKER_NETWORK: scenegems_default
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-
-  # Cluster broker of this master (scenegems_tool.cluster.security): MQTT over TLS for every
-  # node, logins checked by master-api, per-node access rules. Its configuration is created by
-  # `python -m scenegems_tool.cluster.security --env-file deploy/master/.env init`.
-  cluster-broker:
-    image: scenegems-mqtt-broker:latest
-    container_name: scenegems-${SCENEGEMS_MASTER_ID:-master}-cluster-broker
-    restart: unless-stopped
-    command: ["nanomq", "start", "--conf", "/etc/scenegems/broker/nanomq.conf"]
-    ports:
-      - "${SCENEGEMS_BROKER_BIND_ADDRESS:-0.0.0.0}:${SCENEGEMS_BROKER_TLS_PORT:-8883}:8883"
-    volumes:
-      - ${SCENEGEMS_SECURITY_DIR:-./security_data}/broker:/etc/scenegems/broker:ro
-
-  # Job store and node registry of the master (scenegems_tool.persistence). The password
-  # comes from deploy/master/.env; without it the container refuses to start.
+  # Job store and node registry (scenegems_tool.persistence). Without POSTGRES_PASSWORD the
+  # container refuses to start.
   postgres:
     image: postgres:16.10-alpine
-    container_name: scenegems-${SCENEGEMS_MASTER_ID:-master}-postgres
+    container_name: scenegems-${SCENEGEMS_MASTER_ID}-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-scenegems}
@@ -86,15 +30,26 @@ services:
       retries: 12
       start_period: 10s
 
-  # The master (scenegems_tool.cluster.master): node API over HTTPS for the nodes, the operator
-  # API with the workbench gateway on the local machine, and the broker login hook on this
-  # compose network only (cluster-broker calls http://master-api:8090). It migrates the
-  # database before it starts. It mounts the security folder without the CA key, the
-  # repository read-only for the expected image fingerprints, and the Docker socket for the
-  # workbench gateway, which starts the workbench's subsystem containers.
+  # Cluster broker (scenegems_tool.cluster.security): MQTT over TLS for every node, logins
+  # checked by master-api, per-node access rules. `security init` writes its configuration.
+  cluster-broker:
+    image: scenegems-mqtt-broker:latest
+    container_name: scenegems-${SCENEGEMS_MASTER_ID}-cluster-broker
+    restart: unless-stopped
+    command: ["nanomq", "start", "--conf", "/etc/scenegems/broker/nanomq.conf"]
+    ports:
+      - "${SCENEGEMS_BROKER_BIND_ADDRESS:-0.0.0.0}:${SCENEGEMS_BROKER_TLS_PORT:-8883}:8883"
+    volumes:
+      - ${SCENEGEMS_SECURITY_DIR:-./security_data}/broker:/etc/scenegems/broker:ro
+
+  # The master (scenegems_tool.cluster.master): node API over HTTPS, the operator API with the
+  # workbench gateway on this machine only, and the broker login hook on this compose network
+  # only (cluster-broker calls http://master-api:8090). It migrates the database before it
+  # starts and reads the image fingerprints its nodes must have from release.json. It mounts
+  # the security folder without the CA key, and the Docker socket for the workbench gateway.
   master-api:
     image: ${SCENEGEMS_MASTER_IMAGE:-scenegems-backend:latest}
-    container_name: scenegems-${SCENEGEMS_MASTER_ID:-master}-master-api
+    container_name: scenegems-${SCENEGEMS_MASTER_ID}-master-api
     restart: unless-stopped
     command: ["sh", "-c", "python -m scenegems_tool.persistence.migrate upgrade head && exec python -m scenegems_tool.cluster.master"]
     depends_on:
@@ -110,26 +65,23 @@ services:
       SCENEGEMS_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-scenegems}:${POSTGRES_PASSWORD:-}@postgres:5432/${POSTGRES_DB:-scenegems}
       SCENEGEMS_SECURITY_DIR: /etc/scenegems/security
       SCENEGEMS_BROKER_AUTH_HOOK_SECRET: ${SCENEGEMS_BROKER_AUTH_HOOK_SECRET:-}
+      SCENEGEMS_RELEASE_MANIFEST: /etc/scenegems/release.json
       SCENEGEMS_API_LISTEN_HOST: 0.0.0.0
       SCENEGEMS_API_LISTEN_PORT: "8443"
       SCENEGEMS_OPERATOR_LISTEN_HOST: 0.0.0.0
       SCENEGEMS_OPERATOR_LISTEN_PORT: "5174"
       SCENEGEMS_BROKER_HOOK_LISTEN_HOST: 0.0.0.0
       SCENEGEMS_BROKER_HOOK_LISTEN_PORT: "8090"
-      SCENEGEMS_FINGERPRINT_REPO_ROOT: /repo
-      # The workbench gateway, as in the backend service
-      MQTT_BROKER_HOST: broker
-      MQTT_BROKER_PORT: "1883"
-      SCENEGEMS_RUNTIME_VOLUME: scenegems_runtime_assets
-      SCENEGEMS_DOCKER_NETWORK: ${COMPOSE_PROJECT_NAME:-scenegems}_default
+      SCENEGEMS_RUNTIME_VOLUME: scenegems-${SCENEGEMS_MASTER_ID}-runtime
+      SCENEGEMS_DOCKER_NETWORK: scenegems-${SCENEGEMS_MASTER_ID}_default
     volumes:
       - ${SCENEGEMS_SECURITY_DIR:-./security_data}/master.json:/etc/scenegems/security/master.json:ro
       - ${SCENEGEMS_SECURITY_DIR:-./security_data}/ca/ca_certificate.pem:/etc/scenegems/security/ca/ca_certificate.pem:ro
       - ${SCENEGEMS_SECURITY_DIR:-./security_data}/api:/etc/scenegems/security/api:ro
       - ${SCENEGEMS_SECURITY_DIR:-./security_data}/store:/etc/scenegems/security/store
-      - ../..:/repo:ro
+      - ./release.json:/etc/scenegems/release.json:ro
       - /var/run/docker.sock:/var/run/docker.sock
-      - scenegems_runtime_assets:/app/assets/runtime_assets
+      - runtime:/app/assets/runtime_assets
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -139,10 +91,25 @@ services:
       retries: 6
       start_period: 20s
 
+  # One-off security tool (scenegems_tool.cluster.security), not started by `up`:
+  #   docker compose --profile tools run --rm -T security init
+  #   docker compose --profile tools run --rm -T security pairing-token create --note <node>
+  # init creates or updates the CA, the API and broker certificates and the broker files;
+  # pairing-token create prints a node's pairing values as .env lines.
+  security:
+    image: ${SCENEGEMS_MASTER_IMAGE:-scenegems-backend:latest}
+    profiles: ["tools"]
+    entrypoint: ["python", "-m", "scenegems_tool.cluster.security", "--security-dir", "/etc/scenegems/security"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PYTHONPATH: /app/src
+    volumes:
+      - ${SCENEGEMS_SECURITY_DIR:-./security_data}:/etc/scenegems/security
+    network_mode: none
+
 volumes:
-  scenegems_runtime_assets:
-    name: scenegems_runtime_assets
-  scenegems_broker_data:
-    name: scenegems_broker_data
-  # One per master: the compose project name prefixes it
   postgres_data:
+  runtime:
+    name: scenegems-${SCENEGEMS_MASTER_ID}-runtime
