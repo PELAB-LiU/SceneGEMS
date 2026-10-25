@@ -1,4 +1,4 @@
-"""Postgres for the persistence tests.
+"""Postgres for the tests of persistence/ and of the master (cluster/master/), which share one server.
 
 The server is SCENEGEMS_TEST_DATABASE_URL when set (its role needs CREATEDB), otherwise a
 throwaway container started from the image the master compose file uses. Every test gets

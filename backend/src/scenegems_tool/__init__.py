@@ -22,11 +22,11 @@ Present now:
         security/               master CA, pairing tokens, node credentials, broker accounts and access rules
         node/                   instance scopes, launchers and job types; later the node daemon
         fingerprints/           image build fingerprints: label reader, expected set, comparison
+        master/                 node registry, scheduler, lease manager and the master's API and process
     persistence/    the master's Postgres: tables, migrations, node and job stores
 
 Planned (added by later phases):
     assurance/      campaign configuration and the per-scenario pipeline
-    cluster/master/ scheduler, node registry, pairing
     persistence/    artifact store, campaign tables
     vessel_stack/adapters/      shared edges between layers (mavlink, gz_transport)
 """

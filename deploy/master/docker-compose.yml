@@ -1,9 +1,19 @@
 name: scenegems
 
+# Two kinds of stacks share this file:
+#   a master (postgres, cluster-broker, master-api): `docker compose up -d` from deploy/master,
+#     with deploy/master/.env; COMPOSE_PROJECT_NAME and SCENEGEMS_MASTER_ID scope the names,
+#     volumes and ports, so several masters can run on one machine;
+#   the single-machine workbench (frontend, broker, backend, profile "workbench"): started by
+#     ./start.sh, which names its services and runs as project "scenegems".
+# The workbench also runs through a master: the master's operator port serves the same
+# gateway, so start `docker compose up -d frontend broker` next to it instead of `backend`.
+
 services:
   frontend:
     image: scenegems-frontend:dev
     container_name: scenegems_frontend
+    profiles: ["workbench"]
     ports:
       - "5173:5173"
     environment:
@@ -14,6 +24,7 @@ services:
   broker:
     image: scenegems-mqtt-broker:latest
     container_name: scenegems_local_mqtt_broker
+    profiles: ["workbench"]
     labels:
       - group=Services
     restart: unless-stopped
@@ -23,24 +34,10 @@ services:
     volumes:
       - scenegems_broker_data:/data/broker/
 
-  # Cluster broker of this master (scenegems_tool.cluster.security): MQTT over TLS for every
-  # node, logins checked by the master, per-node access rules. Create its configuration
-  # first with `python -m scenegems_tool.cluster.security --env-file deploy/master/.env init`,
-  # then start it with `docker compose --profile cluster up -d cluster-broker`.
-  cluster-broker:
-    image: scenegems-mqtt-broker:latest
-    container_name: scenegems-${SCENEGEMS_MASTER_ID:-master}-cluster-broker
-    profiles: ["cluster"]
-    restart: unless-stopped
-    command: ["nanomq", "start", "--conf", "/etc/scenegems/broker/nanomq.conf"]
-    ports:
-      - "${SCENEGEMS_BROKER_BIND_ADDRESS:-0.0.0.0}:${SCENEGEMS_BROKER_TLS_PORT:-8883}:8883"
-    volumes:
-      - ${SCENEGEMS_SECURITY_DIR:-./security_data}/broker:/etc/scenegems/broker:ro
-
   backend:
     image: scenegems-backend:latest
     container_name: scenegems_backend
+    profiles: ["workbench"]
     ports:
       - "5174:5174"
     volumes:
@@ -55,12 +52,24 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  # Cluster broker of this master (scenegems_tool.cluster.security): MQTT over TLS for every
+  # node, logins checked by master-api, per-node access rules. Its configuration is created by
+  # `python -m scenegems_tool.cluster.security --env-file deploy/master/.env init`.
+  cluster-broker:
+    image: scenegems-mqtt-broker:latest
+    container_name: scenegems-${SCENEGEMS_MASTER_ID:-master}-cluster-broker
+    restart: unless-stopped
+    command: ["nanomq", "start", "--conf", "/etc/scenegems/broker/nanomq.conf"]
+    ports:
+      - "${SCENEGEMS_BROKER_BIND_ADDRESS:-0.0.0.0}:${SCENEGEMS_BROKER_TLS_PORT:-8883}:8883"
+    volumes:
+      - ${SCENEGEMS_SECURITY_DIR:-./security_data}/broker:/etc/scenegems/broker:ro
+
   # Job store and node registry of the master (scenegems_tool.persistence). The password
-  # comes from deploy/master/.env; without it the container refuses to start, while the
-  # workbench services above keep working.
+  # comes from deploy/master/.env; without it the container refuses to start.
   postgres:
     image: postgres:16.10-alpine
-    container_name: scenegems_postgres
+    container_name: scenegems-${SCENEGEMS_MASTER_ID:-master}-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-scenegems}
@@ -69,7 +78,7 @@ services:
     ports:
       - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
-      - scenegems_postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
@@ -77,10 +86,63 @@ services:
       retries: 12
       start_period: 10s
 
+  # The master (scenegems_tool.cluster.master): node API over HTTPS for the nodes, the operator
+  # API with the workbench gateway on the local machine, and the broker login hook on this
+  # compose network only (cluster-broker calls http://master-api:8090). It migrates the
+  # database before it starts. It mounts the security folder without the CA key, the
+  # repository read-only for the expected image fingerprints, and the Docker socket for the
+  # workbench gateway, which starts the workbench's subsystem containers.
+  master-api:
+    image: ${SCENEGEMS_MASTER_IMAGE:-scenegems-backend:latest}
+    container_name: scenegems-${SCENEGEMS_MASTER_ID:-master}-master-api
+    restart: unless-stopped
+    command: ["sh", "-c", "python -m scenegems_tool.persistence.migrate upgrade head && exec python -m scenegems_tool.cluster.master"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      cluster-broker:
+        condition: service_started
+    ports:
+      - "${SCENEGEMS_API_BIND_ADDRESS:-0.0.0.0}:${SCENEGEMS_API_PORT:-8443}:8443"
+      - "127.0.0.1:${SCENEGEMS_OPERATOR_PORT:-5174}:5174"
+    environment:
+      PYTHONPATH: /app/src
+      SCENEGEMS_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-scenegems}:${POSTGRES_PASSWORD:-}@postgres:5432/${POSTGRES_DB:-scenegems}
+      SCENEGEMS_SECURITY_DIR: /etc/scenegems/security
+      SCENEGEMS_BROKER_AUTH_HOOK_SECRET: ${SCENEGEMS_BROKER_AUTH_HOOK_SECRET:-}
+      SCENEGEMS_API_LISTEN_HOST: 0.0.0.0
+      SCENEGEMS_API_LISTEN_PORT: "8443"
+      SCENEGEMS_OPERATOR_LISTEN_HOST: 0.0.0.0
+      SCENEGEMS_OPERATOR_LISTEN_PORT: "5174"
+      SCENEGEMS_BROKER_HOOK_LISTEN_HOST: 0.0.0.0
+      SCENEGEMS_BROKER_HOOK_LISTEN_PORT: "8090"
+      SCENEGEMS_FINGERPRINT_REPO_ROOT: /repo
+      # The workbench gateway, as in the backend service
+      MQTT_BROKER_HOST: broker
+      MQTT_BROKER_PORT: "1883"
+      SCENEGEMS_RUNTIME_VOLUME: scenegems_runtime_assets
+      SCENEGEMS_DOCKER_NETWORK: ${COMPOSE_PROJECT_NAME:-scenegems}_default
+    volumes:
+      - ${SCENEGEMS_SECURITY_DIR:-./security_data}/master.json:/etc/scenegems/security/master.json:ro
+      - ${SCENEGEMS_SECURITY_DIR:-./security_data}/ca/ca_certificate.pem:/etc/scenegems/security/ca/ca_certificate.pem:ro
+      - ${SCENEGEMS_SECURITY_DIR:-./security_data}/api:/etc/scenegems/security/api:ro
+      - ${SCENEGEMS_SECURITY_DIR:-./security_data}/store:/etc/scenegems/security/store
+      - ../..:/repo:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - scenegems_runtime_assets:/app/assets/runtime_assets
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5174/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
 volumes:
   scenegems_runtime_assets:
     name: scenegems_runtime_assets
   scenegems_broker_data:
     name: scenegems_broker_data
-  scenegems_postgres_data:
-    name: scenegems_postgres_data
+  # One per master: the compose project name prefixes it
+  postgres_data:
