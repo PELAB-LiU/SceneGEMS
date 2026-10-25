@@ -50,7 +50,8 @@ def test_init_then_create_token_then_pair(env_file, capsys):
     assert _run(env_file, "pairing-token", "create", "--lifetime", "10m", "--note", "lab-1") == 0
     output = capsys.readouterr()
     node_env = dict(line.split("=", 1) for line in output.out.splitlines())
-    assert list(node_env) == ["SCENEGEMS_MASTER_URL", "SCENEGEMS_PAIRING_TOKEN", "SCENEGEMS_MASTER_CA_SHA256"]
+    assert list(node_env) == ["SCENEGEMS_MASTER_ID", "SCENEGEMS_MASTER_URL", "SCENEGEMS_PAIRING_TOKEN", "SCENEGEMS_MASTER_CA_SHA256"]
+    assert node_env["SCENEGEMS_MASTER_ID"] == "lab-master"
     token = node_env["SCENEGEMS_PAIRING_TOKEN"]
     assert len(token) >= 43 and "valid once until" in output.err and token not in output.err
     assert node_env["SCENEGEMS_MASTER_URL"] == "https://192.168.1.10:8443"

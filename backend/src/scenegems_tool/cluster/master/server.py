@@ -33,6 +33,7 @@ from scenegems_tool.persistence.stores import JobStore, NodeStore
 logger = logging.getLogger(__name__)
 
 STARTUP_POLL_S = 0.1
+MAX_NODE_FRAME_BYTES = 64 * 1024 * 1024  # the node daemon's limit; job results can exceed uvicorn's default of 16 MiB
 
 
 class _Listener(uvicorn.Server):
@@ -67,6 +68,7 @@ def listeners(settings: MasterSettings, apps: MasterApps) -> List[uvicorn.Server
                 port=settings.node_api.port,
                 ssl_certfile=str(layout.api_certificate),
                 ssl_keyfile=str(layout.api_key),
+                ws_max_size=MAX_NODE_FRAME_BYTES,
                 **logging_options,
             )
         ),

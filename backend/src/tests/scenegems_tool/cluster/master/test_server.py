@@ -1,5 +1,6 @@
 """The master's listeners on real sockets: the node API over HTTPS and WSS with the master's certificate."""
 
+import asyncio
 import ssl
 import threading
 import urllib.error
@@ -7,10 +8,10 @@ import urllib.request
 from pathlib import Path
 
 import pytest
-from websockets.sync.client import connect
+from websockets.asyncio.client import connect
 
 from scenegems_tool.cluster.master.api.master_apps import create_master_apps
-from scenegems_tool.cluster.master.server import listeners
+from scenegems_tool.cluster.master.server import MAX_NODE_FRAME_BYTES, listeners
 from scenegems_tool.cluster.master.settings import Listener, MasterSettings
 from scenegems_tool.cluster.protocol.codec import decode_master_message, encode
 from scenegems_tool.cluster.protocol.jobs import JobSubmission
@@ -41,7 +42,7 @@ def test_listeners_use_the_api_certificate_and_their_hosts(plane, security):
     node_api, operator, hook = listeners(_settings(security.layout.root), apps)
     assert node_api.config.ssl_certfile == str(security.layout.api_certificate) and node_api.config.ssl_keyfile == str(security.layout.api_key)
     assert operator.config.ssl_certfile is None and hook.config.ssl_certfile is None
-    assert operator.config.ws_ping_interval is None
+    assert operator.config.ws_ping_interval is None and node_api.config.ws_max_size == MAX_NODE_FRAME_BYTES == 64 * 1024 * 1024
     assert (node_api.config.app, operator.config.app, hook.config.app) == (apps.node_api, apps.operator, apps.broker_hook)
 
 
@@ -77,11 +78,15 @@ def test_a_new_node_pins_the_ca_then_pairs_and_connects_over_tls(https_node_api,
 
     paired = pair_node(security, PairingRequest(token=create_pairing_token(security.store).token, node_name="tls node"))
     job = stores.jobs.submit(JobSubmission(job_type=SCENE)).job  # queued before the node connects, so its Hello triggers the offer
-    with connect(f"wss://{https_node_api}{NODE_CONTROL_PATH}", ssl=trusted, additional_headers={AUTHORIZATION_HEADER: bearer(paired.node_credential)}, open_timeout=10) as socket:
-        socket.send(encode(make_hello(paired.node_id, slots={SCENE: 1}, fingerprints=dict(EXPECTED))))
-        assert isinstance(decode_master_message(socket.recv(timeout=10)), Welcome)
-        offer = decode_master_message(socket.recv(timeout=10))
-        assert isinstance(offer, LeaseOffer) and offer.job.job_id == job.job_id
+
+    # The asyncio client, as the node daemon uses: the threading client stalls on TLS 1.3 under Windows (design doc 13.8.4)
+    async def node_session():
+        async with connect(f"wss://{https_node_api}{NODE_CONTROL_PATH}", ssl=trusted, additional_headers={AUTHORIZATION_HEADER: bearer(paired.node_credential)}, open_timeout=10) as socket:
+            await socket.send(encode(make_hello(paired.node_id, slots={SCENE: 1}, fingerprints=dict(EXPECTED))))
+            return [decode_master_message(await asyncio.wait_for(socket.recv(), 10)) for _ in range(2)]
+
+    welcome, offer = asyncio.run(node_session())
+    assert isinstance(welcome, Welcome) and isinstance(offer, LeaseOffer) and offer.job.job_id == job.job_id
 
 
 def test_a_client_that_trusts_another_ca_is_refused(https_node_api, tmp_path):

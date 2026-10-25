@@ -8,8 +8,9 @@
 Settings come from the environment, usually loaded with `--env-file deploy/master/.env`.
 Passwords are read only from there, never from arguments, which other users of the
 machine could see in the process list. Only `pairing-token create` prints a secret. It
-prints the three lines of a node's .env on stdout (master URL, token and CA certificate
-hash, design doc 13.9), so a script can append them; --token-only prints the token alone.
+prints the lines of a node's .env on stdout (master id, master URL, token and CA
+certificate hash, design doc 13.9), so a script can append them; --token-only prints the
+token alone.
 """
 
 import argparse
@@ -31,7 +32,8 @@ from scenegems_tool.cluster.security.master_security import MasterSecurity, init
 _DURATION_PATTERN = re.compile(r"^(\d+)([smhd])$")
 _DURATION_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
 DEFAULT_API_PORT = 8443
-# The lines of a node's .env that pairing needs
+# The lines of a node's .env that pairing needs (deploy/node/.env.example)
+MASTER_ID_VARIABLE = "SCENEGEMS_MASTER_ID"
 MASTER_URL_VARIABLE = "SCENEGEMS_MASTER_URL"
 PAIRING_TOKEN_VARIABLE = "SCENEGEMS_PAIRING_TOKEN"
 MASTER_CA_SHA256_VARIABLE = "SCENEGEMS_MASTER_CA_SHA256"
@@ -118,6 +120,7 @@ def _run_pairing_token(arguments: argparse.Namespace, environ: Mapping[str, str]
         if arguments.token_only:
             print(created.token)
         else:
+            print(f"{MASTER_ID_VARIABLE}={security.master_id}")
             print(f"{MASTER_URL_VARIABLE}={master_url(security, environ)}")
             print(f"{PAIRING_TOKEN_VARIABLE}={created.token}")
             print(f"{MASTER_CA_SHA256_VARIABLE}={certificate_sha256(security.ca_certificate_pem)}")
