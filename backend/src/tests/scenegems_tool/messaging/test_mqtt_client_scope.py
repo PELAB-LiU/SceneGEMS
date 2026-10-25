@@ -5,7 +5,7 @@ from typing import Any, List
 import paho.mqtt.client as mqtt
 import pytest
 
-from scenegems_tool.messaging.mqtt_client import MqttClient, MQttConnectionInfo, mqtt_connection_from_environment, mqtt_container_environment
+from scenegems_tool.messaging.mqtt_client import MqttClient, MQttConnectionInfo, mqtt_container_environment
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 
 PREFIX = "scenegems/m1/n1/scene_generation-0/"
@@ -62,7 +62,11 @@ def test_subscriptions_on_connect_carry_the_prefix(monkeypatch):
 
 
 def test_with_topic_prefix_keeps_every_connection_setting():
-    scoped = connection().with_topic_prefix(PREFIX)
+    original = connection()
+    original.extra_setting = "kept"  # a field added later, such as a CA certificate path
+    scoped = original.with_topic_prefix(PREFIX)
+    assert scoped.extra_setting == "kept"
+    assert original.topic_prefix == ""
     assert (scoped.user, scoped.password, scoped.agent_broker, scoped.client_broker, scoped.port) == ("user", "secret", "broker", "localhost", 1883)
     assert scoped.topic_prefix == PREFIX
 
@@ -79,12 +83,8 @@ def test_container_environment_of_the_workbench_has_no_prefix_variable():
 
 
 @pytest.mark.parametrize("topic_prefix", ["", PREFIX])
-def test_container_environment_round_trips(monkeypatch, topic_prefix):
-    for name, value in mqtt_container_environment(connection(topic_prefix)).items():
-        monkeypatch.setenv(name, value)
-    if not topic_prefix:
-        monkeypatch.delenv("MQTT_TOPIC_PREFIX", raising=False)
-    restored = mqtt_connection_from_environment()
+def test_container_environment_round_trips(topic_prefix):
+    restored = MQttConnectionInfo.from_environment(mqtt_container_environment(connection(topic_prefix)))
     # A container dials the agent broker.
     assert (restored.agent_broker, restored.client_broker, restored.port, restored.topic_prefix) == ("broker", "broker", 1883, topic_prefix)
     assert (restored.tls_connection, restored.allow_certificates) == (False, False)

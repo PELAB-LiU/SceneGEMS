@@ -2,7 +2,7 @@ import multiprocessing
 import time
 
 from scenegems_tool.cluster.node.launchers.container_environment import geofence_from_environment, worker_count_from_environment
-from scenegems_tool.messaging.mqtt_client import mqtt_connection_from_environment
+from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.messaging.mqtt_trajectory_generation_service import MqttTrajectoryGenerationService
 from scenegems_tool.subsystems.trajectory_generation.trajectory_generation_types import MAX_TRAJECTORY_GENERATION_WORKERS
 from utils.file_system_utils import ensure_directories
@@ -10,7 +10,7 @@ from utils.file_system_utils import ensure_directories
 
 def main() -> None:
     ensure_directories()
-    mqtt_connection = mqtt_connection_from_environment()
+    mqtt_connection = MQttConnectionInfo.from_environment()
     reference_geofence = geofence_from_environment()
     service = MqttTrajectoryGenerationService(mqtt_connection, reference_geofence, worker_count_from_environment(MAX_TRAJECTORY_GENERATION_WORKERS))
     service.connect()

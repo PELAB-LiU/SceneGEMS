@@ -2,13 +2,13 @@ import base64
 import os
 
 from scenegems_tool.cluster.node.launchers.container_environment import geofence_from_environment
-from scenegems_tool.messaging.mqtt_client import mqtt_connection_from_environment
+from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.subsystems.monitoring.monitoring_worker import MonitoringWorker
 from utils.colregs_approximations import COLREGSConstraints
 
 
 def main() -> None:
-    mqtt_connection = mqtt_connection_from_environment()
+    mqtt_connection = MQttConnectionInfo.from_environment()
     reference_geofence = geofence_from_environment()
     agent_name = os.environ["MONITOR_AGENT_NAME"]
     topic = os.environ["MONITOR_TOPIC"]

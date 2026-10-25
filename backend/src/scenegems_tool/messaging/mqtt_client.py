@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import socket
@@ -6,7 +7,7 @@ import traceback
 import uuid
 from abc import ABC, abstractmethod
 from threading import Event
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Mapping, Optional, Set
 
 import paho.mqtt.client as mqtt
 
@@ -127,18 +128,33 @@ class MQttConnectionInfo:
         self.topic_prefix = topic_prefix
 
     def with_topic_prefix(self, topic_prefix: str) -> "MQttConnectionInfo":
-        return MQttConnectionInfo(self.user, self.password, self.agent_broker, self.client_broker, self.port, self.tls_connection, self.allow_certificates, topic_prefix=topic_prefix)
+        """The same connection for the clients of one instance."""
+        scoped = copy.copy(self)
+        scoped.topic_prefix = topic_prefix
+        return scoped
+
+    @classmethod
+    def from_environment(cls, environ: Optional[Mapping[str, str]] = None) -> "MQttConnectionInfo":
+        """The broker connection of a subsystem container, from the variables of mqtt_container_environment."""
+        environ = os.environ if environ is None else environ
+        return cls(
+            user=environ["MQTT_USER"],
+            password=environ["MQTT_PASSWORD"],
+            agent_broker=environ["MQTT_BROKER"],
+            client_broker=environ["MQTT_BROKER"],
+            port=int(environ["MQTT_PORT"]),
+            tls_connection=_env_flag(environ, "MQTT_TLS"),
+            allow_certificates=_env_flag(environ, "MQTT_ALLOW_CERTIFICATES"),
+            topic_prefix=environ.get("MQTT_TOPIC_PREFIX", ""),
+        )
 
 
-def _env_bool(name: str, default: bool = False) -> bool:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes"}
+def _env_flag(environ: Mapping[str, str], name: str) -> bool:
+    return environ.get(name, "").strip().lower() in {"1", "true", "yes"}
 
 
 def mqtt_container_environment(mqtt_connection: MQttConnectionInfo) -> Dict[str, str]:
-    """Environment that hands a broker connection to a subsystem container (read by mqtt_connection_from_environment).
+    """Environment that hands a broker connection to a subsystem container (read by MQttConnectionInfo.from_environment).
 
     The container dials the agent broker. The topic prefix is set only when there is one, so
     workbench containers get exactly the variables they got before instance scoping.
@@ -154,20 +170,6 @@ def mqtt_container_environment(mqtt_connection: MQttConnectionInfo) -> Dict[str,
     if mqtt_connection.topic_prefix:
         environment["MQTT_TOPIC_PREFIX"] = mqtt_connection.topic_prefix
     return environment
-
-
-def mqtt_connection_from_environment() -> MQttConnectionInfo:
-    """The broker connection of a subsystem container, from the variables of mqtt_container_environment."""
-    return MQttConnectionInfo(
-        user=os.environ["MQTT_USER"],
-        password=os.environ["MQTT_PASSWORD"],
-        agent_broker=os.environ["MQTT_BROKER"],
-        client_broker=os.environ["MQTT_BROKER"],
-        port=int(os.environ["MQTT_PORT"]),
-        tls_connection=_env_bool("MQTT_TLS"),
-        allow_certificates=_env_bool("MQTT_ALLOW_CERTIFICATES"),
-        topic_prefix=os.environ.get("MQTT_TOPIC_PREFIX", ""),
-    )
 
 
 class MqttClient(ABC):
