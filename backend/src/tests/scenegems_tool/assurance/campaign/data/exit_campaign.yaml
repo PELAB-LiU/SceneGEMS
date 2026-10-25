@@ -1,0 +1,29 @@
+# The Phase 4 exit campaign (design doc 5.2): the 70 two- and three-vessel classes at quota 15,
+# 1050 cases, USV Navigation on the kinematic layer, one run per case, post-hoc monitor.
+format: 1
+name: phase 4 exit campaign
+description: Two- and three-vessel classes at quota 15 with USV Navigation on the kinematic layer.
+scope:
+  - patterns: [2vessel_*_scenarios, 3vessel_*_scenarios]
+    quota: 15
+    failure_budget: 15
+domain:
+  scene_generation_timeout_s: 60
+  enforce_low_tcpa: false
+trajectories:
+  generator: monitor_driven_rrt
+  timeout_s: 1800
+execution:
+  runs:
+    - name: usv_navigation
+      stack:
+        simulation_layer: kinematic
+        mode: usv_navigation
+      repeats: 1
+      monitor: post_hoc
+resources:
+  priority: 0
+policy:
+  retention: all
+  keep_frames: false
+  seed: 20261025

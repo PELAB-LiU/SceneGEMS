@@ -1,22 +1,48 @@
 import importlib
+from datetime import datetime, timezone
 
 import pytest
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 
 from scenegems_tool.cluster.protocol.jobs import JobState, JobType
 from scenegems_tool.persistence.database import DATABASE_URL_ENV, DatabaseNotConfigured
 from scenegems_tool.persistence.migrate import MIGRATIONS_FOLDER, alembic_config, main, upgrade_database
-from scenegems_tool.persistence.schema import Base, JobEventKind, NodeStatus
+from scenegems_tool.persistence.schema import (
+    ArtifactHolderKind,
+    Base,
+    CampaignActualState,
+    CampaignClassState,
+    CampaignDesiredState,
+    CampaignEventKind,
+    CaseState,
+    JobEventKind,
+    MonitorImplementation,
+    NodeStatus,
+    PipelineStage,
+    TrajectoryGeneratorImplementation,
+    VerdictState,
+)
+from tests.scenegems_tool.persistence.schema.test_tables import CAMPAIGN_TABLES, CLUSTER_TABLES
 
-CLUSTER_TABLES = {"node", "node_capability", "node_fingerprint", "job", "job_event"}
+ALL_TABLES = CLUSTER_TABLES | CAMPAIGN_TABLES
+# Job types the database accepts ahead of the code: calibration.deviation comes with the job contracts (P4.2)
+JOB_TYPES_AHEAD_OF_THE_CODE = {"calibration.deviation"}
 
 
 def _scripts() -> ScriptDirectory:
     return ScriptDirectory.from_config(alembic_config("postgresql://u:p@db/scenegems"))
+
+
+def _revision(module: str):
+    return importlib.import_module(f"scenegems_tool.persistence.migrations.versions.{module}")
+
+
+def _values(enum_class) -> set:
+    return {member.value for member in enum_class}
 
 
 def test_migrations_live_in_the_package():
@@ -26,8 +52,10 @@ def test_migrations_live_in_the_package():
 
 def test_revisions_form_one_line():
     scripts = _scripts()
-    assert scripts.get_heads() == ["0001"]
+    assert scripts.get_heads() == ["0002"]
     revisions = list(scripts.walk_revisions())
+    assert [revision.revision for revision in revisions] == ["0002", "0001"]
+    assert revisions[0].down_revision == "0001"
     assert revisions[-1].down_revision is None
     assert all(len(revision.revision) == 4 and revision.revision.isdigit() for revision in revisions)
 
@@ -42,21 +70,37 @@ def test_config_needs_a_url(monkeypatch):
         alembic_config()
 
 
-def test_first_revision_enum_values_match_the_code():
-    # The revision spells the CHECK constraint values out; a new enum value needs a new revision
-    first = importlib.import_module("scenegems_tool.persistence.migrations.versions.0001_cluster_tables")
-    assert set(first.JOB_TYPES) == {job_type.value for job_type in JobType}
-    assert set(first.JOB_STATES) == {state.value for state in JobState}
-    assert set(first.NODE_STATUSES) == {status.value for status in NodeStatus}
-    assert set(first.JOB_EVENT_KINDS) == {kind.value for kind in JobEventKind}
+def test_revision_enum_values_match_the_code():
+    # The revisions spell the CHECK constraint values out; a new enum value needs a new revision.
+    # Each enum is checked against the latest revision that names its values.
+    first, second = _revision("0001_cluster_tables"), _revision("0002_campaigns")
+    assert set(first.JOB_TYPES) == set(second.PREVIOUS_JOB_TYPES)
+    assert _values(JobType) <= set(second.JOB_TYPES)
+    assert set(second.JOB_TYPES) - _values(JobType) <= JOB_TYPES_AHEAD_OF_THE_CODE
+    assert set(first.JOB_STATES) == _values(JobState)
+    assert set(first.NODE_STATUSES) == _values(NodeStatus)
+    assert set(first.JOB_EVENT_KINDS) == _values(JobEventKind)
+    assert set(second.CAMPAIGN_DESIRED_STATES) == _values(CampaignDesiredState)
+    assert set(second.CAMPAIGN_ACTUAL_STATES) == _values(CampaignActualState)
+    assert set(second.CAMPAIGN_CLASS_STATES) == _values(CampaignClassState)
+    assert set(second.PIPELINE_STAGES) == _values(PipelineStage)
+    assert set(second.CASE_STATES) == _values(CaseState)
+    assert set(second.TRAJECTORY_GENERATORS) == _values(TrajectoryGeneratorImplementation)
+    assert set(second.MONITORS) == _values(MonitorImplementation)
+    assert set(second.VERDICT_STATES) == _values(VerdictState)
+    assert set(second.CAMPAIGN_EVENT_KINDS) == _values(CampaignEventKind)
+    assert set(second.ARTIFACT_HOLDER_KINDS) == _values(ArtifactHolderKind)
 
 
 def test_offline_upgrade_renders_the_tables(capsys):
     command.upgrade(alembic_config("postgresql://u:p@db/scenegems"), "head", sql=True)
     sql = capsys.readouterr().out
-    for table in CLUSTER_TABLES:
+    for table in ALL_TABLES:
         assert f"CREATE TABLE {table} " in sql
     assert "WHERE state = 'queued'" in sql
+    assert "ALTER TABLE job ADD COLUMN available_at" in sql
+    assert "UPDATE job SET available_at = submitted_at" in sql
+    assert "calibration.deviation" in sql
 
 
 @pytest.mark.postgres
@@ -64,9 +108,9 @@ def test_upgrade_on_an_empty_database(empty_database_url):
     upgrade_database(empty_database_url)
     engine = create_engine(empty_database_url)
     try:
-        assert set(inspect(engine).get_table_names()) == CLUSTER_TABLES | {"alembic_version"}
+        assert set(inspect(engine).get_table_names()) == ALL_TABLES | {"alembic_version"}
         with engine.connect() as connection:
-            assert MigrationContext.configure(connection).get_current_revision() == "0001"
+            assert MigrationContext.configure(connection).get_current_revision() == "0002"
     finally:
         engine.dispose()
 
@@ -84,6 +128,50 @@ def test_upgraded_database_matches_the_tables(empty_database_url):
 
 
 @pytest.mark.postgres
+def test_upgrade_keeps_existing_jobs_available_since_their_submission(empty_database_url):
+    config = alembic_config(empty_database_url)
+    command.upgrade(config, "0001")
+    submitted = datetime(2026, 10, 25, 9, 30, tzinfo=timezone.utc)
+    engine = create_engine(empty_database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO job (id, job_type, payload, required_labels, required_fingerprints, min_memory_mb, min_cpus, priority, max_attempts,"
+                    " idempotency_key, state, attempt, failed_attempts, submitted_at, updated_at)"
+                    " VALUES ('job-1', 'scene_generation', '{}', '{}', '{}', 0, 0, 0, 3, 'key-1', 'queued', 0, 0, :at, :at)"
+                ),
+                {"at": submitted},
+            )
+            connection.execute(text("INSERT INTO job_event (job_id, at, kind, to_state, attempt, detail) VALUES ('job-1', :at, 'submitted', 'queued', 0, '{}')"), {"at": submitted})
+        command.upgrade(config, "head")
+        with engine.connect() as connection:
+            assert connection.execute(text("SELECT available_at FROM job WHERE id = 'job-1'")).scalar_one() == submitted
+            assert connection.execute(text("SELECT tx_id FROM job_event WHERE job_id = 'job-1'")).scalar_one() > 0
+            # the new job type is accepted now
+            connection.execute(text("UPDATE job SET job_type = 'calibration.deviation' WHERE id = 'job-1'"))
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.postgres
+def test_downgrade_to_the_cluster_tables_and_upgrade_again(empty_database_url):
+    config = alembic_config(empty_database_url)
+    command.upgrade(config, "head")
+    command.downgrade(config, "0001")
+    engine = create_engine(empty_database_url)
+    try:
+        inspector = inspect(engine)
+        assert set(inspector.get_table_names()) == CLUSTER_TABLES | {"alembic_version"}
+        assert "available_at" not in {column["name"] for column in inspector.get_columns("job")}
+        assert "tx_id" not in {column["name"] for column in inspector.get_columns("job_event")}
+        command.upgrade(config, "head")
+        assert ALL_TABLES <= set(inspect(engine).get_table_names())
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.postgres
 def test_downgrade_to_base_and_upgrade_again(empty_database_url):
     config = alembic_config(empty_database_url)
     command.upgrade(config, "head")
@@ -92,7 +180,7 @@ def test_downgrade_to_base_and_upgrade_again(empty_database_url):
     try:
         assert set(inspect(engine).get_table_names()) == {"alembic_version"}
         command.upgrade(config, "head")
-        assert CLUSTER_TABLES <= set(inspect(engine).get_table_names())
+        assert ALL_TABLES <= set(inspect(engine).get_table_names())
     finally:
         engine.dispose()
 
@@ -103,6 +191,6 @@ def test_command_line_reads_the_environment(empty_database_url, monkeypatch):
     main(["upgrade", "head"])
     engine = create_engine(empty_database_url)
     try:
-        assert CLUSTER_TABLES <= set(inspect(engine).get_table_names())
+        assert ALL_TABLES <= set(inspect(engine).get_table_names())
     finally:
         engine.dispose()

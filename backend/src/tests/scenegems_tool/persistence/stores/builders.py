@@ -1,11 +1,13 @@
-"""Builders for node and job messages, and a clock the tests move by hand."""
+"""Builders for node and job messages and campaign classes, and a clock the tests move by hand."""
 
+import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 
 from scenegems_tool.cluster.protocol.jobs import JobRequirements, JobSubmission, JobType
 from scenegems_tool.cluster.protocol.messages import Hello
 from scenegems_tool.cluster.protocol.node_description import CapabilityOffer, NodeResources
+from scenegems_tool.persistence.stores import ClassSpec
 
 START = datetime(2026, 10, 25, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -64,3 +66,14 @@ def make_submission(
         max_attempts=max_attempts,
         idempotency_key=idempotency_key,
     )
+
+
+def sha256_of(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+CONFIG_HASH = sha256_of("config")
+
+
+def make_class_spec(class_id: str = "2vessel_0obstacle_scenarios/functional_model0", quota: int = 3, failure_budget: int = 2, vessels: int = 2, obstacles: int = 0) -> ClassSpec:
+    return ClassSpec(class_id=class_id, content_hash=sha256_of(class_id), vessel_count=vessels, obstacle_count=obstacles, quota=quota, failure_budget=failure_budget)

@@ -344,7 +344,7 @@ def test_result_for_an_unknown_job(job_store, node_a):
         job_store.report_result(_result(lease).model_copy(update={"job_id": "missing"}))
 
 
-def test_retryable_failures_requeue_until_the_retry_limit(job_store, node_a):
+def test_retryable_failures_requeue_until_the_retry_limit(job_store, node_a, clock):
     job = job_store.submit(make_submission(max_attempts=2)).job
     first = job_store.claim_next("node-a", LEASE_S)
     report = job_store.report_result(_result(first, JobOutcome.FAILED, error="simulator crashed", retryable=True))
@@ -353,6 +353,8 @@ def test_retryable_failures_requeue_until_the_retry_limit(job_store, node_a):
     # the same failure reported again counts once
     assert job_store.report_result(_result(first, JobOutcome.FAILED, error="simulator crashed", retryable=True)).status == ResultStatus.DUPLICATE
     assert job_store.get(job.job_id).failed_attempts == 1
+    assert job_store.claim_next("node-a", LEASE_S) is None  # in its retry backoff
+    clock.advance(job_store.retry_backoff_base_s)
     second = job_store.claim_next("node-a", LEASE_S)
     assert second.job.attempt == 2
     final = job_store.report_result(_result(second, JobOutcome.FAILED, error="crashed again", retryable=True)).job

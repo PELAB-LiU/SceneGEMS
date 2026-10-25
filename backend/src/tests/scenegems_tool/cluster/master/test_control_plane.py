@@ -284,7 +284,7 @@ def test_a_released_job_returns_without_using_an_attempt(make_node, plane, store
     assert schedule() == 1
 
 
-def test_a_retryable_failure_runs_again_and_a_permanent_one_fails(make_node, plane, stores, on_loop, schedule):
+def test_a_retryable_failure_runs_again_and_a_permanent_one_fails(make_node, plane, stores, on_loop, schedule, clock):
     node = make_node("lab 1", slots={SCENE: 1})
     node.connect()
     job = _submit(on_loop, plane)
@@ -293,7 +293,10 @@ def test_a_retryable_failure_runs_again_and_a_permanent_one_fails(make_node, pla
     node.accept(offer)
     node.send(node.result(offer, JobOutcome.FAILED, error="docker hiccup", retryable=True))
     node.heartbeat()
-    schedule()
+    assert schedule() == 0  # in its retry backoff
+    clock.advance(stores.jobs.retry_backoff_base_s)
+    node.heartbeat()
+    assert schedule() == 1
     second = node.expect(LeaseOffer)
     node.accept(second)
     node.send(node.result(second, JobOutcome.FAILED, error="invalid payload"))

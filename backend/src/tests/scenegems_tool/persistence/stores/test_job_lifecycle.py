@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from scenegems_tool.cluster.protocol.jobs import JobState
-from scenegems_tool.persistence.stores.job_lifecycle import lease_is_current, result_status, state_after_failed_attempt
+from scenegems_tool.persistence.stores.job_lifecycle import lease_is_current, result_status, retry_backoff_s, state_after_failed_attempt
 from scenegems_tool.persistence.stores.job_records import ResultStatus
 
 NOW = datetime(2026, 10, 25, 12, 0, 0, tzinfo=timezone.utc)
@@ -61,3 +61,17 @@ def test_result_after_expiry_is_stale():
 
 def test_result_after_cancel_is_stale():
     assert result_status(JobState.CANCELLED, "lease-1", None, 1, None, "lease-1", NOW) == ResultStatus.STALE
+
+
+@pytest.mark.parametrize("failed_attempts, expected", [(1, 5.0), (2, 10.0), (3, 20.0), (6, 160.0), (7, 300.0), (60, 300.0), (10_000, 300.0)])
+def test_retry_backoff_doubles_up_to_the_cap(failed_attempts, expected):
+    assert retry_backoff_s(failed_attempts, base_s=5.0, cap_s=300.0) == expected
+
+
+def test_retry_backoff_follows_a_failed_attempt():
+    with pytest.raises(ValueError):
+        retry_backoff_s(0, base_s=5.0, cap_s=300.0)
+
+
+def test_zero_base_retries_at_once():
+    assert retry_backoff_s(4, base_s=0.0, cap_s=300.0) == 0.0

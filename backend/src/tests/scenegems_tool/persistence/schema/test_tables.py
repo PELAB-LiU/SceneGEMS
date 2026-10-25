@@ -8,8 +8,33 @@ def _check_constraint(table, name):
     return next(constraint for constraint in table.constraints if constraint.name == name)
 
 
+CLUSTER_TABLES = {"node", "node_capability", "node_fingerprint", "job", "job_event"}
+CAMPAIGN_TABLES = {
+    "campaign",
+    "campaign_config_version",
+    "campaign_class",
+    "scenario_case",
+    "pipeline_job",
+    "pipeline_cursor",
+    "run_record",
+    "verdict",
+    "campaign_event",
+    "artifact",
+    "artifact_reference",
+    "calibration_result",
+}
+
+
 def test_tables():
-    assert set(Base.metadata.tables) == {"node", "node_capability", "node_fingerprint", "job", "job_event"}
+    assert set(Base.metadata.tables) == CLUSTER_TABLES | CAMPAIGN_TABLES
+
+
+def test_jobs_have_an_availability_and_events_their_transaction():
+    assert not JobRow.__table__.c.available_at.nullable
+    tx_id = JobEventRow.__table__.c.tx_id
+    assert not tx_id.nullable and "pg_current_xact_id()" in str(tx_id.server_default.arg)
+    index = next(index for index in JobEventRow.__table__.indexes if index.name == "ix_job_event_tx_id_id")
+    assert [column.name for column in index.columns] == ["tx_id", "id"]
 
 
 @pytest.mark.parametrize(

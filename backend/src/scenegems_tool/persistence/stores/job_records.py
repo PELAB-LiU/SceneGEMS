@@ -29,6 +29,7 @@ class JobRecord:
     lease_owner: Optional[str]
     lease_expires_at: Optional[datetime]  # set only while the lease is active
     submitted_at: datetime
+    available_at: datetime  # not claimed before; HELD_UNTIL while held
     updated_at: datetime
     started_at: Optional[datetime]
     finished_at: Optional[datetime]
@@ -53,6 +54,7 @@ class JobRecord:
             lease_owner=row.lease_owner,
             lease_expires_at=row.lease_expires_at,
             submitted_at=row.submitted_at,
+            available_at=row.available_at,
             updated_at=row.updated_at,
             started_at=row.started_at,
             finished_at=row.finished_at,

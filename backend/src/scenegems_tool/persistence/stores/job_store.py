@@ -5,6 +5,12 @@ failed or cancelled. Expired, rejected and released leases return it to the queu
 job_lifecycle for the rules. Every state change appends one job_event row in the same
 transaction.
 
+Availability: a queued job is claimed only once its available_at has passed. A reported
+retryable failure sets it to now plus the backoff (retry_backoff_s with this store's base
+and cap). hold_jobs moves the jobs of a set to HELD_UNTIL (a campaign's pause) and
+release_held_jobs makes them available at once; a held job that is leased keeps running,
+and stays held if it comes back to the queue.
+
 Concurrency: the claim locks the node row (serializing claims per node, so slots hold) and
 picks the job with FOR UPDATE SKIP LOCKED (so claims for different nodes never block each
 other or take the same job). Every other step locks the job row it changes.
@@ -14,7 +20,7 @@ from datetime import datetime, timedelta
 from typing import Collection, List, Optional
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -22,10 +28,11 @@ from scenegems_tool.cluster.protocol.jobs import JobOutcome, JobState, JobSubmis
 from scenegems_tool.cluster.protocol.messages import JobResult
 from scenegems_tool.persistence.clock import Clock, utc_now
 from scenegems_tool.persistence.database import transaction
-from scenegems_tool.persistence.schema import JobEventKind, JobRow, NodeRow, NodeStatus
+from scenegems_tool.persistence.schema import HELD_UNTIL, JobEventKind, JobRow, NodeRow, NodeStatus
 from scenegems_tool.persistence.stores.job_claim import free_job_types, next_queued_job_query
 from scenegems_tool.persistence.stores.job_event_log import append_job_event, job_events
-from scenegems_tool.persistence.stores.job_lifecycle import ACTIVE_STATES, lease_is_current, result_status, state_after_failed_attempt
+from scenegems_tool.persistence.stores.job_lifecycle import ACTIVE_STATES, lease_is_current, result_status, retry_backoff_s, state_after_failed_attempt
+from scenegems_tool.persistence.stores.store_session import session_scope
 from scenegems_tool.persistence.stores.job_records import CancelOutcome, ExpiredLease, JobEventRecord, JobRecord, Lease, ResultReport, ResultStatus, SubmitOutcome
 
 
@@ -47,10 +54,25 @@ def _lease_expiry(now: datetime, lease_duration_s: float) -> datetime:
     return now + timedelta(seconds=lease_duration_s)
 
 
+DEFAULT_RETRY_BACKOFF_BASE_S = 5.0
+DEFAULT_RETRY_BACKOFF_CAP_S = 300.0
+UNFINISHED_STATES = (JobState.QUEUED,) + ACTIVE_STATES
+
+
 class JobStore:
-    def __init__(self, session_factory: sessionmaker[Session], clock: Clock = utc_now):
+    def __init__(
+        self,
+        session_factory: sessionmaker[Session],
+        clock: Clock = utc_now,
+        retry_backoff_base_s: float = DEFAULT_RETRY_BACKOFF_BASE_S,
+        retry_backoff_cap_s: float = DEFAULT_RETRY_BACKOFF_CAP_S,
+    ):
+        if retry_backoff_base_s < 0 or retry_backoff_cap_s < 0:
+            raise ValueError(f"the retry backoff needs a base and a cap of at least 0 s, got {retry_backoff_base_s} and {retry_backoff_cap_s}")
         self._sessions = session_factory
         self._clock = clock
+        self.retry_backoff_base_s = retry_backoff_base_s
+        self.retry_backoff_cap_s = retry_backoff_cap_s
 
     # Submission and queries
 
@@ -82,6 +104,7 @@ class JobStore:
                     attempt=0,
                     failed_attempts=0,
                     submitted_at=now,
+                    available_at=now,
                     updated_at=now,
                 )
                 .on_conflict_do_nothing(index_elements=[JobRow.idempotency_key])
@@ -126,7 +149,7 @@ class JobStore:
 
         Considers only online nodes and job types the node has a free slot for (slots minus
         its leased and running jobs of that type), optionally limited to job_types, and skips
-        the jobs in exclude_job_ids. The match on labels, fingerprints and resources and the
+        the jobs in exclude_job_ids and those not available yet. The match on labels, fingerprints and resources and the
         order (priority, then submission) are in next_queued_job_query. The lease starts as
         an offer that holds for lease_duration_s; the node accepts it with accept().
         """
@@ -145,7 +168,7 @@ class JobStore:
             if not job_types:
                 return None
             fingerprints = {fingerprint.image: fingerprint.fingerprint for fingerprint in node.fingerprints}
-            row = session.execute(next_queued_job_query(job_types, node.labels, fingerprints, node.free_memory_mb, node.cpus, exclude_job_ids)).scalar_one_or_none()
+            row = session.execute(next_queued_job_query(job_types, node.labels, fingerprints, node.free_memory_mb, node.cpus, exclude_job_ids, now=now)).scalar_one_or_none()
             if row is None:
                 return None
             row.state = JobState.LEASED
@@ -205,7 +228,8 @@ class JobStore:
         """Stores the result of the current lease once.
 
         A success ends the job. A failure counts as a failed attempt: retryable failures
-        are queued again while attempts remain, others fail the job. A second report from
+        are queued again while attempts remain, available after the backoff (a held job stays
+        held), others fail the job. A second report from
         the same lease returns DUPLICATE and changes nothing; a report from a lease that is
         no longer current returns STALE and changes nothing.
         """
@@ -233,9 +257,13 @@ class JobStore:
                 row.state = state_after_failed_attempt(row.failed_attempts, row.max_attempts, report.retryable)
                 row.error = report.error
                 kind = JobEventKind.ATTEMPT_FAILED if row.state == JobState.QUEUED else JobEventKind.FAILED
+            detail = {"error": report.error, "retryable": report.retryable} if report.error else {}
+            if row.state == JobState.QUEUED:
+                row.available_at = self._available_after_failure(row, now)
+                detail["available_at"] = row.available_at.isoformat()
             if row.state.is_terminal:
                 row.finished_at = now
-            append_job_event(session, row, kind, from_state, now, {"error": report.error, "retryable": report.retryable} if report.error else {})
+            append_job_event(session, row, kind, from_state, now, detail)
             return ResultReport(status=status, job=JobRecord.from_row(row))
 
     def cancel(self, job_id: str, reason: str) -> CancelOutcome:
@@ -281,7 +309,41 @@ class JobStore:
                 expired.append(ExpiredLease(lease_id=row.lease_id, node_id=row.lease_owner, job=JobRecord.from_row(row)))
         return expired
 
+    # Holds
+
+    def hold_jobs(self, job_ids: Collection[str], *, session: Optional[Session] = None) -> List[str]:
+        """Holds the unfinished jobs among job_ids: none of them is claimed until released.
+
+        Queued jobs wait; leased and running ones go on and stay held if they come back to
+        the queue. Returns the ids held by this call, sorted. With a session the change is
+        part of the caller's transaction.
+        """
+        return self._set_availability(job_ids, HELD_UNTIL, JobRow.available_at < HELD_UNTIL, session)
+
+    def release_held_jobs(self, job_ids: Collection[str], *, session: Optional[Session] = None) -> List[str]:
+        """Makes the held jobs among job_ids available now; returns the ids released, sorted."""
+        return self._set_availability(job_ids, self._clock(), JobRow.available_at >= HELD_UNTIL, session)
+
     # Helpers
+
+    def _available_after_failure(self, row: JobRow, now: datetime) -> datetime:
+        if row.available_at >= HELD_UNTIL:
+            return row.available_at
+        return now + timedelta(seconds=retry_backoff_s(row.failed_attempts, self.retry_backoff_base_s, self.retry_backoff_cap_s))
+
+    def _set_availability(self, job_ids: Collection[str], available_at: datetime, condition, session: Optional[Session]) -> List[str]:
+        job_ids = sorted(set(job_ids))
+        if not job_ids:
+            return []
+        statement = (
+            update(JobRow)
+            .where(JobRow.id.in_(job_ids), JobRow.state.in_(UNFINISHED_STATES), condition)
+            .values(available_at=available_at, updated_at=self._clock())
+            .returning(JobRow.id)
+            .execution_options(synchronize_session=False)
+        )
+        with session_scope(self._sessions, session) as scope:
+            return sorted(scope.execute(statement).scalars())
 
     @staticmethod
     def _lock_by_lease(session: Session, lease_id: str) -> Optional[JobRow]:

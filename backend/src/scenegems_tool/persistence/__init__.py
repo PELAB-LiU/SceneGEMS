@@ -1,11 +1,13 @@
-"""The master's database: node registry and job store on Postgres.
+"""The master's database: node registry, job store, campaigns and their results on Postgres.
 
 Postgres only: the job store relies on JSONB and SELECT ... FOR UPDATE SKIP LOCKED.
 
-    database.py      SCENEGEMS_DATABASE_URL, engine, session factory, transaction scope
-    clock.py         the UTC clock the stores read, replaceable in tests
-    migrate.py       Alembic configuration kept inside the package, upgrade, command line
-    schema/          SQLAlchemy tables: node, node_capability, node_fingerprint, job, job_event
-    migrations/      Alembic environment and revisions
-    stores/          transactional primitives the master's registry and scheduler call
+    database.py        SCENEGEMS_DATABASE_URL, engine, session factory, transaction scope
+    clock.py           the UTC clock the stores read, replaceable in tests
+    canonical_json.py  canonical JSON and its sha256, for config hashes and calibration keys
+    migrate.py         Alembic configuration kept inside the package, upgrade, command line
+    schema/            SQLAlchemy tables: nodes and jobs; campaigns, classes, cases, pipeline jobs, cursor,
+                       run records, verdicts, campaign events; artifacts, references, calibration results
+    migrations/        Alembic environment and revisions
+    stores/            transactional primitives the master's registry, scheduler and pipeline engine call
 """

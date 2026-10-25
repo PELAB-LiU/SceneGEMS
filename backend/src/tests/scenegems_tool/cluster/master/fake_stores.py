@@ -15,7 +15,7 @@ from uuid import uuid4
 from scenegems_tool.cluster.protocol.jobs import JobOutcome, JobState, JobSubmission, JobType
 from scenegems_tool.cluster.protocol.messages import Heartbeat, Hello, JobResult
 from scenegems_tool.cluster.protocol.node_description import NodeResources
-from scenegems_tool.persistence.schema import JobEventKind, NodeStatus
+from scenegems_tool.persistence.schema import HELD_UNTIL, JobEventKind, NodeStatus
 from scenegems_tool.persistence.stores import (
     CancelOutcome,
     CapabilityUsage,
@@ -32,7 +32,8 @@ from scenegems_tool.persistence.stores import (
     UnknownNode,
 )
 from scenegems_tool.persistence.stores.job_claim import free_job_types
-from scenegems_tool.persistence.stores.job_lifecycle import ACTIVE_STATES, lease_is_current, result_status, state_after_failed_attempt
+from scenegems_tool.persistence.stores.job_lifecycle import ACTIVE_STATES, lease_is_current, result_status, retry_backoff_s, state_after_failed_attempt
+from scenegems_tool.persistence.stores.job_store import DEFAULT_RETRY_BACKOFF_BASE_S, DEFAULT_RETRY_BACKOFF_CAP_S, UNFINISHED_STATES
 
 
 @dataclass
@@ -145,6 +146,7 @@ class _Job:
     idempotency_key: str
     state: JobState
     submitted_at: datetime
+    available_at: datetime
     updated_at: datetime
     attempt: int = 0
     failed_attempts: int = 0
@@ -160,9 +162,11 @@ class _Job:
 
 
 class InMemoryJobStore:
-    def __init__(self, node_store: InMemoryNodeStore, clock):
+    def __init__(self, node_store: InMemoryNodeStore, clock, retry_backoff_base_s: float = DEFAULT_RETRY_BACKOFF_BASE_S, retry_backoff_cap_s: float = DEFAULT_RETRY_BACKOFF_CAP_S):
         self._nodes = node_store
         self._clock = clock
+        self.retry_backoff_base_s = retry_backoff_base_s
+        self.retry_backoff_cap_s = retry_backoff_cap_s
         self._lock = node_store.lock  # one lock for both, as one database
         self._jobs: Dict[str, _Job] = {}
         self._seq = count(1)
@@ -194,6 +198,7 @@ class InMemoryJobStore:
                 idempotency_key=key,
                 state=JobState.QUEUED,
                 submitted_at=now,
+                available_at=now,
                 updated_at=now,
             )
             self._jobs[job_id] = job
@@ -238,6 +243,7 @@ class InMemoryJobStore:
                 job
                 for job in self._jobs.values()
                 if job.state == JobState.QUEUED
+                and job.available_at <= now
                 and job.job_type in types
                 and job.required_labels.items() <= node.labels.items()
                 and job.required_fingerprints.items() <= node.fingerprints.items()
@@ -327,6 +333,8 @@ class InMemoryJobStore:
                 job.state = state_after_failed_attempt(job.failed_attempts, job.max_attempts, report.retryable)
                 job.error = report.error
                 kind = JobEventKind.ATTEMPT_FAILED if job.state == JobState.QUEUED else JobEventKind.FAILED
+            if job.state == JobState.QUEUED and job.available_at < HELD_UNTIL:
+                job.available_at = now + timedelta(seconds=retry_backoff_s(job.failed_attempts, self.retry_backoff_base_s, self.retry_backoff_cap_s))
             if job.state.is_terminal:
                 job.finished_at = now
             self._event(job, kind, from_state, now)
@@ -365,3 +373,21 @@ class InMemoryJobStore:
                 self._event(job, JobEventKind.EXPIRED, from_state, now)
                 expired.append(ExpiredLease(lease_id=job.lease_id, node_id=job.lease_owner, job=JobRecord.from_row(job)))
             return expired
+
+    def hold_jobs(self, job_ids: Collection[str], *, session=None) -> List[str]:
+        return self._set_availability(job_ids, HELD_UNTIL, lambda job: job.available_at < HELD_UNTIL)
+
+    def release_held_jobs(self, job_ids: Collection[str], *, session=None) -> List[str]:
+        return self._set_availability(job_ids, self._clock(), lambda job: job.available_at >= HELD_UNTIL)
+
+    def _set_availability(self, job_ids: Collection[str], available_at: datetime, applies) -> List[str]:
+        with self._lock:
+            now = self._clock()
+            changed = []
+            for job_id in sorted(set(job_ids)):
+                job = self._jobs.get(job_id)
+                if job is not None and job.state in UNFINISHED_STATES and applies(job):
+                    job.available_at = available_at
+                    job.updated_at = now
+                    changed.append(job_id)
+            return changed
