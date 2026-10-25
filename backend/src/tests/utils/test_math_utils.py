@@ -110,7 +110,7 @@ class TestMathUtils(unittest.TestCase):
     def test_compute_start_point_basic(self):
         """Test compute_start_point with basic parameters."""
         position = (10, 5)
-        velocity = (1, 0)  # Moving east
+        velocity = np.array([2.0, 0.0])  # Moving east; the velocity vector has the length of the speed
         speed = 2.0
         acceleration = 1.0
 
@@ -126,15 +126,15 @@ class TestMathUtils(unittest.TestCase):
     def test_compute_start_point_diagonal(self):
         """Test compute_start_point with diagonal movement."""
         position = (0, 0)
-        velocity = (1, 1)  # Moving northeast
-        speed = math.sqrt(8)  # sqrt(2^2 + 2^2)
+        velocity = np.array([2.0, 2.0])  # Moving northeast
+        speed = math.sqrt(8)  # |velocity| = sqrt(2^2 + 2^2)
         acceleration = 1.0
 
         start_point = compute_start_point(position, velocity, speed, acceleration)
 
         # Distance = 8 / 2 = 4
-        # Start position = (0, 0) - (1, 1) * 4 = (-4, -4)
-        expected_start = (-4.0, -4.0)
+        # Start position = (0, 0) - (1, 1) / sqrt(2) * 4 = (-2 sqrt(2), -2 sqrt(2))
+        expected_start = (-2 * math.sqrt(2), -2 * math.sqrt(2))
 
         self.assertAlmostEqual(start_point[0], expected_start[0])
         self.assertAlmostEqual(start_point[1], expected_start[1])

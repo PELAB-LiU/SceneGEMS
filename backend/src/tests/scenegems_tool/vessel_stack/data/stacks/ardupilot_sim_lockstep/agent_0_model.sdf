@@ -1,0 +1,236 @@
+<?xml version="1.0"?>
+<sdf version="1.9">
+  <!-- Parametric twin-thrust vessel, control layer ardupilot: L 30 m, B 10 m,
+       draft 1.8 m, 332100 kg, full thrust 308127 N per thruster for 24.6933 m/s,
+       full differential thrust for 0.06 rad/s. Thrust commands: gz.msgs.Double in N on
+       /model/agent_0/joint/motor_port_joint/cmd_thrust and /model/agent_0/joint/motor_stbd_joint/cmd_thrust. -->
+  <model name="agent_0">
+    <self_collide>false</self_collide>
+    <!-- Avoid links auto-disabling mid-run (can destabilize coupled buoyancy/hydro). -->
+    <allow_auto_disable>false</allow_auto_disable>
+    <static>false</static>
+    <!-- Pose is applied by the world via <include><pose> so this model stays reusable. Origin at the waterline. -->
+
+    <link name="base_link">
+      <inertial>
+        <pose>0 0 -0.9 0 0 0</pose>
+        <mass>331391</mass>
+        <inertia><ixx>3320820</ixx><iyy>25413600</iyy><izz>27615900</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+      </inertial>
+      <!-- Buoyant volume: displaces the total mass at the draft (world Buoyancy system), split into
+           3 x 3 cells so that roll and pitch are restored (see vessel_dynamics.BUOYANCY_GRID). -->
+      <collision name="collision_hull_0_0">
+        <pose>-7.74597 -2.58199 0 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>7.74597 2.58199 3.6</size>
+          </box>
+        </geometry>
+      </collision>
+      <collision name="collision_hull_0_1">
+        <pose>-7.74597 0 0 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>7.74597 2.58199 3.6</size>
+          </box>
+        </geometry>
+      </collision>
+      <collision name="collision_hull_0_2">
+        <pose>-7.74597 2.58199 0 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>7.74597 2.58199 3.6</size>
+          </box>
+        </geometry>
+      </collision>
+      <collision name="collision_hull_1_0">
+        <pose>0 -2.58199 0 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>7.74597 2.58199 3.6</size>
+          </box>
+        </geometry>
+      </collision>
+      <collision name="collision_hull_1_1">
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>7.74597 2.58199 3.6</size>
+          </box>
+        </geometry>
+      </collision>
+      <collision name="collision_hull_1_2">
+        <pose>0 2.58199 0 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>7.74597 2.58199 3.6</size>
+          </box>
+        </geometry>
+      </collision>
+      <collision name="collision_hull_2_0">
+        <pose>7.74597 -2.58199 0 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>7.74597 2.58199 3.6</size>
+          </box>
+        </geometry>
+      </collision>
+      <collision name="collision_hull_2_1">
+        <pose>7.74597 0 0 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>7.74597 2.58199 3.6</size>
+          </box>
+        </geometry>
+      </collision>
+      <collision name="collision_hull_2_2">
+        <pose>7.74597 2.58199 0 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>7.74597 2.58199 3.6</size>
+          </box>
+        </geometry>
+      </collision>
+      <visual name="visual_hull">
+        <pose>0 0 0.45 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>30 10 4.5</size>
+          </box>
+        </geometry>
+      </visual>
+      <sensor name="imu_sensor" type="imu">
+        <pose degrees="true">0 0 0 180 0 0</pose>
+        <always_on>1</always_on>
+        <update_rate>100.0</update_rate>
+      </sensor>
+    </link>
+
+    <!-- Windage: the world WindEffects system pushes this link with mass * factor * relative wind,
+         so its mass is the hull's air drag in N per m/s. Fixed to the hull at the center of the side area above water. -->
+    <link name="windage_link">
+      <pose>0 0 1.35 0 0 0</pose>
+      <enable_wind>true</enable_wind>
+      <inertial>
+        <mass>44.6513</mass>
+        <inertia><ixx>399.219</ixx><iyy>3375.97</iyy><izz>3720.94</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+      </inertial>
+    </link>
+    <joint name="windage_joint" type="fixed">
+      <parent>base_link</parent>
+      <child>windage_link</child>
+    </joint>
+
+    <link name="motor_port_link">
+      <pose>-13.5 4 -0.9 0 0 0</pose>
+      <inertial>
+        <mass>332.1</mass>
+        <inertia><ixx>48.4202</ixx><iyy>96.8404</iyy><izz>96.8404</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+      </inertial>
+    </link>
+    <joint name="motor_port_joint" type="revolute">
+      <parent>base_link</parent>
+      <child>motor_port_link</child>
+      <axis>
+        <xyz>1 0 0</xyz> <!-- thrust direction for the Thruster system -->
+      </axis>
+    </joint>
+    <plugin filename="gz-sim-thruster-system" name="gz::sim::systems::Thruster">
+      <joint_name>motor_port_joint</joint_name>
+      <thrust_coefficient>0.00759909</thrust_coefficient>
+      <fluid_density>1025</fluid_density>
+      <propeller_diameter>1.08</propeller_diameter>
+      <velocity_control>0</velocity_control>
+      <use_angvel_cmd>0</use_angvel_cmd>
+      <max_thrust_cmd>308127</max_thrust_cmd>
+      <min_thrust_cmd>-308127</min_thrust_cmd>
+    </plugin>
+
+    <link name="motor_stbd_link">
+      <pose>-13.5 -4 -0.9 0 0 0</pose>
+      <inertial>
+        <mass>332.1</mass>
+        <inertia><ixx>48.4202</ixx><iyy>96.8404</iyy><izz>96.8404</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+      </inertial>
+    </link>
+    <joint name="motor_stbd_joint" type="revolute">
+      <parent>base_link</parent>
+      <child>motor_stbd_link</child>
+      <axis>
+        <xyz>1 0 0</xyz> <!-- thrust direction for the Thruster system -->
+      </axis>
+    </joint>
+    <plugin filename="gz-sim-thruster-system" name="gz::sim::systems::Thruster">
+      <joint_name>motor_stbd_joint</joint_name>
+      <thrust_coefficient>0.00759909</thrust_coefficient>
+      <fluid_density>1025</fluid_density>
+      <propeller_diameter>1.08</propeller_diameter>
+      <velocity_control>0</velocity_control>
+      <use_angvel_cmd>0</use_angvel_cmd>
+      <max_thrust_cmd>308127</max_thrust_cmd>
+      <min_thrust_cmd>-308127</min_thrust_cmd>
+    </plugin>
+
+    <!-- Added-mass Coriolis terms off: their Munk moment makes a bare hull directionally unstable
+         (measured: the 5 m hull spun under equal thrust above 2.5 m/s); real twin-screw hulls are kept
+         straight by skegs, which this model does not have. -->
+    <plugin filename="gz-sim-hydrodynamics-system" name="gz::sim::systems::Hydrodynamics">
+      <link_name>base_link</link_name>
+      <disable_coriolis>true</disable_coriolis>
+      <xDotU>-16605</xDotU>
+      <yDotV>-156498</yDotV>
+      <zDotW>-166050</zDotW>
+      <nDotR>-11737400</nDotR>
+      <xU>-4302.81</xU>
+      <yV>-250475</yV>
+      <zW>-949539</zW>
+      <kP>-3101090</kP>
+      <mQ>-25736300</mQ>
+      <nR>-8216730</nR>
+      <xUabsU>-836.4</xUabsU>
+      <yVabsV>-27675</yVabsV>
+      <nRabsR>-547782000</nRabsR>
+    </plugin>
+
+    <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
+    </plugin>
+
+    <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
+      <odom_frame>odom</odom_frame>
+      <robot_base_frame>base_link</robot_base_frame>
+      <dimensions>3</dimensions>
+      <odom_publish_frequency>50</odom_publish_frequency>
+    </plugin>
+    <plugin filename="ArduPilotPlugin" name="ArduPilotPlugin">
+      <robotNamespace>agent_0</robotNamespace>
+      <connectionTimeoutMaxCount>5</connectionTimeoutMaxCount>
+      <lock_step>1</lock_step>
+      <fdm_addr>0.0.0.0</fdm_addr>
+      <fdm_port_in>9002</fdm_port_in>
+      <!-- Match ardupilot_gazebo iris: ENU world + FLU hull to NED / aircraft body. -->
+      <modelXYZToAirplaneXForwardZDown>0 0 0 3.141592653589793 0 0</modelXYZToAirplaneXForwardZDown>
+      <gazeboXYZToNED>0 0 0 3.141592653589793 0 1.5707963267948966</gazeboXYZToNED>
+      <imuName>imu_sensor</imuName>
+      <!-- Port motor, SERVO1_FUNCTION 73 (ThrottleLeft). PWM 1000 to 2000 is full astern to full ahead. -->
+      <control channel="0">
+        <jointName>motor_port_joint</jointName>
+        <type>COMMAND</type>
+        <cmd_topic>/model/agent_0/joint/motor_port_joint/cmd_thrust</cmd_topic>
+        <multiplier>616255</multiplier>
+        <offset>-0.5</offset>
+        <servo_min>1000</servo_min>
+        <servo_max>2000</servo_max>
+      </control>
+      <!-- Starboard motor, SERVO3_FUNCTION 74 (ThrottleRight). -->
+      <control channel="2">
+        <jointName>motor_stbd_joint</jointName>
+        <type>COMMAND</type>
+        <cmd_topic>/model/agent_0/joint/motor_stbd_joint/cmd_thrust</cmd_topic>
+        <multiplier>616255</multiplier>
+        <offset>-0.5</offset>
+        <servo_min>1000</servo_min>
+        <servo_max>2000</servo_max>
+      </control>
+    </plugin>
+  </model>
+</sdf>
