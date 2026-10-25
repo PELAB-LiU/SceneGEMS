@@ -9,4 +9,5 @@ Both sides import these definitions, so master and node cannot drift apart silen
     messages.py          WebSocket frames, node to master and master to node
     pairing.py           REST pairing: one-time token to node and broker credentials
     codec.py             encode and decode frames, version checked first
+    routes.py            HTTP paths and the bearer header of the master's cluster API
 """
