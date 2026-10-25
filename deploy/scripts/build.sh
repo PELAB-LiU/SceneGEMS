@@ -38,6 +38,9 @@ Options:
 
   --all                   Build every image (same as no arguments)
 
+  --fingerprints          Print "image fingerprint" for every image of this checkout
+                          and exit; builds nothing and needs no Docker engine
+
   --no-check              Skip stale/fingerprint checks; always run docker build
                           for the selected images (stamps updated after build).
                           With no other options, builds every image (same as
@@ -90,6 +93,10 @@ parse_build_args() {
             --no-check)
                 BUILD_NO_CHECK=1
                 ;;
+            --fingerprints)
+                export DOCKER_FINGERPRINT_ONLY=1
+                BUILD_ALL=1
+                ;;
             *)
                 echo "Unknown option: $1" >&2
                 echo "Run ./build.sh --help for usage." >&2
@@ -101,7 +108,7 @@ parse_build_args() {
 }
 
 build_simulation_images() {
-    echo "== Simulation images =="
+    [ "${DOCKER_FINGERPRINT_ONLY:-0}" = "1" ] || echo "== Simulation images =="
     # Gazebo and SITL declare the upstream pins of deploy/images/upstream_pins.env as build
     # arguments, so the helpers pass them and add the pins file to both fingerprints.
     build_subsystem_if_stale "scenegems-gazebo-harmonic:latest" "$SCRIPT_DIR/deploy/images/gazebo/Dockerfile" \
@@ -112,17 +119,17 @@ build_simulation_images() {
 }
 
 build_arduagent_image() {
-    echo "== Arduagent =="
+    [ "${DOCKER_FINGERPRINT_ONLY:-0}" = "1" ] || echo "== Arduagent =="
     build_if_stale "scenegems-arduagent:latest" "$SCRIPT_DIR/deploy/images/arduagent/Dockerfile" "$SCRIPT_DIR/deploy/images/arduagent"
 }
 
 build_broker_image() {
-    echo "== MQTT broker =="
+    [ "${DOCKER_FINGERPRINT_ONLY:-0}" = "1" ] || echo "== MQTT broker =="
     build_if_stale "scenegems-mqtt-broker:latest" "$SCRIPT_DIR/deploy/images/mqtt_broker/Dockerfiles/nanomq/Dockerfile" "$SCRIPT_DIR/deploy/images/mqtt_broker/Dockerfiles/nanomq"
 }
 
 build_backend_stack_images() {
-    echo "== Backend stack =="
+    [ "${DOCKER_FINGERPRINT_ONLY:-0}" = "1" ] || echo "== Backend stack =="
     build_subsystem_if_stale "scenegems-monitoring-subsystem:latest" "$SCRIPT_DIR/deploy/images/monitoring/Dockerfile" \
         "$SCRIPT_DIR/deploy/images/monitoring/requirements.txt" "$SCRIPT_DIR/deploy/images/monitoring/Dockerfile" \
         "$SCRIPT_DIR/backend/pyproject.toml" "$SCRIPT_DIR/backend/setup.py" "$SCRIPT_DIR/backend/README.md" "$SCRIPT_DIR/backend/src" \
@@ -145,7 +152,7 @@ build_backend_stack_images() {
 }
 
 build_frontend_image() {
-    echo "== Frontend =="
+    [ "${DOCKER_FINGERPRINT_ONLY:-0}" = "1" ] || echo "== Frontend =="
     build_if_stale "scenegems-frontend:dev" "$SCRIPT_DIR/frontend/Dockerfile" "$SCRIPT_DIR/frontend"
 }
 
@@ -198,7 +205,9 @@ print_selected_build_targets() {
     echo ""
 }
 
-print_selected_build_targets
+if [ "${DOCKER_FINGERPRINT_ONLY:-0}" != "1" ]; then
+    print_selected_build_targets
+fi
 
 # Application stack first (broker, backend, frontend), then optional simulation images.
 if [ "$BUILD_ALL" -eq 1 ]; then
@@ -215,6 +224,10 @@ if [ "$BUILD_SIMULATION" -eq 1 ]; then
 fi
 if [ "$BUILD_ARDUAGENT" -eq 1 ]; then
     build_arduagent_image
+fi
+
+if [ "${DOCKER_FINGERPRINT_ONLY:-0}" = "1" ]; then
+    exit 0
 fi
 
 if [ "$BUILD_BACKEND" -eq 1 ] || [ "$BUILD_FRONTEND" -eq 1 ] || [ "$BUILD_ALL" -eq 1 ]; then
