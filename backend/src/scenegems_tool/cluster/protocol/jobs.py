@@ -1,7 +1,8 @@
 """Jobs as master and node see them: types, states, requirements and the leased job.
 
 A job is one unit of work that runs in one subsystem container on one node. The payload
-is opaque here: each job type's launcher on the node defines and validates its payload.
+is opaque here: each job type's module (cluster/node/jobs/) defines its payload model, which
+the master checks at submission and the node again, with resolved artifacts, before it runs.
 """
 
 from enum import Enum
@@ -18,6 +19,7 @@ class JobType(str, Enum):
     SIMULATION_KINEMATIC = "simulation.kinematic"  # replay or USV Navigation closed loop, in process
     SIMULATION_ARDUPILOT = "simulation.ardupilot"  # replay over the lockstep MAVLink adapter, one stack per job
     MONITORING_POST_HOC = "monitoring.post_hoc"
+    CALIBRATION_DEVIATION = "calibration.deviation"  # deviation between repeats of one case on one stack
 
 
 class JobState(str, Enum):

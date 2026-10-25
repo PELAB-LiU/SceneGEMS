@@ -3,9 +3,13 @@
 Master and node must speak the same version. Every frame carries it, and a frame of
 another version is rejected before its body is read, so a version change can reshape
 any message without producing confusing validation errors on the other side.
+
+Version 2 (Phase 4): payloads and results may hold artifact references (artifacts.py), the
+generation payloads take a seed, trajectory results say whether the plan is complete, the
+kinematic simulation takes a live monitor, and calibration.deviation is a job type.
 """
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 
 
 class ProtocolVersionMismatch(ValueError):

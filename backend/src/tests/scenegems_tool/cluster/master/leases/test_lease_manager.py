@@ -10,6 +10,7 @@ from scenegems_tool.cluster.protocol.messages import Cancel, LeaseAccept, LeaseO
 from tests.scenegems_tool.cluster.master.conftest import EXPECTED
 from tests.scenegems_tool.cluster.master.fake_socket import RecordingSocket
 from tests.scenegems_tool.cluster.master.fake_stores import InMemoryJobStore, InMemoryNodeStore
+from tests.scenegems_tool.cluster.payloads import valid_payload
 from tests.scenegems_tool.persistence.stores.builders import ManualClock, make_hello
 
 
@@ -28,6 +29,7 @@ class Harness:
         return anyio.run(function, *arguments)
 
     def offer(self, **fields) -> LeaseOffer:
+        fields.setdefault("payload", valid_payload(JobType.SCENE_GENERATION))
         job = self.run(self.plane.submit, JobSubmission(job_type=JobType.SCENE_GENERATION, **fields)).job
         assert self.run(self.plane.scheduler.run_once) == 1
         offer = self.socket.of_type(LeaseOffer)[-1]
@@ -133,7 +135,7 @@ def test_a_disconnect_keeps_accepted_leases_until_they_expire(harness):
 
 def test_an_undeliverable_offer_goes_straight_back(harness):
     harness.socket.deliverable = False
-    job = harness.run(harness.plane.submit, JobSubmission(job_type=JobType.SCENE_GENERATION)).job
+    job = harness.run(harness.plane.submit, JobSubmission(job_type=JobType.SCENE_GENERATION, payload=valid_payload(JobType.SCENE_GENERATION))).job
     assert harness.run(harness.plane.scheduler.run_once) == 0
     state = harness.jobs.get(job.job_id)
     assert state.state == JobState.QUEUED and state.failed_attempts == 0 and harness.session.leases == {}

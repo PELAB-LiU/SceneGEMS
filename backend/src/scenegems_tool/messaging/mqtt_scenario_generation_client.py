@@ -2,7 +2,7 @@ import copy
 import json
 import time
 import uuid
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 import paho.mqtt.client as mqtt
 
@@ -14,6 +14,9 @@ from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 
 # (request_id, scene, evaluation_data, valid)
 GeneratedSceneHandler = Callable[[str, ConcreteScene, Dict[str, Any], bool], None]
+# (request_id, evaluation_data, valid, final): every generated scene as the service sent it.
+# A worker streams its samples while it searches; only its last one is final.
+SceneResultHandler = Callable[[str, Dict[str, Any], bool, bool], None]
 
 
 class MqttScenarioGenerationClient(MqttClient):
@@ -25,11 +28,13 @@ class MqttScenarioGenerationClient(MqttClient):
         parent_service_name: str,
         send_payload: Callable[[ServerMessage], None],
         on_generated_scene: GeneratedSceneHandler,
+        on_scene_result: Optional[SceneResultHandler] = None,
     ):
         super().__init__(name="scenario_generation_client", topic=topic, mqtt_connection=mqtt_connection, reference_geofence=reference_geofence)
         self.parent_service_name = parent_service_name
         self.send_payload = send_payload
         self.on_generated_scene = on_generated_scene
+        self.on_scene_result = on_scene_result  # when set, it gets every scene instead of the monitor path (cluster jobs)
         self.last_heartbeat_timestamp = 0.0
         self.timeout_sec = 10.0
         self.heartbeat_interval_sec = 5.0
@@ -47,6 +52,10 @@ class MqttScenarioGenerationClient(MqttClient):
         match msg.topic:
             case self.generated_scene_topic:
                 if payload["task_sender"] != self.parent_service_name:
+                    return
+                if self.on_scene_result is not None:
+                    # A service from before the final flag sends one scene per task.
+                    self.on_scene_result(payload["request-id"], payload["evaluation-data"], bool(payload["valid"]), bool(payload.get("final", True)))
                     return
                 self._on_generated_scene_payload(payload)
             case self.heartbeat_topic:
@@ -89,6 +98,7 @@ class MqttScenarioGenerationClient(MqttClient):
         obstacle_types_content: str,
         timeout: int,
         enforce_low_tcpa: bool = False,
+        seed: Optional[int] = None,
     ):
         self.wait_for_heartbeat()
 
@@ -108,6 +118,7 @@ class MqttScenarioGenerationClient(MqttClient):
                     "obstacle-types-content": obstacle_types_content,
                     "timeout": timeout,
                     "enforce-low-tcpa": bool(enforce_low_tcpa),
+                    **({"seed": int(seed)} if seed is not None else {}),
                 },
             },
         }

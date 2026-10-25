@@ -3,10 +3,15 @@
 The job is dispatched to the pooled scenario generation service over the pool's scoped
 topics with today's generate-scene task, so the daemon only relays it. The pool runs as
 many generations at once as the node has scene_generation slots.
+
+The worker streams its samples while it searches and marks its last one final; the job's
+result is that final scene. With a seed the scene is reproducible (unless the generation
+ran into its timeout, which depends on the machine); the seed used is recorded in
+evaluation_data.random_seed either way.
 """
 
 import threading
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from pydantic import Field, field_validator
 
@@ -15,11 +20,16 @@ from scenegems_tool.cluster.node.jobs.job_payload import parse_payload
 from scenegems_tool.cluster.node.jobs.pool_client import wait_for_pool, wait_for_reply
 from scenegems_tool.cluster.node.node_context import NodeContext
 from scenegems_tool.cluster.node.subsystem import Subsystem
+from scenegems_tool.cluster.protocol.artifacts import ArtifactField, ArtifactKind
 from scenegems_tool.cluster.protocol.jobs import JobSpec
 from scenegems_tool.cluster.protocol.model_base import ProtocolModel
 from scenegems_tool.subsystems.scene_generation.scenario_generation_types import SCENARIO_GENERATION_SERVICE_NAME, SCENARIO_GENERATION_SERVICE_TOPIC
 
 REPLY_MARGIN_S = 60.0  # time beyond the generation timeout for the worker to start and the reply to arrive
+MAX_SEED = 2**31 - 1
+
+ARTIFACT_INPUT_FIELDS: Tuple[ArtifactField, ...] = ()
+ARTIFACT_RESULT_FIELDS: Tuple[ArtifactField, ...] = (ArtifactField("evaluation_data", ArtifactKind.SCENE),)
 
 
 class SceneGenerationPayload(ProtocolModel):
@@ -29,6 +39,7 @@ class SceneGenerationPayload(ProtocolModel):
     obstacle_types_content: str  # static obstacle types YAML
     timeout_s: int = Field(default=60, gt=0)  # the generation's own time limit
     enforce_low_tcpa: bool = False
+    seed: Optional[int] = Field(default=None, ge=0, le=MAX_SEED)  # seeds random and numpy at task start; the worker draws one when None
 
     @field_validator("functional_scenario_content")
     @classmethod
@@ -42,6 +53,9 @@ class SceneGenerationPayload(ProtocolModel):
         return content
 
 
+PAYLOAD_MODEL = SceneGenerationPayload
+
+
 def run(job: JobSpec, node: NodeContext, report: JobReport, cancel: Optional[threading.Event] = None) -> JobResultData:
     from scenegems_tool.messaging.mqtt_scenario_generation_client import MqttScenarioGenerationClient
 
@@ -49,17 +63,18 @@ def run(job: JobSpec, node: NodeContext, report: JobReport, cancel: Optional[thr
     request_id = f"{job.job_id}-{job.attempt}"  # an earlier attempt's late reply is never taken for this one
     reply: Dict[str, Any] = {}
     replied = threading.Event()
+    samples = 0
 
-    def on_generated_scene(scene_request_id: str, scene, evaluation_data: Dict[str, Any], valid: bool) -> None:
-        if scene_request_id == request_id:
-            reply.update(valid=valid, evaluation_data=evaluation_data)
-            replied.set()
-
-    def on_unmonitored_scene(message: Dict[str, Any]) -> None:
-        # The client forwards a scene it could not rebuild as a workbench message.
-        if message.get("type") == "generated_scene" and message.get("requestId") == request_id:
-            reply.update(valid=bool(message["valid"]), evaluation_data=message["evaluationData"])
-            replied.set()
+    def on_scene_result(scene_request_id: str, evaluation_data: Dict[str, Any], valid: bool, final: bool) -> None:
+        nonlocal samples
+        if scene_request_id != request_id or replied.is_set():
+            return
+        if not final:
+            samples += 1
+            report.status(f"search sample {samples}")
+            return
+        reply.update(valid=valid, evaluation_data=evaluation_data)
+        replied.set()
 
     pool = node.pools.get(Subsystem.SCENE_GENERATION)
     client = MqttScenarioGenerationClient(
@@ -67,8 +82,9 @@ def run(job: JobSpec, node: NodeContext, report: JobReport, cancel: Optional[thr
         topic=SCENARIO_GENERATION_SERVICE_TOPIC,
         reference_geofence=node.reference_geofence,
         parent_service_name=SCENARIO_GENERATION_SERVICE_NAME,
-        send_payload=on_unmonitored_scene,
-        on_generated_scene=on_generated_scene,
+        send_payload=lambda message: None,
+        on_generated_scene=lambda request_id, scene, evaluation_data, valid: None,
+        on_scene_result=on_scene_result,
     )
     try:
         client.connect()
@@ -84,6 +100,7 @@ def run(job: JobSpec, node: NodeContext, report: JobReport, cancel: Optional[thr
             payload.obstacle_types_content,
             payload.timeout_s,
             payload.enforce_low_tcpa,
+            seed=payload.seed,
         )
         wait_for_reply(replied, report, "generated scene", cancel, payload.timeout_s + REPLY_MARGIN_S)
     finally:

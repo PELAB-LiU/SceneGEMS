@@ -39,6 +39,10 @@ def test_an_ardupilot_job_needs_gazebo_only_on_the_gazebo_layer():
     assert job_images(JobType.SCENE_GENERATION, {"simulation_layer": "gazebo"}) == (SCENE_GENERATION_IMAGE,)
 
 
+def test_a_calibration_job_runs_in_the_scenario_execution_image():
+    assert job_images(JobType.CALIBRATION_DEVIATION, {}) == (SCENARIO_EXECUTION_IMAGE,)
+
+
 def test_capability_images():
     assert capability_images([JobType.SIMULATION_KINEMATIC, JobType.MONITORING_POST_HOC]) == {SCENARIO_EXECUTION_IMAGE, MONITORING_IMAGE}
     assert capability_images([]) == set()

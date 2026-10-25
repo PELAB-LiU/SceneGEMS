@@ -163,3 +163,26 @@ class TestClosedLoop:
         result = run_kinematic_closed_loop(straight_trajectories(timespan=60), dt=2.0, steps=10)
         assert result.steps == 10
         assert result.dt == 2.0
+
+
+class TestStepObserver:
+    def test_the_observer_sees_every_recorded_state_and_changes_nothing(self, head_on):
+        seen = []
+        observed = run_kinematic_replay(head_on, on_step=lambda index, states: seen.append((index, states)) or False)
+        plain = run_kinematic_replay(head_on)
+        assert observed.state_digest() == plain.state_digest()
+        assert [index for index, _ in seen] == list(range(121))
+        assert [states for _, states in seen] == list(plain.states)
+
+    def test_the_observer_ends_the_run_after_a_step(self, head_on):
+        stopped = run_kinematic_replay(head_on, on_step=lambda index, states: index == 30)
+        assert stopped.steps == 30 and stopped.run_record["steps"] == 30
+        assert stopped.state_digest() == run_kinematic_replay(head_on, steps=30).state_digest()
+
+    def test_the_observer_may_end_the_run_before_the_first_step(self, head_on):
+        assert run_kinematic_replay(head_on, on_step=lambda index, states: True).steps == 0
+
+    def test_the_closed_loop_takes_the_observer(self, head_on):
+        indices = []
+        result = run_kinematic_closed_loop(head_on, steps=20, on_step=lambda index, states: indices.append(index) or index == 10)
+        assert result.steps == 10 and indices == list(range(11))

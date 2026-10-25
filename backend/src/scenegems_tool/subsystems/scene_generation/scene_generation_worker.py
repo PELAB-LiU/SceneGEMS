@@ -1,3 +1,4 @@
+import secrets
 import time
 from copy import deepcopy
 from datetime import datetime
@@ -16,8 +17,10 @@ from logical_level.mapping.static_obstacle import StaticObstacleTypeMap
 from logical_level.mapping.vessel_type import VesselTypeMap
 from scenegems_tool.subsystems.scene_generation.scenario_generation_types import MqttSceneGenerationTask
 from utils.colregs_approximations import COLREGSConstraints
+from utils.general_utils import set_seed
 
 _MSR_CDRS_PS = "rs-msr"
+MAX_SEED = 2**31 - 1
 
 
 def run_scene_generation_worker(
@@ -25,6 +28,11 @@ def run_scene_generation_worker(
     generated_scene_queue,
     terminate_event: Event,
 ) -> None:
+    # Every random draw of the generation (the random instance initializer, Scenic's sampling)
+    # comes from random and numpy, so one seed at task start fixes the scene. Without a seed
+    # the task draws one, which keeps scenes random and still records how to repeat them.
+    seed = task.seed if task.seed is not None else secrets.randbelow(MAX_SEED + 1)
+    set_seed(seed)
     colregs_constants = COLREGSConstraints.from_file_content(task.colregs_constraints_content)
     vessel_type_map = VesselTypeMap(task.vessel_types_content)
     obstacle_type_map = StaticObstacleTypeMap(task.obstacle_types_content)
@@ -42,7 +50,7 @@ def run_scene_generation_worker(
     config = EvaluationData(
         timeout=task.timeout,
         init_method=RandomInstanceInitializer.name,
-        random_seed=1234,
+        random_seed=seed,
         algorithm_desc=TwoStepCDRejectionSampling.algorithm_desc(),
         config_group=_MSR_CDRS_PS,
         vessel_number=logical_scenario.vessel_number,
@@ -56,7 +64,7 @@ def run_scene_generation_worker(
 
     last_observer_publish_mono: float = 0.0
 
-    def _publish_generated_scene(solution: List[float], number_of_generations: int, runtime: float) -> None:
+    def _publish_generated_scene(solution: List[float], number_of_generations: int, runtime: float, final: bool) -> None:
         eval_data = deepcopy(config)
         assignments = Assignments(logical_scenario.actor_variables).update_from_individual(solution)
         eval_data.best_scene = SceneBuilder().build_from_assignments(assignments)
@@ -65,7 +73,7 @@ def run_scene_generation_worker(
         eval_data.best_fitness = aggregate.evaluate(solution)
         eval_data.best_fitness_index = penalty.value
         eval_data.evaluation_time = runtime if eval_data.is_valid else eval_data.timeout
-        generated_scene_queue.put((task, eval_data))
+        generated_scene_queue.put((task, eval_data, final))
 
     def _termination_signal() -> bool:
         return terminate_event.is_set()
@@ -76,7 +84,7 @@ def run_scene_generation_worker(
         if now - last_observer_publish_mono < 1.0:
             return
         last_observer_publish_mono = now
-        _publish_generated_scene(solution, number_of_generations, runtime)
+        _publish_generated_scene(solution, number_of_generations, runtime, final=False)
 
     solver = TwoStepCDRejectionSampling(verbose=False, observer=_observer, termination_signal=_termination_signal)
     some_results = solver.evaluate(
@@ -84,4 +92,4 @@ def run_scene_generation_worker(
         config,
     )
     if not terminate_event.is_set():
-        _publish_generated_scene(some_results[0], some_results[1], some_results[2])
+        _publish_generated_scene(some_results[0], some_results[1], some_results[2], final=True)

@@ -10,5 +10,6 @@ trajectory_generation_job.py  trajectory_generation, on the trajectory generatio
 simulation_kinematic_job.py   simulation.kinematic, in a scenario execution container
 simulation_ardupilot_job.py   simulation.ardupilot, on a SITL or Gazebo stack per job
 monitoring_post_hoc_job.py    monitoring.post_hoc, in a monitoring container
+calibration_deviation_job.py  calibration.deviation, in a scenario execution container
 in_container/                 the entry point inside a runner container
 """

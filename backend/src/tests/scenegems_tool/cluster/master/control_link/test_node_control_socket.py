@@ -10,11 +10,14 @@ from scenegems_tool.cluster.protocol.routes import AUTHORIZATION_HEADER, bearer
 from scenegems_tool.cluster.protocol.version import PROTOCOL_VERSION
 from scenegems_tool.persistence.schema import NodeStatus
 from tests.scenegems_tool.cluster.master.conftest import EXPECTED, SCENE
+from tests.scenegems_tool.cluster.payloads import valid_payload
 from tests.scenegems_tool.persistence.stores.builders import make_resources
 
 
 def _submit(on_loop, plane, **fields):
-    return on_loop(plane.submit, JobSubmission(job_type=fields.pop("job_type", SCENE), **fields)).job
+    job_type = fields.pop("job_type", SCENE)
+    fields.setdefault("payload", valid_payload(job_type))
+    return on_loop(plane.submit, JobSubmission(job_type=job_type, **fields)).job
 
 
 def test_hello_is_answered_with_welcome_and_the_node_is_online(make_node, plane, stores):
@@ -28,7 +31,7 @@ def test_hello_is_answered_with_welcome_and_the_node_is_online(make_node, plane,
 def test_offer_accept_renew_result(make_node, plane, stores, on_loop, schedule, clock):
     node = make_node("lab 1")
     node.connect()
-    job = _submit(on_loop, plane, payload={"scene": 1})
+    job = _submit(on_loop, plane, payload=valid_payload(SCENE, seed=1))
     assert schedule() == 1
     offer = node.expect(LeaseOffer)
     assert offer.job.job_id == job.job_id and offer.job.attempt == 1

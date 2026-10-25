@@ -16,6 +16,7 @@ import uuid
 import paho.mqtt.client as mqtt
 import pytest
 
+from scenegems_tool.cluster.node.jobs.calibration_deviation_job import execute as execute_calibration
 from scenegems_tool.cluster.node.jobs.job_runner import run_job
 from scenegems_tool.cluster.node.jobs.monitoring_post_hoc_job import execute as execute_post_hoc
 from scenegems_tool.cluster.node.launchers.docker_cli import container_ids_for_compose_project, is_container_running
@@ -151,6 +152,24 @@ def test_post_hoc_monitoring_runs_in_a_container(broker, master_id, make_job, he
     assert result == expected
 
 
+def test_a_kinematic_run_with_the_live_monitor_runs_in_a_container(broker, master_id, make_job, head_on_trajectories):
+    """Needs the scenario execution image built from Phase 4 (P4.2) code."""
+    node = make_node(broker, master_id, "n1", {JobType.SIMULATION_KINEMATIC: 1})
+    job = make_job(JobType.SIMULATION_KINEMATIC, {"trajectories": head_on_trajectories.to_dict(), "include_trajectories": False, "monitor": "live"})
+    result = run_job(job, node, RecordingReport())
+    assert result["state_digest"] == run_kinematic_replay(head_on_trajectories).state_digest()
+    assert not result["monitor"]["passed"] and result["monitor"]["stopped_early_at"] is None
+
+
+def test_calibration_runs_in_a_container(broker, master_id, make_job, head_on_trajectories):
+    """Needs the scenario execution image built from Phase 4 (P4.2) code."""
+    node = make_node(broker, master_id, "n1", {JobType.CALIBRATION_DEVIATION: 1})
+    job = make_job(JobType.CALIBRATION_DEVIATION, {"trajectories": [head_on_trajectories.to_dict()] * 2, "reference": "head_on"})
+    result = run_job(job, node, RecordingReport())
+    assert result == json.loads(json.dumps(execute_calibration(job, lambda message, progress=None: None)))
+    assert result["exact"] and result["deviation_bound_m"] == 0.0
+
+
 def _scene_generation_payload() -> dict:
     def read(path):
         with open(path, encoding="utf-8") as file:
@@ -179,7 +198,8 @@ def test_two_scene_generation_pools_run_side_by_side(broker, master_id, make_job
     results = {}
 
     def run(node):
-        results[node.node_id] = run_job(make_job(JobType.SCENE_GENERATION, _scene_generation_payload(), job_id=f"scene-{node.node_id}"), node, RecordingReport())
+        payload = {**_scene_generation_payload(), "seed": 5}
+        results[node.node_id] = run_job(make_job(JobType.SCENE_GENERATION, payload, job_id=f"scene-{node.node_id}"), node, RecordingReport())
 
     try:
         threads = [threading.Thread(target=run, args=(node,)) for node in nodes]
@@ -200,6 +220,8 @@ def test_two_scene_generation_pools_run_side_by_side(broker, master_id, make_job
     for node_id, result in results.items():
         assert result["request_id"] == f"scene-{node_id}-1"
         assert isinstance(result["valid"], bool)
-        assert result["evaluation_data"]
+        assert result["evaluation_data"]["random_seed"] == 5
+    # The job takes the worker's final scene, so the same seed gives both pools the same scene.
+    assert results["n1"]["evaluation_data"]["best_scene"] == results["n2"]["evaluation_data"]["best_scene"]
     assert heartbeat_topics == {f"scenegems/{master_id}/{node_id}/scene_generation-0/{SCENARIO_GENERATION_SERVICE_TOPIC}/heartbeat" for node_id in ("n1", "n2")}
     assert not any(is_container_running(f"scenegems-{master_id}-{node_id}-scene_generation-0") for node_id in ("n1", "n2"))

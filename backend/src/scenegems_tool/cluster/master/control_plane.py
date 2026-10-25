@@ -4,14 +4,19 @@ The control socket hands it each node's Hello and frames, the operator API its
 submissions, cancels and drains. Timers run the scheduler, the lease expiry sweep and the
 silence sweep (timing.py). Store calls run in worker threads, so the event loop keeps
 serving sockets while Postgres works.
+
+A submission's payload is validated with its job type's payload model before it is stored;
+an artifact reference gets a structural check only, its content is checked on the node.
+The job type modules load on the first submission, so the master starts without them.
 """
 
 import asyncio
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import anyio
+from pydantic import ValidationError
 
 from scenegems_tool.cluster.master.job_activity import JobActivity
 from scenegems_tool.cluster.master.leases.lease_manager import LeaseManager
@@ -22,7 +27,7 @@ from scenegems_tool.cluster.master.scheduling.node_eligibility import ResourceGu
 from scenegems_tool.cluster.master.scheduling.reject_backoff import RejectBackoff
 from scenegems_tool.cluster.master.scheduling.scheduler import Scheduler
 from scenegems_tool.cluster.master.timing import ControlTiming
-from scenegems_tool.cluster.protocol.jobs import JobSubmission
+from scenegems_tool.cluster.protocol.jobs import JobSubmission, JobType
 from scenegems_tool.cluster.protocol.messages import (
     Cancel,
     Heartbeat,
@@ -47,6 +52,26 @@ logger = logging.getLogger(__name__)
 
 class FingerprintsUnavailable(RuntimeError):
     """The expected fingerprints are not computed (yet), so a job's requirements cannot be set."""
+
+
+class InvalidPayload(ValueError):
+    """A submission's payload does not match its job type's payload model."""
+
+    def __init__(self, job_type: JobType, error: ValidationError) -> None:
+        super().__init__(f"Invalid {job_type.value} payload: {error}")
+        self.job_type = job_type
+        self.errors: List[Any] = error.errors(include_url=False, include_context=False, include_input=False)
+
+
+def validate_submission_payload(submission: JobSubmission) -> None:
+    """Raise InvalidPayload unless the payload validates; references are checked for shape only."""
+    from scenegems_tool.cluster.node.jobs.job_payload import validate_structure
+    from scenegems_tool.cluster.node.jobs.job_types import payload_model
+
+    try:
+        validate_structure(payload_model(submission.job_type), submission.payload)
+    except ValidationError as error:
+        raise InvalidPayload(submission.job_type, error) from error
 
 
 class ControlPlane:
@@ -161,6 +186,7 @@ class ControlPlane:
         expected = self.expected.current()
         if expected is None and not submission.requirements.fingerprints:
             raise FingerprintsUnavailable(f"the master's expected image fingerprints are {self.expected.state.value}" + (f": {self.expected.error}" if self.expected.error else ""))
+        await anyio.to_thread.run_sync(validate_submission_payload, submission)
         if expected is not None:
             submission = with_required_fingerprints(submission, expected)
         outcome = await anyio.to_thread.run_sync(self.jobs.submit, submission)
