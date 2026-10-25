@@ -181,3 +181,17 @@ def test_load_reports_a_malformed_env_file(tmp_path):
     env_file.write_text("SCENEGEMS_NODE_NAME worker\n")
     with pytest.raises(ConfigurationError, match="line 1"):
         NodeConfiguration.load({}, env_file=env_file)
+
+
+def test_the_artifact_cache_lives_in_the_state_folder_by_default():
+    configuration = NodeConfiguration.from_values(values())
+    assert configuration.artifact_cache_folder == Path("/var/lib/scenegems-node") / "artifacts"
+    assert configuration.artifact_cache_max_bytes == 2 * 1024 * 1024 * 1024
+    configured = NodeConfiguration.from_values(values(SCENEGEMS_NODE_ARTIFACT_CACHE_DIR="/cache", SCENEGEMS_NODE_ARTIFACT_CACHE_MAX_BYTES="0"))
+    assert (configured.artifact_cache_folder, configured.artifact_cache_max_bytes) == (Path("/cache"), 0)
+
+
+@pytest.mark.parametrize("text", ["lots", "-1", "1.5"])
+def test_an_invalid_artifact_cache_bound_fails(text):
+    with pytest.raises(ConfigurationError, match="SCENEGEMS_NODE_ARTIFACT_CACHE_MAX_BYTES"):
+        NodeConfiguration.from_values(values(SCENEGEMS_NODE_ARTIFACT_CACHE_MAX_BYTES=text))

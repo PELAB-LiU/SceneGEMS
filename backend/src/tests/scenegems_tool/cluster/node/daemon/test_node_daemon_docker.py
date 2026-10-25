@@ -3,14 +3,16 @@
 Everything the node talks to is real except the master's control logic: the security folder
 and pairing (cluster/security), a NanoMQ cluster broker with TLS, the auth hook and per-node
 access rules, the node image started through deploy/node/docker-compose.yml, and the
-subsystem containers it starts (kinematic runners, the scene generation pool). The test
-plays the master on the control WebSocket.
+subsystem containers it starts (kinematic runners, the scene generation pool), and the
+master's artifact routes on a real artifact store. The test plays the master on the control
+WebSocket.
 
 Images: scenegems-node:<SCENEGEMS_TEST_NODE_IMAGE_TAG>, the subsystem images with
 SCENEGEMS_TEST_IMAGE_TAG (both default latest), and SCENEGEMS_BROKER_IMAGE. Containers reach
 the test process and the broker through host.docker.internal, which Docker Desktop resolves.
 """
 
+import hashlib
 import json
 import os
 import socket
@@ -26,17 +28,22 @@ import uvicorn
 from scenegems_tool.cluster.node.daemon.pairing.ca_pinning import certificate_sha256
 from scenegems_tool.cluster.node.instance_scope import InstanceScope
 from scenegems_tool.cluster.node.subsystem import IMAGE_ENVIRONMENT_VARIABLES, Subsystem, subsystem_image
+from scenegems_tool.cluster.protocol.artifacts import ArtifactContent, ArtifactKind, ArtifactRef, encode_document
 from scenegems_tool.cluster.protocol.jobs import JobOutcome, JobType
 from scenegems_tool.cluster.protocol.messages import Heartbeat, Hello, JobResult, JobStatus, LeaseAccept, LeaseReject, LeaseRelease, LeaseRenew, LogLines
 from scenegems_tool.cluster.security.broker.auth_hook import AUTH_HOOK_PATH, create_broker_auth_app
 from scenegems_tool.cluster.security.broker.broker_config import BROKER_CONFIG_MOUNT, CONFIG_FILE_NAME, TLS_PORT, ClusterBrokerSettings
 from scenegems_tool.cluster.security.credentials.pairing_tokens import create_pairing_token
 from scenegems_tool.cluster.security.master_security import initialize_master_security
+from scenegems_tool.persistence.artifacts.file_artifact_store import FileArtifactStore
+from scenegems_tool.persistence.artifacts.recorded_artifacts import RecordedArtifacts
+from scenegems_tool.persistence.clock import utc_now
 from scenegems_tool.vessel_stack.simulation_layers.kinematic.kinematic_runner import run_kinematic_replay
 from tests.scenegems_tool.cluster.node.daemon.conftest import make_job, make_offer
 from tests.scenegems_tool.cluster.node.daemon.fake_master import FakeMaster
 from tests.scenegems_tool.cluster.node.jobs.test_jobs_in_containers import _scene_generation_payload
 from tests.scenegems_tool.cluster.security.conftest import HOOK_SECRET, MASTER_PASSWORD, MASTER_USERNAME
+from tests.scenegems_tool.persistence.artifacts.fake_artifact_records import InMemoryArtifactRecords
 from utils.file_system_utils import REPO_ROOT
 
 pytestmark = [pytest.mark.docker, pytest.mark.slow]
@@ -93,7 +100,8 @@ def cluster(tmp_path_factory):
         "-v", f"{security.layout.broker_folder.resolve().as_posix()}:{BROKER_CONFIG_MOUNT}:ro",
         BROKER_IMAGE, "nanomq", "start", "--conf", f"{BROKER_CONFIG_MOUNT}/{CONFIG_FILE_NAME}",
     )  # fmt: skip
-    master = FakeMaster(security, host=HOST, heartbeat_interval_s=1.0, lease_timeout_s=30.0).start(bind="0.0.0.0")
+    artifacts = RecordedArtifacts(FileArtifactStore(tmp_path_factory.mktemp("artifacts")), InMemoryArtifactRecords(utc_now))
+    master = FakeMaster(security, host=HOST, heartbeat_interval_s=1.0, lease_timeout_s=30.0, artifacts=artifacts).start(bind="0.0.0.0")
     try:
         yield master
     finally:
@@ -117,8 +125,7 @@ class NodeContainer:
         return _docker("logs", self.name, check=False).stdout[-6000:]
 
 
-@pytest.fixture(scope="module")
-def node(cluster, tmp_path_factory):
+def _node_container(cluster, tmp_path_factory):
     node_name = f"docker-{uuid.uuid4().hex[:6]}"
     env_file = tmp_path_factory.mktemp("node") / "node.env"
     values = {
@@ -140,6 +147,17 @@ def node(cluster, tmp_path_factory):
         yield container
     finally:
         container.compose("down", "--volumes", "--timeout", "60", check=False)
+
+
+@pytest.fixture(scope="module")
+def node(cluster, tmp_path_factory):
+    yield from _node_container(cluster, tmp_path_factory)
+
+
+@pytest.fixture
+def artifact_node(cluster, tmp_path_factory):
+    """Another node of the same master, for the artifact round trip."""
+    yield from _node_container(cluster, tmp_path_factory)
 
 
 def _running_runners(master_id: str, node_id: str) -> int:
@@ -241,6 +259,40 @@ def test_the_node_container_pairs_and_runs_jobs_within_its_slots(cluster, node, 
     remaining = [name for name in _docker("ps", "-a", "--format", "{{.Names}}").stdout.split() if name.startswith(f"scenegems-{master_id}-{node_id}-")]
     assert remaining == []
     assert not connection.received(LeaseRelease)  # nothing was running at the stop
+
+
+def test_a_job_s_inputs_and_results_travel_as_artifacts(cluster, artifact_node, head_on_trajectories):
+    """A kinematic job whose trajectories are a reference into a stored trajectory generation result, and
+    whose result comes back with its trajectories as a reference to an artifact the node uploaded."""
+    try:
+        connection = cluster.wait_for_connection(timeout_s=120)
+    except AssertionError:
+        pytest.fail(f"The node never connected:\n{artifact_node.logs()}")
+    connection.expect(Hello)
+    trajectory_data = {"algorithm_desc": "straight", "trajectories": head_on_trajectories.to_dict()}
+    document = encode_document(trajectory_data, ArtifactContent.JSON)
+    stored = cluster.artifacts.put(document, ArtifactKind.TRAJECTORY_DATA.value, "application/json")
+    reference = ArtifactRef(sha256=stored.stored.sha256, size_bytes=len(document), kind=ArtifactKind.TRAJECTORY_DATA, pointer="/trajectories")
+    job = make_job("artifact-job", payload={"trajectories": reference.model_dump(mode="json"), "include_trajectories": True})
+    connection.send(make_offer("artifact-0", job))
+    try:
+        connection.expect(LeaseAccept, skip=BACKGROUND)
+        result = connection.expect(JobResult, timeout_s=JOB_TIMEOUT_S, skip=BACKGROUND)
+    except AssertionError as error:
+        pytest.fail(f"{error}\nNode log:\n{artifact_node.logs()}")
+    assert result.outcome == JobOutcome.SUCCEEDED, f"{result.error}\nNode log:\n{artifact_node.logs()}"
+    expected = run_kinematic_replay(head_on_trajectories)
+    assert result.result["state_digest"] == expected.state_digest()
+
+    states = ArtifactRef.model_validate(result.result["trajectories"])
+    assert states.kind == ArtifactKind.TRAJECTORIES
+    content = cluster.artifacts.store.read(states.sha256)
+    assert hashlib.sha256(content).hexdigest() == states.sha256 and len(content) == states.size_bytes
+    assert json.loads(content) == json.loads(json.dumps(expected.to_trajectories().to_dict()))
+    assert (states.sha256, "job", job.job_id, "result:trajectories") in cluster.artifacts.records.references
+    # The node keeps both artifacts in the cache in its state volume
+    cached = _docker("exec", artifact_node.name, "ls", "/var/lib/scenegems-node/artifacts").stdout.split()
+    assert {reference.sha256, states.sha256} <= set(cached)
 
 
 # Every job type's node side in the node image: its payload check and what run() does before

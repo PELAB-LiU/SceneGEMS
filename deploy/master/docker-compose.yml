@@ -46,7 +46,8 @@ services:
   # workbench gateway on this machine only, and the broker login hook on this compose network
   # only (cluster-broker calls http://master-api:8090). It migrates the database before it
   # starts and reads the image fingerprints its nodes must have from release.json. It mounts
-  # the security folder without the CA key, and the Docker socket for the workbench gateway.
+  # the security folder without the CA key, the Docker socket for the workbench gateway, and
+  # the artifact volume: the content-addressed job inputs and results nodes up- and download.
   master-api:
     image: ${SCENEGEMS_MASTER_IMAGE:-scenegems-backend:latest}
     container_name: scenegems-${SCENEGEMS_MASTER_ID}-master-api
@@ -74,6 +75,10 @@ services:
       SCENEGEMS_BROKER_HOOK_LISTEN_PORT: "8090"
       SCENEGEMS_RUNTIME_VOLUME: scenegems-${SCENEGEMS_MASTER_ID}-runtime
       SCENEGEMS_DOCKER_NETWORK: scenegems-${SCENEGEMS_MASTER_ID}_default
+      SCENEGEMS_ARTIFACT_DIR: /var/lib/scenegems/artifacts
+      SCENEGEMS_ARTIFACT_MAX_BYTES: ${SCENEGEMS_ARTIFACT_MAX_BYTES:-268435456}
+      SCENEGEMS_ARTIFACT_SWEEP_INTERVAL_S: ${SCENEGEMS_ARTIFACT_SWEEP_INTERVAL_S:-600}
+      SCENEGEMS_ARTIFACT_SWEEP_GRACE_S: ${SCENEGEMS_ARTIFACT_SWEEP_GRACE_S:-3600}
     volumes:
       - ${SCENEGEMS_SECURITY_DIR:-./security_data}/master.json:/etc/scenegems/security/master.json:ro
       - ${SCENEGEMS_SECURITY_DIR:-./security_data}/ca/ca_certificate.pem:/etc/scenegems/security/ca/ca_certificate.pem:ro
@@ -82,6 +87,7 @@ services:
       - ./release.json:/etc/scenegems/release.json:ro
       - /var/run/docker.sock:/var/run/docker.sock
       - runtime:/app/assets/runtime_assets
+      - artifacts:/var/lib/scenegems/artifacts
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -113,3 +119,6 @@ volumes:
   postgres_data:
   runtime:
     name: scenegems-${SCENEGEMS_MASTER_ID}-runtime
+  # Job inputs and results (scenegems_tool.persistence.artifacts); Postgres records what it holds
+  artifacts:
+    name: scenegems-${SCENEGEMS_MASTER_ID}-artifacts

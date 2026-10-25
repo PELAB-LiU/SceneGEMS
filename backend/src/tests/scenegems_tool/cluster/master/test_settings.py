@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from scenegems_tool.cluster.master.settings import Listener, MasterSettings, SettingMissing
+from scenegems_tool.cluster.master.settings import ArtifactSettings, Listener, MasterSettings, SettingMissing
 
 REQUIRED = {
     "SCENEGEMS_SECURITY_DIR": "/etc/scenegems/security",
@@ -16,6 +16,15 @@ def test_defaults():
     assert settings.security_dir == Path("/etc/scenegems/security")
     assert (settings.node_api, settings.operator, settings.broker_hook) == (Listener("0.0.0.0", 8443), Listener("127.0.0.1", 5174), Listener("127.0.0.1", 8090))
     assert settings.release_manifest is None
+    assert settings.artifacts == ArtifactSettings(Path("/var/lib/scenegems/artifacts"), 256 * 1024 * 1024, 600.0, 3600.0)
+
+
+def test_artifact_settings():
+    environ = dict(REQUIRED, SCENEGEMS_ARTIFACT_DIR="/data/artifacts", SCENEGEMS_ARTIFACT_MAX_BYTES="1048576", SCENEGEMS_ARTIFACT_SWEEP_INTERVAL_S="0", SCENEGEMS_ARTIFACT_SWEEP_GRACE_S="60")
+    assert MasterSettings.from_environment(environ).artifacts == ArtifactSettings(Path("/data/artifacts"), 1048576, 0.0, 60.0)
+    for name, value in (("SCENEGEMS_ARTIFACT_MAX_BYTES", "lots"), ("SCENEGEMS_ARTIFACT_MAX_BYTES", "0"), ("SCENEGEMS_ARTIFACT_SWEEP_GRACE_S", "-1")):
+        with pytest.raises(ValueError):
+            MasterSettings.from_environment(dict(REQUIRED, **{name: value}))
 
 
 def test_overrides():
