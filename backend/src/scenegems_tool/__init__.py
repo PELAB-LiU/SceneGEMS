@@ -24,11 +24,13 @@ Present now:
         fingerprints/           image build fingerprints: label reader, comparison, images per job type
         release/                the release bundle a deployment tool installs: images, stacks, roles
         master/                 node registry, scheduler, lease manager and the master's API and process
-    persistence/    the master's Postgres: tables, migrations, node and job stores
+    persistence/    the master's Postgres: tables, migrations, node, job, campaign, result and artifact record stores
+    assurance/      campaigns over the functional scenario catalog
+        campaign/               config model, YAML, hash and seeds; class catalog; validation
 
 Planned (added by later phases):
-    assurance/      campaign configuration and the per-scenario pipeline
-    persistence/    artifact store, campaign tables
+    assurance/pipeline/         the pipeline engine that runs a campaign's cases (P4.4)
+    persistence/artifacts/      the content-addressed artifact store (P4.3)
     vessel_stack/adapters/      shared edges between layers (mavlink, gz_transport)
 """
 
