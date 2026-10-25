@@ -1,8 +1,6 @@
 import math
 import unittest
 
-import numpy as np
-
 from concrete_level.models.actor_state import ActorState
 
 
