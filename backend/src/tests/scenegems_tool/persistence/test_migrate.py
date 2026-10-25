@@ -29,8 +29,6 @@ from scenegems_tool.persistence.schema import (
 from tests.scenegems_tool.persistence.schema.test_tables import CAMPAIGN_TABLES, CLUSTER_TABLES
 
 ALL_TABLES = CLUSTER_TABLES | CAMPAIGN_TABLES
-# Job types the database accepts ahead of the code: calibration.deviation comes with the job contracts (P4.2)
-JOB_TYPES_AHEAD_OF_THE_CODE = {"calibration.deviation"}
 
 
 def _scripts() -> ScriptDirectory:
@@ -75,8 +73,7 @@ def test_revision_enum_values_match_the_code():
     # Each enum is checked against the latest revision that names its values.
     first, second = _revision("0001_cluster_tables"), _revision("0002_campaigns")
     assert set(first.JOB_TYPES) == set(second.PREVIOUS_JOB_TYPES)
-    assert _values(JobType) <= set(second.JOB_TYPES)
-    assert set(second.JOB_TYPES) - _values(JobType) <= JOB_TYPES_AHEAD_OF_THE_CODE
+    assert set(second.JOB_TYPES) == _values(JobType)
     assert set(first.JOB_STATES) == _values(JobState)
     assert set(first.NODE_STATUSES) == _values(NodeStatus)
     assert set(first.JOB_EVENT_KINDS) == _values(JobEventKind)
