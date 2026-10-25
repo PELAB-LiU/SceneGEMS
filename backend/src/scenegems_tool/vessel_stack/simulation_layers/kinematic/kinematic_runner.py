@@ -1,4 +1,5 @@
-"""In-process lockstep runner for the kinematic layer, and a replay run of generated trajectories.
+"""In-process lockstep runner for the kinematic layer, with a replay run of generated
+trajectories and a closed-loop run of USV Navigation against replaying targets.
 
 The runner owns no time of its own: every step it takes the simulation's step request,
 collects one command and one acknowledgement per participant, and lets the simulation
@@ -16,6 +17,8 @@ from concrete_level.models.concrete_actors import ConcreteActor
 from concrete_level.models.trajectories import Trajectories
 from concrete_level.trajectory_generation.trajectory_builder import TrajectoryBuilder
 from scenegems_tool.vessel_stack.asv_software.replay.replay_specs import REPLAY_STATE_FOLLOWER
+from scenegems_tool.vessel_stack.asv_software.usv_navigation.usv_navigation_parameters import UsvNavigationParameters
+from scenegems_tool.vessel_stack.asv_software.usv_navigation.usv_navigation_specs import COLAV_AUTOMATON_COMMIT, USV_NAVIGATION_IN_PROCESS
 from scenegems_tool.vessel_stack.contracts.clock import LockstepParticipant, StepAck, derive_seed
 from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, SimulationLayerId
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import EnvironmentConfig, SimulationInstanceConfig, VesselConfig, VesselStackConfig
@@ -25,6 +28,7 @@ from scenegems_tool.vessel_stack.simulation_layers.kinematic.kinematic_simulatio
 from scenegems_tool.vessel_stack.simulation_layers.kinematic.kinematic_specs import KINEMATIC_LAYER
 
 KINEMATIC_REPLAY_STACK = VesselStackConfig(asv_software=AsvSoftwareId.REPLAY, control_layer=ControlLayerId.NONE, simulation_layer=SimulationLayerId.KINEMATIC)
+KINEMATIC_USV_NAVIGATION_STACK = VesselStackConfig(asv_software=AsvSoftwareId.USV_NAVIGATION, control_layer=ControlLayerId.NONE, simulation_layer=SimulationLayerId.KINEMATIC)
 
 
 @dataclass(frozen=True)
@@ -124,6 +128,74 @@ def run_kinematic_replay(
     run_record = {
         "stack": str(KINEMATIC_REPLAY_STACK),
         "specs": specs,
+        "dt": dt,
+        "steps": result.steps,
+        "run_seed": environment.seed,
+        "participant_seeds": dict(result.participant_seeds),
+        "repeatability_tier": tier.value if tier is not None else None,
+        "environment": resolution.effective_environment(),
+        "state_digest": result.state_digest(),
+    }
+    return dataclasses.replace(result, run_record=run_record)
+
+
+def run_kinematic_closed_loop(
+    trajectories: Trajectories,
+    *,
+    own_ship_id: Optional[int] = None,
+    usv_navigation_parameters: Optional[UsvNavigationParameters] = None,
+    environment: Optional[EnvironmentConfig] = None,
+    dt: Optional[float] = None,
+    steps: Optional[int] = None,
+    resolver: Optional[StackResolver] = None,
+) -> KinematicRunResult:
+    """Close the loop around USV Navigation on the own ship while every other vessel replays its trajectory.
+
+    The own ship (the scene's OS unless own_ship_id names another vessel) runs (usv_navigation,
+    none, kinematic) and the other vessels run (replay, none, kinematic), all in one
+    KinematicSimulation and clock. The instance and the environment are validated by the
+    resolver first. The USV Navigation parameters default to UsvNavigationParameters.from_reference
+    on the own ship's generated trajectory. dt defaults to the trajectory time step and steps to
+    its timespan. The run seed is environment.seed.
+    """
+    resolver = resolver or default_resolver()
+    environment = environment or EnvironmentConfig.calm()
+    dt = float(trajectories.time_step) if dt is None else dt
+    scene = trajectories.initial_scene
+    vessels = scene.vessels
+    own = scene.os if own_ship_id is None else next((vessel for vessel in vessels if vessel.id == own_ship_id), None)
+    if own is None:
+        raise ValueError(f"No vessel with id {own_ship_id} in the scene")
+    stacks = {vessel.id: KINEMATIC_USV_NAVIGATION_STACK if vessel.id == own.id else KINEMATIC_REPLAY_STACK for vessel in vessels}
+    instance = SimulationInstanceConfig(
+        simulation_layer=SimulationLayerId.KINEMATIC,
+        environment=environment,
+        vessels={str(vessel.id): VesselConfig(agent_id=str(vessel.id), stack=stacks[vessel.id]) for vessel in vessels},
+    )
+    resolution = resolver.require_instance(instance, attended=False)
+
+    parameters = usv_navigation_parameters or UsvNavigationParameters.from_reference(own, trajectories.state_list(own), scene.actors, dt)
+    navigator = resolver.registry.runtime(USV_NAVIGATION_IN_PROCESS.id)(own, parameters)
+    follower_class = resolver.registry.runtime(REPLAY_STATE_FOLLOWER.id)
+    participants: Dict[int, LockstepParticipant] = {
+        vessel.id: navigator if vessel.id == own.id else follower_class(vessel, trajectories.state_list(vessel), trajectories.time_step) for vessel in vessels
+    }
+    simulation_class = resolver.registry.runtime(KINEMATIC_LAYER.id)
+    simulation = simulation_class(scene, dt, [participant.participant_id for participant in participants.values()])
+    result = run_lockstep(simulation, participants, steps if steps is not None else int(round(trajectories.timespan / dt)), environment.seed)
+
+    specs = _unique_ids(spec.id for chain in resolution.chains.values() for spec in chain.specs)
+    tier = resolution.repeatability_tier
+    run_record = {
+        "stacks": {str(vessel_id): str(stack) for vessel_id, stack in sorted(stacks.items())},
+        "specs": specs,
+        "usv_navigation": {
+            "vessel": own.id,
+            "colav_automaton_commit": COLAV_AUTOMATON_COMMIT,
+            "parameters": parameters.as_dict(),
+            "transitions": [[time, transition, mode] for time, transition, mode in navigator.transitions],
+            "goal_reached_at": navigator.goal_reached_at,
+        },
         "dt": dt,
         "steps": result.steps,
         "run_seed": environment.seed,

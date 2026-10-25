@@ -59,6 +59,10 @@ dependencies = [
     "svgpath2mpl",
     "uvicorn[standard]",
     "pyproj",
+    # USV Navigation (MIT), pinned to commit 54866f2. Next to commonroad-io install it with
+    # --no-deps together with colav-unsafe-set==0.0.4 and hybrid-automaton==1.0.0: the
+    # unsafe-set package declares protobuf<=3.20.1 and hatch, which it never imports.
+    "colav-automaton @ https://github.com/michaelstolberger27/usv-navigation/archive/54866f24a04987334057ae5c5896dfc3ee8ca058.zip",
 ]
 
 [project.optional-dependencies]

@@ -16,7 +16,7 @@ Present now:
         registry/               adapter registry, resolver, measured capability data
         simulation_layers/      kinematic/ (in process), gazebo/ (generators), ardupilot_sim/
         control_layers/         ardupilot/, later custom/
-        asv_software/           replay/, mission_planner/ (specs), later usv_navigation/
+        asv_software/           replay/, usv_navigation/ (in process), mission_planner/ (specs)
     cluster/        distributed integration layer
         node/                   local subsystem launcher teardown, later the node daemon
 
