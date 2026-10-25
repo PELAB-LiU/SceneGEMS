@@ -22,6 +22,7 @@ def job_view(job: JobRecord, progress: Optional[JobProgress] = None) -> Dict[str
         "lease_owner": job.lease_owner,
         "lease_expires_at": job.lease_expires_at,
         "submitted_at": job.submitted_at,
+        "available_at": job.available_at,
         "started_at": job.started_at,
         "finished_at": job.finished_at,
         "result": job.result,

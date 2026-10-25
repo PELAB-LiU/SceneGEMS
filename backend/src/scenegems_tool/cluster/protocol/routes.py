@@ -9,6 +9,7 @@ CA_CERTIFICATE_PATH = "/cluster/ca-certificate"  # GET, unauthenticated: the CA 
 PAIRING_PATH = "/cluster/pairing"  # POST PairingRequest, answered with PairingResponse or 403
 NODE_CONTROL_PATH = "/cluster/node/control"  # WebSocket opened by the node, frames from messages.py
 JOBS_PATH = "/cluster/jobs"  # POST JobSubmission; GET lists jobs, GET <JOBS_PATH>/<job id> one job
+CAMPAIGNS_PATH = "/cluster/campaigns"  # operator API: POST a campaign config; GET lists campaigns, GET <CAMPAIGNS_PATH>/<campaign id> one (campaign_routes.py)
 
 AUTHORIZATION_HEADER = "Authorization"
 BEARER_SCHEME = "Bearer"  # the node credential from PairingResponse.node_credential, which names the node

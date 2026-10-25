@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import List, Optional, Sequence
 
 import uvicorn
+from sqlalchemy.orm import Session, sessionmaker
 
 from scenegems_tool.cluster.master.api.master_apps import MasterApps, create_master_apps
 from scenegems_tool.cluster.master.control_plane import ControlPlane
@@ -28,7 +29,7 @@ from scenegems_tool.cluster.security.command_line import load_env_file
 from scenegems_tool.cluster.security.master_security import MasterSecurity
 from scenegems_tool.cluster.security.security_layout import SecurityLayout
 from scenegems_tool.persistence.database import create_database_engine, create_session_factory
-from scenegems_tool.persistence.stores import JobStore, NodeStore
+from scenegems_tool.persistence.stores import AssuranceStores, JobStore, NodeStore
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,11 @@ class _Listener(uvicorn.Server):
         yield
 
 
+def build_assurance_stores(sessions: sessionmaker[Session]) -> AssuranceStores:
+    """The stores of campaigns and their results on the master's database; the campaign routes and the pipeline engine share one."""
+    return AssuranceStores.create(sessions)
+
+
 def build_master(settings: MasterSettings, with_gateway: bool = True) -> MasterApps:
     security = MasterSecurity.load(settings.security_dir)
     sessions = create_session_factory(create_database_engine(settings.database_url))
@@ -52,7 +58,7 @@ def build_master(settings: MasterSettings, with_gateway: bool = True) -> MasterA
     if with_gateway:
         from scenegems_tool.gateway.websocket_app import app as gateway
 
-    return create_master_apps(plane, security, settings.broker_hook_secret, gateway=gateway)
+    return create_master_apps(plane, security, settings.broker_hook_secret, gateway=gateway, assurance=build_assurance_stores(sessions))
 
 
 def listeners(settings: MasterSettings, apps: MasterApps) -> List[uvicorn.Server]:

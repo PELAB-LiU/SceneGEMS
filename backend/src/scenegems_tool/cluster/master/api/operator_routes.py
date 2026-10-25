@@ -16,6 +16,8 @@ workbench gateway.
     POST NODES_PATH/<node id>/drain      no new jobs; running ones finish
     POST NODES_PATH/<node id>/resume     ends the drain
     GET  STATUS_PATH                     master id, expected fingerprints, connected nodes
+
+The campaign routes (campaign_routes.py) join them when the master has the campaign stores.
 """
 
 from typing import Optional
@@ -23,19 +25,21 @@ from typing import Optional
 import anyio
 from fastapi import APIRouter, Body, HTTPException, Response
 
+from scenegems_tool.cluster.master.api.campaign_routes import campaign_router, unavailable_router
 from scenegems_tool.cluster.master.api.views import job_detail_view, job_view, node_view
 from scenegems_tool.cluster.master.control_plane import ControlPlane, FingerprintsUnavailable, InvalidPayload
 from scenegems_tool.cluster.protocol.jobs import JobState, JobSubmission
 from scenegems_tool.cluster.protocol.routes import JOBS_PATH
-from scenegems_tool.persistence.stores import SubmitOutcome, UnknownJob
+from scenegems_tool.persistence.stores import AssuranceStores, SubmitOutcome, UnknownJob
 
 NODES_PATH = "/cluster/nodes"
 STATUS_PATH = "/cluster/status"
 MAX_LISTED_JOBS = 1000
 
 
-def operator_router(plane: ControlPlane) -> APIRouter:
+def operator_router(plane: ControlPlane, assurance: Optional[AssuranceStores] = None) -> APIRouter:
     router = APIRouter()
+    router.include_router(unavailable_router() if assurance is None else campaign_router(assurance, plane))
     router.include_router(_job_routes(plane))
     router.include_router(_node_routes(plane))
     return router
