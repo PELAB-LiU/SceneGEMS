@@ -57,6 +57,11 @@ def _references(harness, kind, holder_id):
     return sorted(reference.role for reference in harness.stores.artifacts.references_of(kind, str(holder_id)))
 
 
+def _job_references(harness, campaign):
+    """References the artifact store recorded for uploads that the engine has not taken over."""
+    return [reference for job_id in harness.stores.pipeline.job_ids_of_campaign(campaign.campaign_id) for reference in harness.stores.artifacts.references_of(ArtifactHolderKind.JOB, job_id)]
+
+
 # The stage graph
 
 
@@ -111,6 +116,7 @@ def test_every_monitor_with_either_generator(make_harness, monitor, generator, r
         assert set(record.artifacts) == {"trajectories", "state_log"} and record.artifacts["trajectories"] == case.trajectories_artifact
         sim_job = next(job for pipeline_job, job in jobs if pipeline_job.stage == SIMULATE)
         assert sim_job.payload["trajectories"]["pointer"] == "/trajectories"
+        assert _job_references(harness, campaign) == []  # the case and the run hold the uploads now
     else:
         assert (case.scene_artifact, case.trajectories_artifact, record.artifacts) == (None, None, {})
         assert harness.stores.artifacts.references_of(ArtifactHolderKind.CASE, str(case.case_id)) == []
@@ -417,6 +423,7 @@ def test_retention_keeps_what_its_policy_says(make_harness, policy):
         "verdicts_only": {"passed": (["scene"], []), "failed": (["scene"], [])},
     }[policy]
     assert kept == expected
+    assert _job_references(harness, campaign) == []
     assert all(set(record.artifacts) == {"trajectories", "state_log"} for record in records.values())  # the records keep their hashes
 
 
@@ -427,6 +434,7 @@ def test_a_cut_case_keeps_no_trajectories_under_the_failures_policy(make_harness
     complete, cut = _cases(harness, campaign)
     assert (complete.state, cut.state, cut.reason) == (CaseState.COMPLETE, CaseState.CANCELLED, "above the class's quota")
     assert _references(harness, ArtifactHolderKind.CASE, cut.case_id) == ["scene"]
+    assert _job_references(harness, campaign) == []  # results that arrived after the cut are not kept either
 
 
 # Starting and stalling

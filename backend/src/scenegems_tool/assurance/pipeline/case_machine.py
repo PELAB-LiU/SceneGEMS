@@ -46,6 +46,7 @@ from scenegems_tool.assurance.pipeline.verdicts import (
     pending_from_post_hoc,
     pending_unmonitored,
     record_references,
+    release_job_references,
 )
 from scenegems_tool.cluster.protocol.jobs import JobState
 from scenegems_tool.persistence.schema import ArtifactHolderKind, CaseState, JobEventKind, MonitorImplementation, PipelineStage, VerdictState
@@ -122,10 +123,15 @@ class CaseMachine:
         if outcome is None:
             return
         case = self.stores.cases.get_case(pipeline_job.case_id, session=self.session)
-        if case is None or case.state.is_final:
+        if case is None:
             return
         context = self.contexts.get(pipeline_job.campaign_id, self.session, case.config_version)
         if context is None:
+            return
+        if case.state.is_final:
+            # A job of an ended case: its results are not needed, unless the campaign keeps everything
+            if outcome == SUCCEEDED and context.config.policy.retention != RetentionPolicy.ALL:
+                release_job_references(self.stores, self.session, event.job_id)
             return
         step = Step.of(pipeline_job.stage, pipeline_job.run_index, pipeline_job.repeat_index)
         progress = CaseProgress(case.progress)
@@ -152,7 +158,7 @@ class CaseMachine:
             self.end(context, case, CaseState.FAILED, f"{step.name} job {event.job_id}: {error}", progress)
 
     def _scene_generated(self, context: CampaignContext, case: CaseRecord, progress: CaseProgress, step: Step, event: PipelineJobEvent, result: Mapping[str, Any]) -> None:
-        roles = record_references(self.stores, self.session, result, ArtifactHolderKind.CASE, case.case_id, context.campaign_id)
+        roles = record_references(self.stores, self.session, result, ArtifactHolderKind.CASE, case.case_id, context.campaign_id, event.job_id)
         scene = roles.get("scene", UNSET)
         if not result.get("valid") or result.get("evaluation_data") is None:
             self.end(context, case, CaseState.DROPPED, "the scene generation found no valid scene", progress, scene_artifact=scene)
@@ -162,7 +168,7 @@ class CaseMachine:
         self._intents(context, case, [(TRAJECTORIES_STEP, payload)])
 
     def _trajectories_generated(self, context: CampaignContext, case: CaseRecord, progress: CaseProgress, step: Step, event: PipelineJobEvent, result: Mapping[str, Any]) -> None:
-        roles = record_references(self.stores, self.session, result, ArtifactHolderKind.CASE, case.case_id, context.campaign_id)
+        roles = record_references(self.stores, self.session, result, ArtifactHolderKind.CASE, case.case_id, context.campaign_id, event.job_id)
         trajectories = roles.get("trajectory_data", UNSET)
         valid, complete = bool(result.get("valid")), bool(result.get("complete"))
         if not valid or result.get("trajectory_data") is None:
@@ -211,7 +217,7 @@ class CaseMachine:
             ),
             session=self.session,
         )
-        record_references(self.stores, self.session, result, ArtifactHolderKind.RUN, record.run_record_id, context.campaign_id)
+        record_references(self.stores, self.session, result, ArtifactHolderKind.RUN, record.run_record_id, context.campaign_id, event.job_id)
         progress.set_run_record(run_index, repeat_index, record.run_record_id)
         if repeat_index == 0:
             state = progress.run(run_index)
@@ -233,7 +239,7 @@ class CaseMachine:
         pending = pending_from_post_hoc(result)
         run_record_id = progress.run_record_id(step.run_index, 0)
         if run_record_id is not None:
-            record_references(self.stores, self.session, result, ArtifactHolderKind.RUN, run_record_id, context.campaign_id)
+            record_references(self.stores, self.session, result, ArtifactHolderKind.RUN, run_record_id, context.campaign_id, event.job_id)
         progress.run(step.run_index)["verdict"] = pending
         self._save(context, case, progress)
 

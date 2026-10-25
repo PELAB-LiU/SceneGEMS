@@ -18,7 +18,9 @@ that held its lease, its fingerprints and the job's durations.
 
 Every reference in a result gets an artifact reference for its holder (the case for the
 scene and the generated trajectories, the run record for the state log and frames), so the
-sweep keeps the file. Inline results add none.
+sweep keeps the file. The artifact store records an upload as held by its job (role
+result:<field>) until then; the engine takes the job's references over in the same
+transaction, so retention decides what stays. Inline results add none.
 """
 
 from typing import Any, Dict, Mapping, Optional
@@ -39,6 +41,7 @@ RESULT_FIELD_ROLES = {
     "states": "state_log",
     "frames": "frames",
 }
+RESULT_ROLE_PREFIX = "result:"  # the job's own reference to an uploaded result field (persistence/artifacts/recorded_artifacts.py)
 # Roles retention may remove: the generated trajectories (held by the case) and what the runs produced
 CASE_TRAJECTORY_ROLES = ("trajectory_data",)
 RUN_LOG_ROLES = ("state_log", "frames")
@@ -183,8 +186,10 @@ def new_calibration_result(result: Mapping[str, Any], stack: Mapping[str, Any], 
 # Artifact references
 
 
-def record_references(stores: AssuranceStores, session: Session, result: Mapping[str, Any], holder_kind: ArtifactHolderKind, holder_id: Any, campaign_id: str) -> Dict[str, str]:
-    """Adds an artifact reference for every reference in the result; returns {role: sha256}.
+def record_references(
+    stores: AssuranceStores, session: Session, result: Mapping[str, Any], holder_kind: ArtifactHolderKind, holder_id: Any, campaign_id: str, job_id: Optional[str] = None
+) -> Dict[str, str]:
+    """Adds an artifact reference for every reference in the result and drops the job's own; returns {role: sha256}.
 
     The artifact's record is added when it is missing (the artifact store records an upload
     before the node reports its result, so this only repairs a missing record).
@@ -198,4 +203,11 @@ def record_references(stores: AssuranceStores, session: Session, result: Mapping
         stores.artifacts.insert_if_absent(reference.sha256, reference.kind.value, reference.size_bytes, reference.media_type, session=session)
         stores.artifacts.add_reference(reference.sha256, holder_kind, str(holder_id), role, campaign_id, session=session)
         roles[role] = reference.sha256
+    if job_id is not None:
+        release_job_references(stores, session, job_id)
     return roles
+
+
+def release_job_references(stores: AssuranceStores, session: Session, job_id: str) -> None:
+    """Drops the references the artifact store recorded for the job's uploads, once the case or run holds what it needs."""
+    stores.artifacts.remove_references_of(ArtifactHolderKind.JOB, job_id, session=session)

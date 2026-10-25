@@ -11,7 +11,7 @@ import pytest
 from websockets.asyncio.client import connect
 
 from scenegems_tool.cluster.master.api.master_apps import create_master_apps
-from scenegems_tool.cluster.master.server import MAX_NODE_FRAME_BYTES, attach_campaigns, listeners
+from scenegems_tool.cluster.master.server import MAX_NODE_FRAME_BYTES, build_assurance_stores, listeners
 from scenegems_tool.cluster.master.settings import Listener, MasterSettings
 from scenegems_tool.cluster.protocol.codec import decode_master_message, encode
 from scenegems_tool.cluster.protocol.jobs import JobSubmission
@@ -99,5 +99,6 @@ def test_the_master_has_one_assurance_stores_shared_with_its_pipeline_engine(pla
     from sqlalchemy.orm import sessionmaker
 
     sessions = sessionmaker()
-    stores = attach_campaigns(plane, sessions)
+    stores = build_assurance_stores(sessions)
+    plane.attach_pipeline(stores)
     assert stores.session_factory is sessions and plane.pipeline.stores is stores

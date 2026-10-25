@@ -1,9 +1,10 @@
 """A fake fleet for the pipeline engine: it claims queued jobs from the real JobStore, as a node does, and reports scripted results.
 
 Results have P4.2's shapes. With references the declared result fields are stored in an
-in-memory artifact store and replaced by their references, as the node runner does once the
-artifact store exists (P4.3); the executor resolves the references of every payload it runs,
-so a payload that names an artifact nobody stored fails the test.
+in-memory artifact store and replaced by their references, as the node runner does with the
+artifact store (P4.3), and each upload is recorded with the job's reference to it, as the
+master's artifact route does. The executor resolves the references of every payload it
+runs, so a payload that names an artifact nobody stored fails the test.
 
 What a job returns is scripted per case (class id, case index) with a CaseScript: an invalid
 scene, a partial or missing trajectory, a failed verdict, a failure of some stage (retryable
@@ -17,10 +18,10 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from scenegems_tool.cluster.fingerprints.job_images import GAZEBO_IMAGE, MONITORING_IMAGE, SCENARIO_EXECUTION_IMAGE, SCENE_GENERATION_IMAGE, SITL_IMAGE, TRAJECTORY_GENERATION_IMAGE
 from scenegems_tool.cluster.node.jobs.job_types import artifact_input_fields, artifact_result_fields
-from scenegems_tool.cluster.protocol.artifacts import ArtifactRef, json_pointer, resolve_references, store_results
+from scenegems_tool.cluster.protocol.artifacts import ArtifactRef, is_reference, json_pointer, resolve_references, store_results
 from scenegems_tool.cluster.protocol.jobs import JobOutcome, JobType
 from scenegems_tool.cluster.protocol.messages import JobResult
-from scenegems_tool.persistence.schema import PipelineStage
+from scenegems_tool.persistence.schema import ArtifactHolderKind, PipelineStage
 from scenegems_tool.persistence.stores import AssuranceStores, JobStore, Lease, NodeStore
 from tests.scenegems_tool.cluster.payloads import trajectories_data
 from tests.scenegems_tool.persistence.stores.builders import make_hello
@@ -136,7 +137,16 @@ class FakeExecutor:
         result = RESULTS[stage](self, script, case, payload)
         if self.references:
             result = store_results(result, artifact_result_fields(job.job_type), self.artifacts.put)
+            self._record_uploads(job, result)
         return self._finish(lease, stage, key, JobOutcome.SUCCEEDED, result=result)
+
+    def _record_uploads(self, job, result: Mapping[str, Any]) -> None:
+        """What the master's artifact route does on an upload: the artifact's record and the job's reference to it."""
+        for declared in artifact_result_fields(job.job_type):
+            value = result.get(declared.name)
+            if is_reference(value):
+                self.stores.artifacts.insert_if_absent(value["sha256"], value["kind"], value["size_bytes"], value["media_type"])
+                self.stores.artifacts.add_reference(value["sha256"], ArtifactHolderKind.JOB, job.job_id, f"result:{declared.name}")
 
     def _finish(self, lease: Lease, stage: PipelineStage, key, outcome: JobOutcome, result: Optional[dict] = None, error: Optional[str] = None, retryable: bool = False) -> Report:
         job = lease.job
