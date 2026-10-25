@@ -18,12 +18,6 @@ compose_cmd() {
     fi
 }
 
-stamp_path_for_tag() {
-    local tag="$1"
-    local safe_tag="${tag//[:]/_}"
-    echo "$SCRIPT_DIR/.docker-stamps/${safe_tag}.sha256"
-}
-
 fingerprint_find_excluded_files() {
     local root="$1"
     find "$root" -type f \
@@ -70,47 +64,66 @@ dockerfile_uses_upstream_pins() {
     [ -n "$(upstream_pin_build_args "$1")" ]
 }
 
-docker_build_image() {
-    local tag="$1"
-    local dockerfile="$2"
-    local context_dir="$3"
-    local build_args=()
-    local arg
-    while IFS= read -r arg; do
-        build_args+=("$arg")
-    done < <(upstream_pin_build_args "$dockerfile")
-    docker build ${build_args[@]+"${build_args[@]}"} -f "$dockerfile" -t "$tag" "$context_dir"
+# Image fingerprints. A fingerprint is the sha256 of a sorted list of "relative path, content hash"
+# lines over the image's inputs, so the same commit gives the same value on every machine:
+# paths are relative to the repository root, text files are hashed with LF line endings (whatever
+# core.autocrlf checked out) and the order does not depend on the argument order or the locale.
+# The fingerprint is stored in the built image as a label, which is what a node reports.
+IMAGE_FINGERPRINT_LABEL="org.scenegems.fingerprint"
+
+# Prints the path relative to the repository root. Fails for a path outside the repository.
+fingerprint_relative_path() {
+    local path="$1"
+    path="${path#"$REPO_ROOT"/}"
+    path="${path#./}"
+    case "$path" in
+        /* | [A-Za-z]:*)
+            echo "Fingerprint input outside the repository: $1" >&2
+            return 1
+            ;;
+    esac
+    printf '%s\n' "$path"
 }
 
-fingerprint_docker_context() {
-    local dockerfile="$1"
-    local context_dir="$2"
-    {
-        sha256sum "$dockerfile"
-        if dockerfile_uses_upstream_pins "$dockerfile"; then
-            sha256sum "$UPSTREAM_PINS_FILE"
+# Prints the sorted, de-duplicated relative paths of the files in the files and folders given.
+fingerprint_input_files() {
+    local path rel
+    for path in "$@"; do
+        rel=$(fingerprint_relative_path "$path") || return 1
+        if [ -f "$rel" ]; then
+            printf '%s\n' "$rel"
+        elif [ -d "$rel" ]; then
+            fingerprint_find_excluded_files "$rel"
         fi
-        fingerprint_find_excluded_files "$context_dir" | LC_ALL=C sort | while IFS= read -r file; do
-            sha256sum "$file"
-        done
-    } | sha256sum | awk '{print $1}'
+    done | sed 's#^\./##' | LC_ALL=C sort -u
+}
+
+# Hashes the files listed on stdin in a few batched processes, not one process per file. Text
+# files (grep -I) go through sed as one stream, each introduced by its path, with CRLF turned
+# into LF; binary and empty files are hashed as they are, one "hash  path" line each.
+fingerprint_hash_files() {
+    local files binaries texts
+    files=$(cat)
+    [ -n "$files" ] || return 0
+    binaries=$(printf '%s\n' "$files" | xargs -d '\n' grep -IL '' || true)
+    texts=$(printf '%s\n' "$files" | grep -vxF -f <(printf '%s\n' "$binaries") || true)
+    echo "text"
+    if [ -n "$texts" ]; then
+        printf '%s\n' "$texts" | xargs -d '\n' sed -s -e '1F' -e 's/\r$//' | sha256sum | awk '{print $1}'
+    fi
+    echo "binary"
+    if [ -n "$binaries" ]; then
+        printf '%s\n' "$binaries" | xargs -d '\n' sha256sum | sed 's/^\([0-9a-f]*\) [ *]/\1  /'
+    fi
 }
 
 fingerprint_paths() {
-    local path
-    {
-        for path in "$@"; do
-            if [ -f "$path" ]; then
-                sha256sum "$path"
-            elif [ -d "$path" ]; then
-                fingerprint_find_excluded_files "$path" | LC_ALL=C sort | while IFS= read -r file; do
-                    sha256sum "$file"
-                done
-            fi
-        done
-    } | sha256sum | awk '{print $1}'
+    local files
+    files=$(fingerprint_input_files "$@") || return 1
+    printf '%s\n' "$files" | fingerprint_hash_files | sha256sum | awk '{print $1}'
 }
 
+# The Dockerfile, the given paths and, for an image that declares pins, the pins file.
 fingerprint_image_inputs() {
     local dockerfile="$1"
     shift
@@ -121,81 +134,67 @@ fingerprint_image_inputs() {
     fi
 }
 
+fingerprint_docker_context() {
+    fingerprint_image_inputs "$1" "$2"
+}
+
+docker_build_image() {
+    local tag="$1"
+    local dockerfile="$2"
+    local context_dir="$3"
+    local fingerprint="$4"
+    local build_args=()
+    local arg
+    while IFS= read -r arg; do
+        build_args+=("$arg")
+    done < <(upstream_pin_build_args "$dockerfile")
+    docker build ${build_args[@]+"${build_args[@]}"} --label "$IMAGE_FINGERPRINT_LABEL=$fingerprint"         -f "$dockerfile" -t "$tag" "$context_dir"
+}
+
 image_exists() {
     docker image inspect "$1" >/dev/null 2>&1
 }
 
-write_build_stamp() {
+# Prints the fingerprint stored in the image, empty when there is none.
+image_fingerprint_label() {
+    docker image inspect --format "{{ index .Config.Labels \"$IMAGE_FINGERPRINT_LABEL\" }}" "$1" 2>/dev/null | tr -d '\r\n'
+}
+
+# Builds the image unless it already carries this fingerprint. With DOCKER_FINGERPRINT_ONLY=1 it
+# prints "tag fingerprint" instead, which is how the fingerprints of a checkout are listed.
+build_with_fingerprint() {
     local tag="$1"
-    local fingerprint="$2"
-    local stamp_path
-    stamp_path=$(stamp_path_for_tag "$tag")
-    mkdir -p "$(dirname "$stamp_path")"
-    printf '%s\n' "$fingerprint" >"$stamp_path"
+    local dockerfile="$2"
+    local context_dir="$3"
+    local fingerprint="$4"
+
+    if [ "${DOCKER_FINGERPRINT_ONLY:-0}" = "1" ]; then
+        echo "$tag $fingerprint"
+        return
+    fi
+    if [ "${DOCKER_BUILD_SKIP_CHECK:-0}" = "1" ]; then
+        echo "Building $tag (--no-check)..."
+    elif [ "$(image_fingerprint_label "$tag")" = "$fingerprint" ]; then
+        echo "Image $tag is up to date."
+        return
+    else
+        echo "Building $tag..."
+    fi
+    docker_build_image "$tag" "$dockerfile" "$context_dir" "$fingerprint"
 }
 
 build_if_stale() {
     local tag="$1"
     local dockerfile="$2"
     local context_dir="$3"
-    local fingerprint stamp_path stored
-
-    if [ "${DOCKER_BUILD_SKIP_CHECK:-0}" = "1" ]; then
-        echo "Building $tag (--no-check)..."
-        docker_build_image "$tag" "$dockerfile" "$context_dir"
-        fingerprint=$(fingerprint_docker_context "$dockerfile" "$context_dir")
-        write_build_stamp "$tag" "$fingerprint"
-        return
-    fi
-
-    echo "Checking image $tag..."
-    fingerprint=$(fingerprint_docker_context "$dockerfile" "$context_dir")
-    stamp_path=$(stamp_path_for_tag "$tag")
-    stored=""
-    if [ -f "$stamp_path" ]; then
-        stored=$(tr -d '\r\n' <"$stamp_path")
-    fi
-
-    if [ "$fingerprint" = "$stored" ] && image_exists "$tag"; then
-        echo "Image $tag is up to date."
-        return
-    fi
-
-    echo "Building $tag..."
-    docker_build_image "$tag" "$dockerfile" "$context_dir"
-    write_build_stamp "$tag" "$fingerprint"
+    build_with_fingerprint "$tag" "$dockerfile" "$context_dir" "$(fingerprint_image_inputs "$dockerfile" "$context_dir")"
 }
 
 build_subsystem_if_stale() {
     local tag="$1"
     local dockerfile="$2"
     shift 2
-    local fingerprint stamp_path stored
-
-    if [ "${DOCKER_BUILD_SKIP_CHECK:-0}" = "1" ]; then
-        echo "Building $tag (--no-check)..."
-        docker_build_image "$tag" "$dockerfile" "$SCRIPT_DIR"
-        fingerprint=$(fingerprint_image_inputs "$dockerfile" "$@")
-        write_build_stamp "$tag" "$fingerprint"
-        return
-    fi
-
-    echo "Checking image $tag..."
-    fingerprint=$(fingerprint_image_inputs "$dockerfile" "$@")
-    stamp_path=$(stamp_path_for_tag "$tag")
-    stored=""
-    if [ -f "$stamp_path" ]; then
-        stored=$(tr -d '\r\n' <"$stamp_path")
-    fi
-
-    if [ "$fingerprint" = "$stored" ] && image_exists "$tag"; then
-        echo "Image $tag is up to date."
-        return
-    fi
-
-    echo "Building $tag..."
-    docker_build_image "$tag" "$dockerfile" "$SCRIPT_DIR"
-    write_build_stamp "$tag" "$fingerprint"
+    build_with_fingerprint "$tag" "$dockerfile" "$SCRIPT_DIR" "$(fingerprint_image_inputs "$dockerfile" "$@")"
 }
 
 require_image() {
