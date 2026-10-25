@@ -66,6 +66,7 @@ const clearedLoadedPlaybackState = {
   currentTimestamp: 0,
   playbackCursor: 0,
   latestTimestamp: 0,
+  scenarioTrajectoryLength: null as number | null,
   simulationInitialized: false,
   simulationInitializing: false,
   hasTrajectoryChunk: false,
@@ -123,6 +124,11 @@ export interface PlaybackState {
   /** Continuous simulation-time playhead (seconds); used for real-time playback speed. */
   playbackCursor: number;
   latestTimestamp: number;
+  /**
+   * Seconds of trajectory in the loaded scenario, as the backend reported it with
+   * `initial_state`. 0 is a bare scene (its initial scene only); null before any load.
+   */
+  scenarioTrajectoryLength: number | null;
   frames: SimulationFrame[];
   frameIndexByTimestamp: Record<number, number>;
   /** Async simulation trajectory (separate stream from animation). */
@@ -156,6 +162,7 @@ export interface PlaybackState {
   /** Follow the latest simulation trajectory frame without starting RAF playback. */
   followSimulationLive: () => void;
   setLatestTimestamp: (value: number) => void;
+  setScenarioTrajectoryLength: (value: number | null) => void;
   setActiveScenarioId: (id: string | null) => void;
   resetForNewScene: () => void;
   beginSimulationInitialization: () => void;
@@ -211,6 +218,7 @@ export const usePlaybackStore = create<PlaybackState>((set, get) => ({
   currentTimestamp: 0,
   playbackCursor: 0,
   latestTimestamp: 0,
+  scenarioTrajectoryLength: null,
   frames: [],
   frameIndexByTimestamp: {},
   hasSimulationTrajectoryChunk: false,
@@ -250,6 +258,7 @@ export const usePlaybackStore = create<PlaybackState>((set, get) => ({
     }),
   setLatestTimestamp: (value) =>
     set((state) => ({ latestTimestamp: Math.max(state.latestTimestamp, value) })),
+  setScenarioTrajectoryLength: (value) => set({ scenarioTrajectoryLength: value }),
   setActiveScenarioId: (id) => set({ activeScenarioId: id }),
   resetForNewScene: () => set(clearedLoadedPlaybackState),
   beginSimulationInitialization: () =>

@@ -457,6 +457,8 @@ export type ParsedServerMessage =
       requestId: string | null;
       trajectoryData: Record<string, unknown> | null;
       valid: boolean;
+      /** False for the best partial path of a search that ended without a complete one; null when the backend does not say. */
+      complete: boolean | null;
       errorMessage: string | null;
     }
   | {
@@ -687,6 +689,7 @@ export function parseServerMessage(raw: unknown): ParsedServerMessage {
           ? (trajectoryData as Record<string, unknown>)
           : null,
       valid: Boolean(payload.valid ?? false),
+      complete: typeof payload.complete === "boolean" ? payload.complete : null,
       errorMessage: (payload.errorMessage ?? payload.error_message ?? null) as string | null,
     };
   }

@@ -228,4 +228,13 @@ describe("playbackStore", () => {
     expect(state.frames).toHaveLength(sampleFrames.length);
     expect(state.latestTimestamp).toBe(199);
   });
+
+  it("keeps the trajectory length the backend reported until a new scene replaces it", () => {
+    const { setScenarioTrajectoryLength, resetForNewScene } = usePlaybackStore.getState();
+    expect(usePlaybackStore.getState().scenarioTrajectoryLength).toBeNull();
+    setScenarioTrajectoryLength(0);
+    expect(usePlaybackStore.getState().scenarioTrajectoryLength).toBe(0);
+    resetForNewScene();
+    expect(usePlaybackStore.getState().scenarioTrajectoryLength).toBeNull();
+  });
 });

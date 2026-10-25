@@ -333,3 +333,29 @@ describe("parseServerMessage", () => {
     }
   });
 });
+
+describe("trajectory_generation_result", () => {
+  const result = {
+    type: "trajectory_generation_result",
+    requestId: "r1",
+    trajectoryData: { trajectories: { scene_list: [], time_step: 15 } },
+    valid: true,
+    errorMessage: null,
+  };
+
+  it("reads complete when the backend sends it", () => {
+    const partial = parseServerMessage({ ...result, complete: false });
+    const complete = parseServerMessage({ ...result, complete: true });
+    expect(partial.kind === "trajectory_generation_result" && partial.complete).toBe(false);
+    expect(complete.kind === "trajectory_generation_result" && complete.complete).toBe(true);
+  });
+
+  it("leaves complete unknown when the backend does not send it", () => {
+    const msg = parseServerMessage(result);
+    expect(msg.kind).toBe("trajectory_generation_result");
+    if (msg.kind === "trajectory_generation_result") {
+      expect(msg.complete).toBeNull();
+      expect(msg.valid).toBe(true);
+    }
+  });
+});
