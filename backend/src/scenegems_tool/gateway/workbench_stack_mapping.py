@@ -3,12 +3,14 @@
 The browser still sends the pre-adapter fields: one global simulatorType and a per-agent
 controlMode. Inside the backend these become a (ASV software, control layer, simulation
 layer) triple per vessel. Every Docker-based workbench stack runs the ardupilot control
-layer. The labels sent back (simulation_models, the scenario execution worker body) are the
+layer, and autonomous vessels select the ArduAgent follower, not the registry's default
+lockstep MAVLink link, because the workbench reaches its vessels over WARA-PS MQTT. The labels sent back (simulation_models, the scenario execution worker body) are the
 ones the browser offers, so the round trip is unchanged.
 """
 
-from typing import Dict
+from typing import Dict, Tuple
 
+from scenegems_tool.vessel_stack.asv_software.replay.replay_specs import REPLAY_ARDUAGENT_FOLLOWER
 from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, SimulationLayerId
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import VesselStackConfig
 
@@ -21,6 +23,9 @@ _SIMULATOR_TYPE_LABELS: Dict[SimulationLayerId, str] = {
 _CONTROL_MODE_LABELS: Dict[AsvSoftwareId, str] = {
     AsvSoftwareId.REPLAY: "autonomous",
     AsvSoftwareId.MISSION_PLANNER: "external",
+}
+_WORKBENCH_ADAPTER_IDS: Dict[AsvSoftwareId, Tuple[str, ...]] = {
+    AsvSoftwareId.REPLAY: (REPLAY_ARDUAGENT_FOLLOWER.id,),
 }
 
 
@@ -49,6 +54,12 @@ def control_mode_label(asv_software: AsvSoftwareId) -> str:
     if asv_software not in _CONTROL_MODE_LABELS:
         raise ValueError(f"ASV software {asv_software.value} has no workbench controlMode.")
     return _CONTROL_MODE_LABELS[asv_software]
+
+
+def workbench_adapter_ids(control_mode: str) -> Tuple[str, ...]:
+    """Adapters the workbench selects: it drives its vessels through ArduAgent over WARA-PS MQTT,
+    while the registry's default from replay to ardupilot is the lockstep MAVLink link."""
+    return _WORKBENCH_ADAPTER_IDS.get(asv_software_from_control_mode(control_mode), ())
 
 
 def workbench_stack(simulator_type: str, control_mode: str) -> VesselStackConfig:

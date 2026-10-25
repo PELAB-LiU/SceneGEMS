@@ -9,7 +9,7 @@ from functools import lru_cache
 from typing import Mapping, Optional
 
 from scenegems_tool.vessel_stack.asv_software.mission_planner.mission_planner_specs import MISSION_PLANNER_LAYER, MISSION_PLANNER_MAVLINK_PORT
-from scenegems_tool.vessel_stack.asv_software.replay.replay_specs import REPLAY_ARDUAGENT_FOLLOWER, REPLAY_LAYER, REPLAY_STATE_FOLLOWER
+from scenegems_tool.vessel_stack.asv_software.replay.replay_specs import REPLAY_ARDUAGENT_FOLLOWER, REPLAY_LAYER, REPLAY_MAVLINK_LOCKSTEP, REPLAY_STATE_FOLLOWER, mavlink_link_runtime
 from scenegems_tool.vessel_stack.asv_software.usv_navigation.usv_navigation_specs import USV_NAVIGATION_IN_PROCESS, USV_NAVIGATION_LAYER
 from scenegems_tool.vessel_stack.contracts.adapter_spec import AdapterSpec, LayerSpec, SpecStatus, UnsupportedConnection
 from scenegems_tool.vessel_stack.contracts.ports import Port
@@ -151,6 +151,7 @@ def build_registry(measurements: Optional[Mapping[str, CapabilityMeasurement]] =
     registry.register_adapter(REPLAY_STATE_FOLLOWER, runtime=_replay_follower)
     registry.register_adapter(USV_NAVIGATION_IN_PROCESS, runtime=_usv_navigation_participant)
     registry.register_adapter(REPLAY_ARDUAGENT_FOLLOWER)
+    registry.register_adapter(REPLAY_MAVLINK_LOCKSTEP, runtime=mavlink_link_runtime, default=True)
     registry.register_adapter(MISSION_PLANNER_MAVLINK_PORT)
     registry.register_adapter(KINEMATIC_COMMAND_INPUT)
     registry.register_adapter(SITL_INTERNAL_PHYSICS)

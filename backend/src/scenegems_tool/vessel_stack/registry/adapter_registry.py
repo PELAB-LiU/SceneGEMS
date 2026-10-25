@@ -1,6 +1,6 @@
 """Registry of layer specs, adapter specs, ruled-out connections and runtime bindings."""
 
-from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Tuple, TypeVar
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Set, Tuple, TypeVar
 
 from scenegems_tool.vessel_stack.contracts.adapter_spec import AdapterSpec, LayerSpec, UnsupportedConnection
 from scenegems_tool.vessel_stack.contracts.roles import LayerRef
@@ -17,7 +17,8 @@ class AdapterRegistry:
     def __init__(self, measurements: Optional[Mapping[str, CapabilityMeasurement]] = None):
         self._measurements: Dict[str, CapabilityMeasurement] = dict(measurements or {})
         self._layers: Dict[LayerRef, LayerSpec] = {}
-        self._adapters: Dict[_Connection, AdapterSpec] = {}
+        self._adapters: Dict[_Connection, AdapterSpec] = {}  # the default adapter of each connection
+        self._alternatives: Dict[_Connection, List[AdapterSpec]] = {}  # every adapter of each connection, default first
         self._adapters_by_id: Dict[str, AdapterSpec] = {}
         self._unsupported: Dict[_Connection, UnsupportedConnection] = {}
         self._spec_ids: Set[str] = set()
@@ -30,15 +31,23 @@ class AdapterRegistry:
         self._bind(spec.id, runtime)
         return spec
 
-    def register_adapter(self, spec: AdapterSpec, runtime: Optional[RuntimeLoader] = None) -> AdapterSpec:
+    def register_adapter(self, spec: AdapterSpec, runtime: Optional[RuntimeLoader] = None, *, default: Optional[bool] = None) -> AdapterSpec:
+        """Register an adapter. A second adapter on the same connection must say whether it
+        becomes the default (default=True) or is an alternative a vessel selects by id
+        (default=False, see VesselConfig.adapter_ids)."""
         connection = (spec.source, spec.target)
-        if connection in self._adapters:
-            raise ValueError(f"Adapters {self._adapters[connection].id} and {spec.id} both connect {spec.source} to {spec.target}")
+        if connection in self._adapters and default is None:
+            raise ValueError(f"Adapters {self._adapters[connection].id} and {spec.id} both connect {spec.source} to {spec.target}; pass default=True or default=False")
         if connection in self._unsupported:
             raise ValueError(f"Adapter {spec.id} connects {spec.source} to {spec.target}, which is declared unsupported")
         self._claim_id(spec.id)
         spec = self._measured(spec)
-        self._adapters[connection] = spec
+        connection_adapters = self._alternatives.setdefault(connection, [])
+        if connection not in self._adapters or default:
+            self._adapters[connection] = spec
+            connection_adapters.insert(0, spec)
+        else:
+            connection_adapters.append(spec)
         self._adapters_by_id[spec.id] = spec
         self._bind(spec.id, runtime)
         return spec
@@ -57,8 +66,20 @@ class AdapterRegistry:
     def layer(self, ref: LayerRef) -> Optional[LayerSpec]:
         return self._layers.get(ref)
 
-    def adapter_between(self, source: LayerRef, target: LayerRef) -> Optional[AdapterSpec]:
+    def adapter_between(self, source: LayerRef, target: LayerRef, adapter_ids: Iterable[str] = ()) -> Optional[AdapterSpec]:
+        """The adapter of a connection: the first of adapter_ids that connects it, else the default."""
+        for adapter_id in adapter_ids:
+            spec = self._adapters_by_id.get(adapter_id)
+            if spec is not None and (spec.source, spec.target) == (source, target):
+                return spec
         return self._adapters.get((source, target))
+
+    def adapters_between(self, source: LayerRef, target: LayerRef) -> List[AdapterSpec]:
+        """Every adapter of a connection, the default first."""
+        return list(self._alternatives.get((source, target), ()))
+
+    def has_adapter(self, adapter_id: str) -> bool:
+        return adapter_id in self._adapters_by_id
 
     def unsupported_between(self, source: LayerRef, target: LayerRef) -> Optional[UnsupportedConnection]:
         return self._unsupported.get((source, target))
@@ -72,7 +93,7 @@ class AdapterRegistry:
 
     @property
     def adapters(self) -> List[AdapterSpec]:
-        return list(self._adapters.values())
+        return list(self._adapters_by_id.values())
 
     def measurement(self, spec_id: str) -> Optional[CapabilityMeasurement]:
         return self._measurements.get(spec_id)

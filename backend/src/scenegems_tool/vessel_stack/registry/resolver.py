@@ -1,7 +1,9 @@
 """Resolver: does a stack combination exist, what does it support, and is a request valid on it.
 
 For a requested (ASV software, control layer, simulation layer) the resolver looks up the
-two adapters that connect the three layers. A missing adapter makes the combination
+two adapters that connect the three layers. Where several adapters connect the same two
+layers, the registry's default is taken unless the vessel selects another one by id
+(VesselConfig.adapter_ids). A missing adapter makes the combination
 unavailable, with the reason of the ruled-out connection when the design declares one.
 When the chain exists, its capabilities are the weakest link over its three layers and two
 adapters. A request (environment, speedup, attended or not) is then checked against them:
@@ -14,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from scenegems_tool.vessel_stack.contracts.adapter_spec import AdapterSpec, AnySpec, SpecStatus
 from scenegems_tool.vessel_stack.contracts.capabilities import Capabilities, EnvironmentSupport, RepeatabilityTier, weakest_link
-from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, LayerRef, SimulationLayerId
+from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, LayerRef, Role, SimulationLayerId
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import EnvironmentConfig, SimulationInstanceConfig, VesselStackConfig
 from scenegems_tool.vessel_stack.registry.adapter_registry import AdapterRegistry
 
@@ -43,6 +45,11 @@ class ChainResolution:
     @property
     def adapters(self) -> Tuple[AdapterSpec, ...]:
         return tuple(spec for spec in self.specs if isinstance(spec, AdapterSpec))
+
+    @property
+    def asv_adapter(self) -> Optional[AdapterSpec]:
+        """The adapter from the ASV software to the control layer, which decides how the ASV software is run."""
+        return next((adapter for adapter in self.adapters if adapter.from_role == Role.ASV_SOFTWARE), None)
 
     @property
     def capabilities(self) -> Optional[Capabilities]:
@@ -120,12 +127,20 @@ class StackResolver:
     def __init__(self, registry: AdapterRegistry):
         self.registry = registry
 
-    def resolve(self, stack: VesselStackConfig) -> ChainResolution:
+    def resolve(self, stack: VesselStackConfig, adapter_ids: Iterable[str] = ()) -> ChainResolution:
+        """Resolve one triple. adapter_ids selects alternatives to the default adapter of a connection."""
+        adapter_ids = tuple(adapter_ids)
         refs = (LayerRef.of(stack.asv_software), LayerRef.of(stack.control_layer), LayerRef.of(stack.simulation_layer))
         connections = tuple(zip(refs, refs[1:]))
         layers = [self.registry.layer(ref) for ref in refs]
-        adapters = [self.registry.adapter_between(upper, lower) for upper, lower in connections]
+        adapters = [self.registry.adapter_between(upper, lower, adapter_ids) for upper, lower in connections]
         reasons = [f"{ref} is not registered" for ref, layer in zip(refs, layers) if layer is None]
+        for adapter_id in adapter_ids:
+            if not self.registry.has_adapter(adapter_id):
+                reasons.append(f"adapter {adapter_id} is not registered")
+            elif all(adapter is None or adapter.id != adapter_id for adapter in adapters):
+                selected = self.registry.adapter(adapter_id)
+                reasons.append(f"adapter {adapter_id} connects {selected.source} to {selected.target}, which is not part of ({stack})")
         for (upper, lower), adapter in zip(connections, adapters):
             if adapter is None:
                 unsupported = self.registry.unsupported_between(upper, lower)
@@ -152,7 +167,7 @@ class StackResolver:
         for agent_id, vessel in instance.simulated_vessels.items():
             if vessel.stack.simulation_layer != instance.simulation_layer:
                 errors.append(f"vessel {agent_id} uses simulation layer {vessel.stack.simulation_layer.value}, but all vessels of one instance share {instance.simulation_layer.value}")
-            chain = self.resolve(vessel.stack)
+            chain = self.resolve(vessel.stack, vessel.adapter_ids)
             chains[agent_id] = chain
             if not chain.available:
                 errors.append(f"vessel {agent_id} ({vessel.stack}): {chain.reason}")

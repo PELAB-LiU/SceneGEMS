@@ -8,8 +8,9 @@ from concrete_level.models.trajectories import Trajectories
 from concrete_level.trajectory_generation.scene_builder import SceneBuilder
 from scenegems_tool.vessel_stack.asv_software.replay.replay_mission import cap_mission_trajectories, replay_mission_waypoints
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import SimulationInstanceConfig
-from scenegems_tool.vessel_stack.control_layers.ardupilot.arduagent_control_mode import arduagent_control_mode
+from scenegems_tool.vessel_stack.control_layers.ardupilot.arduagent_control_mode import ARDUAGENT_ADAPTER_IDS, arduagent_control_mode
 from scenegems_tool.vessel_stack.registry.catalog import default_resolver
+from scenegems_tool.vessel_stack.registry.resolver import StackUnavailableError
 from scenegems_tool.vessel_stack.simulation_docker_stack import (
     _STANDALONE_COMPOSE_FILENAME,
     SIMULATION_COMPOSE_PROJECT,
@@ -54,6 +55,15 @@ class SimulationParser:
         resolution = default_resolver().require_instance(simulation_config)
         for warning in resolution.warnings:
             _logger.warning("Simulation stack: %s", warning)
+        # This parser drives vessels through ArduAgent over MQTT. Vessels on the lockstep MAVLink
+        # adapter have no ArduAgent; control_layers/ardupilot/mavlink_lockstep_runner.py runs them.
+        not_arduagent = [
+            f"vessel {agent_id} uses {chain.asv_adapter.id if chain.asv_adapter else 'no adapter'}"
+            for agent_id, chain in resolution.chains.items()
+            if chain.asv_adapter is None or chain.asv_adapter.id not in ARDUAGENT_ADAPTER_IDS
+        ]
+        if not_arduagent:
+            raise StackUnavailableError([f"the scenario execution worker drives vessels only through ArduAgent: {', '.join(not_arduagent)}"])
         mission_trajectories = cap_mission_trajectories(trajectories)
 
         pending_writes = None
@@ -141,5 +151,6 @@ class SimulationParser:
             destroy_simulation_docker_stack()
 
     @property
-    def clock(self) -> float:
-        return max(client.clock for client in self.clients)
+    def simulator_clocks(self) -> List[float]:
+        """Simulated time each ArduAgent reports from its SITL (SYSTEM_TIME), in seconds; 0 until the first report."""
+        return [client.clock for client in self.clients]
