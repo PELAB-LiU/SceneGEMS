@@ -1,0 +1,31 @@
+# Overrides of the parametric Gazebo vessel model (simulation_layers/gazebo/generators/vessel_dynamics.py).
+#
+# By default every value follows the vessel's dimensions and limits. An entry here replaces
+# individual values for one vessel type (by ConcreteVessel.type) or one vessel id; the id entry
+# wins key by key. Every *.yaml file in this folder is read; an entry may appear in one file only.
+# Unknown keys fail the stack generation.
+#
+# Assumption keys (replaced before the derivation, so everything derived from them follows):
+#   block_coefficient, com_depth_ratio, thruster_mass_ratio, thruster_beam_ratio, thruster_aft_ratio,
+#   propeller_kt, resistance_coefficient, cross_flow_drag_coefficient, linear_damping_share,
+#   control_margin, surge_added_mass_ratio, added_mass_cap, heave_damping_ratio,
+#   roll_pitch_damping_ratio, air_drag_coefficient, wind_reference_speed
+#
+# Value keys (replaced after the derivation, nothing else is recomputed), SI units:
+#   hull_mass, com_z, hull_ixx, hull_iyy, hull_izz,
+#   collision_length, collision_breadth, collision_height, collision_z,
+#   windage_mass, windage_z,
+#   thruster_mass, thruster_x, thruster_y, thruster_z, propeller_diameter, motor_length,
+#   max_thrust, thrust_coefficient,
+#   xDotU, yDotV, zDotW, nDotR, xU, yV, zW, kP, mQ, nR, xUabsU, yVabsV, nRabsR
+#
+# Example:
+#   vessel_types:
+#     CargoShip:
+#       block_coefficient: 0.75
+#   vessel_ids:
+#     3:
+#       max_thrust: 250000
+
+vessel_types: {}
+vessel_ids: {}

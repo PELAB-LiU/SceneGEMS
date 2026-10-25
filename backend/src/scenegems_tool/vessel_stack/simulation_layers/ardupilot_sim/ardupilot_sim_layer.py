@@ -19,7 +19,7 @@ class ArduPilotSimLayer:
         self._unused_gazebo_files = GazeboWorldFiles()
 
     def add_vessel(self, artifacts: DockerStackArtifacts, request: DockerStackRequest, vessel_config: VesselConfig, vessel: ConcreteVessel, state: ActorState) -> None:
-        self._unused_gazebo_files.add_vessel_model(artifacts, vessel_config, vessel, state)
+        self._unused_gazebo_files.add_vessel_model(artifacts, request, vessel_config, vessel, state)
 
     def finish(self, artifacts: DockerStackArtifacts, request: DockerStackRequest) -> None:
         self._unused_gazebo_files.add_world(artifacts, request)

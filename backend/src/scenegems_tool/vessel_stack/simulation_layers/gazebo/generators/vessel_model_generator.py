@@ -1,367 +1,247 @@
+"""SDF of one generated vessel: a parametric twin-thrust hull (vessel_dynamics.py) in one of two variants.
+
+- control layer ardupilot: the ArduPilotPlugin turns SITL servo outputs into thrust commands
+  (JSON lockstep backend) and reads the IMU.
+- control layer custom: no ArduPilotPlugin. A controller publishes gz.msgs.Double thrust in N on
+  /model/<name>/joint/motor_port_joint/cmd_thrust and .../motor_stbd_joint/cmd_thrust, and reads
+  gz.msgs.Odometry on /model/<name>/odometry.
+"""
+
+from typing import Mapping, Optional
+
 import numpy as np
 
 from concrete_level.models.concrete_actors import ConcreteVessel
-from scenegems_tool.vessel_stack.simulation_layers.gazebo.generators.hydrodynamics import calculate_hydrodynamics
-from scenegems_tool.vessel_stack.simulation_layers.gazebo.generators.thrust_calculation import calculate_thrust_coefficient, calculate_thrust_multiplier
+from scenegems_tool.vessel_stack.contracts.roles import ControlLayerId
+from scenegems_tool.vessel_stack.contracts.vessel_stack_config import EnvironmentConfig
+from scenegems_tool.vessel_stack.simulation_layers.gazebo.gazebo_specs import wave_forces_enabled
+from scenegems_tool.vessel_stack.simulation_layers.gazebo.generators.thrust_calculation import ardupilot_thrust_multiplier
+from scenegems_tool.vessel_stack.simulation_layers.gazebo.generators.vessel_dynamics import BUOYANCY_GRID, VesselDynamics, derive_vessel_dynamics
+from scenegems_tool.vessel_stack.simulation_layers.gazebo.generators.vessel_dynamics_overrides import load_vessel_dynamics_overrides
+
+GAZEBO_MODEL_CONTROL_LAYERS = (ControlLayerId.ARDUPILOT, ControlLayerId.CUSTOM)
+ODOMETRY_RATE_HZ = 50
 
 
-def generate_vessel_model(vessel: ConcreteVessel, agent_name: str) -> str:
-    fdm_port_in = 9000 + int(vessel.id) * 10 + 2
+def _f(value: float) -> str:
+    """Plain decimal with up to 6 significant digits (no exponent, which keeps the SDF readable)."""
+    return np.format_float_positional(float(value), precision=6, unique=False, fractional=False, trim="-")
 
-    # Fixing variables for stability
-    length = 5.0
-    breadth = length * 0.5
-    height = length * 0.15
-    draft = height * 0.4
-    block_coefficient = 0.6
-    total_mass = 1025 * block_coefficient * length * breadth * draft
-    # rudder_mass = mass * 0.01
-    rudder_mass = 0.0
-    r_l, r_b, r_h = length * 0.02, 0.1, height * 0.8
-    thruster_mass = total_mass * 0.001
-    mass = total_mass - 2 * thruster_mass
-    prop_diameter = draft * 0.6
-    motor_length = prop_diameter * 1.5
 
-    vessel = ConcreteVessel(
-        id=vessel.id,
-        type=vessel.name,
-        length=length,
-        breadth=breadth,
-        height=height,
-        draft=draft,
-        safety_radius=vessel.safety_radius,
-        _is_os=vessel.is_os,
-        _rudder_mass=rudder_mass,
-        _rudder_length=r_l,
-        _rudder_width=r_b,
-        _rudder_height=r_h,
-        _propeller_diameter=prop_diameter,
-        _thruster_mass=thruster_mass,
-        _motor_length=motor_length,
-        _max_speed=vessel.max_speed,
-        _max_angular_speed=vessel.max_angular_speed,
-        _max_acceleration=vessel.max_acceleration,
-        mass=mass,
+def _inertia(ixx: float, iyy: float, izz: float) -> str:
+    return f"<ixx>{_f(ixx)}</ixx><iyy>{_f(iyy)}</iyy><izz>{_f(izz)}</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>"
+
+
+def generate_vessel_model(
+    vessel: ConcreteVessel,
+    agent_name: str,
+    control_layer: ControlLayerId = ControlLayerId.ARDUPILOT,
+    environment: Optional[EnvironmentConfig] = None,
+    overrides: Optional[Mapping[str, float]] = None,
+) -> str:
+    """Model of one vessel. The environment sets the windage linearization and whether the hull carries
+    the wave-aware buoyancy; overrides default to the vessel_dynamics files' entries for this vessel."""
+    if overrides is None:
+        overrides = load_vessel_dynamics_overrides().for_vessel(vessel)
+    wind_speed = float(np.linalg.norm(environment.wind_vector)) if environment is not None else 0.0
+    dynamics = derive_vessel_dynamics(vessel, wind_speed, overrides)
+    return render_vessel_model(dynamics, agent_name, int(vessel.id), control_layer, wave_forces_enabled(environment))
+
+
+def render_vessel_model(d: VesselDynamics, agent_name: str, vessel_id: int, control_layer: ControlLayerId, wave_forces: bool = False) -> str:
+    if control_layer not in GAZEBO_MODEL_CONTROL_LAYERS:
+        raise ValueError(f"No Gazebo vessel model for control layer {control_layer.value}; supported: {[layer.value for layer in GAZEBO_MODEL_CONTROL_LAYERS]}")
+    ardupilot = control_layer == ControlLayerId.ARDUPILOT
+    freeboard = d.height - d.draft
+    thruster_radius = d.propeller_diameter / 2.0
+    thruster_ixx = 0.5 * d.thruster_mass * thruster_radius**2
+    thruster_iyy = d.thruster_mass / 12.0 * (3.0 * thruster_radius**2 + d.motor_length**2)
+    windage_ixx = d.windage_mass / 12.0 * (d.breadth**2 + freeboard**2)
+    windage_iyy = d.windage_mass / 12.0 * (d.length**2 + freeboard**2)
+    windage_izz = d.windage_mass / 12.0 * (d.length**2 + d.breadth**2)
+
+    cell_length, cell_breadth = d.collision_length / BUOYANCY_GRID, d.collision_breadth / BUOYANCY_GRID
+    offsets = [(i - (BUOYANCY_GRID - 1) / 2.0) for i in range(BUOYANCY_GRID)]
+    collisions = "".join(f"""
+      <collision name="collision_hull_{i}_{j}">
+        <pose>{_f(dx * cell_length)} {_f(dy * cell_breadth)} {_f(d.collision_z)} 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>{_f(cell_length)} {_f(cell_breadth)} {_f(d.collision_height)}</size>
+          </box>
+        </geometry>
+      </collision>""" for i, dx in enumerate(offsets) for j, dy in enumerate(offsets))
+
+    imu_sensor = (
+        """
+      <sensor name="imu_sensor" type="imu">
+        <pose degrees="true">0 0 0 180 0 0</pose>
+        <always_on>1</always_on>
+        <update_rate>100.0</update_rate>
+      </sensor>"""
+        if ardupilot
+        else ""
     )
 
-    # ============================================================
-    # GEOMETRY DEFINITIONS
-    # ============================================================
-    # Coordinate convention:
-    # z = 0  -> waterline
-    # +z     -> above water
-    # -z     -> below water
-    draft = vessel.draft
-    freeboard = vessel.visible_height
-    total_height = draft + freeboard
-    # ============================================================
-    # CENTER OF MASS
-    # ============================================================
-    # Slightly below waterline for roll stability
-    # ~10-20% of draft is usually sufficient.
-    # Move CoM up closer to the actual submerged volume center
-    com_z = -draft * 1.5
-    com_x = vessel.length / 2 * 0.1  # Keep slight rearward weight bias
-    # ============================================================
-    # COLLISION HULL (SUBMERGED VOLUME)
-    # ============================================================
-    collision_hull_size = np.array([vessel.length, vessel.breadth, draft])
-    # Box centered halfway below waterline
-    collision_hull_pose_z = -draft * 0.5
-    # ============================================================
-    # VISUAL HULL (FULL SHIP BODY)
-    # ============================================================
-    visual_hull_size = np.array([vessel.length, vessel.breadth, total_height])
-    # Center full hull around waterline
-    #
-    # Example:
-    # draft = 1.2
-    # freeboard = 1.8
-    #
-    # hull extends:
-    #   +1.8 above water
-    #   -1.2 below water
-    #
-    visual_hull_pose_z = (freeboard - draft) * 0.5
+    def thruster(side: str, y: float) -> str:
+        return f"""
+    <link name="motor_{side}_link">
+      <pose>{_f(d.thruster_x)} {_f(y)} {_f(d.thruster_z)} 0 0 0</pose>
+      <inertial>
+        <mass>{_f(d.thruster_mass)}</mass>
+        <inertia>{_inertia(thruster_ixx, thruster_iyy, thruster_iyy)}</inertia>
+      </inertial>
+    </link>
+    <joint name="motor_{side}_joint" type="revolute">
+      <parent>base_link</parent>
+      <child>motor_{side}_link</child>
+      <axis>
+        <xyz>1 0 0</xyz> <!-- thrust direction for the Thruster system -->
+      </axis>
+    </joint>
+    <plugin filename="gz-sim-thruster-system" name="gz::sim::systems::Thruster">
+      <joint_name>motor_{side}_joint</joint_name>
+      <thrust_coefficient>{_f(d.thrust_coefficient)}</thrust_coefficient>
+      <fluid_density>1025</fluid_density>
+      <propeller_diameter>{_f(d.propeller_diameter)}</propeller_diameter>
+      <velocity_control>0</velocity_control>
+      <use_angvel_cmd>0</use_angvel_cmd>
+      <max_thrust_cmd>{_f(d.max_thrust)}</max_thrust_cmd>
+      <min_thrust_cmd>{_f(-d.max_thrust)}</min_thrust_cmd>
+    </plugin>"""
 
-    # Place thrusters at the stern (95% back) and inset from the sides (80% of width)
-    thruster_x = -(vessel.length / 2) * 0.9
-    thruster_y = (vessel.breadth / 2) * 0.8
-    thruster_z = com_z
+    wave_buoyancy = (
+        f"""
 
-    # Hull Inertia
-    # Roll : set it moderate
-    hull_ixx = 1 / 12 * vessel.mass * (vessel.breadth**2 + vessel.height**2)
-    # Pitch: set it large
-    hull_iyy = 1 / 12 * vessel.mass * (vessel.height**2 + vessel.length**2)
-    # Yaw : set it huge
-    hull_izz = 1 / 12 * vessel.mass * (vessel.length**2 + vessel.breadth**2)
+    <!-- Wave-aware buoyancy (asv_wave_sim, its system renamed WavesHydrodynamics in the Gazebo image so it
+         loads next to the gz-sim Hydrodynamics system, which keeps the damping and added mass). -->
+    <plugin filename="gz-waves1-hydrodynamics-system" name="gz::sim::systems::WavesHydrodynamics">
+      <enable>{agent_name}::base_link</enable>
+      <hydrodynamics>
+        <damping_on>0</damping_on>
+        <viscous_drag_on>0</viscous_drag_on>
+        <pressure_drag_on>0</pressure_drag_on>
+      </hydrodynamics>
+    </plugin>"""
+        if wave_forces
+        else ""
+    )
 
-    # Thrusters Inertia
-    thruster_radius = vessel.propeller_diameter / 2
-    thruster_ixx = 0.5 * vessel.thruster_mass * (thruster_radius**2)
-    thruster_iyy = (vessel.thruster_mass / 12.0) * (3 * thruster_radius**2 + vessel.motor_length**2)
-    thruster_izz = thruster_iyy
+    ardupilot_plugin = ""
+    if ardupilot:
+        fdm_port_in = 9000 + vessel_id * 10 + 2
+        multiplier = _f(ardupilot_thrust_multiplier(d.max_thrust))
+        ardupilot_plugin = f"""
+    <plugin filename="ArduPilotPlugin" name="ArduPilotPlugin">
+      <robotNamespace>{agent_name}</robotNamespace>
+      <connectionTimeoutMaxCount>5</connectionTimeoutMaxCount>
+      <lock_step>1</lock_step>
+      <fdm_addr>0.0.0.0</fdm_addr>
+      <fdm_port_in>{fdm_port_in}</fdm_port_in>
+      <!-- Match ardupilot_gazebo iris: ENU world + FLU hull to NED / aircraft body. -->
+      <modelXYZToAirplaneXForwardZDown>0 0 0 3.141592653589793 0 0</modelXYZToAirplaneXForwardZDown>
+      <gazeboXYZToNED>0 0 0 3.141592653589793 0 1.5707963267948966</gazeboXYZToNED>
+      <imuName>imu_sensor</imuName>
+      <!-- Port motor, SERVO1_FUNCTION 73 (ThrottleLeft). PWM 1000 to 2000 is full astern to full ahead. -->
+      <control channel="0">
+        <jointName>motor_port_joint</jointName>
+        <type>COMMAND</type>
+        <cmd_topic>/model/{agent_name}/joint/motor_port_joint/cmd_thrust</cmd_topic>
+        <multiplier>{multiplier}</multiplier>
+        <offset>-0.5</offset>
+        <servo_min>1000</servo_min>
+        <servo_max>2000</servo_max>
+      </control>
+      <!-- Starboard motor, SERVO3_FUNCTION 74 (ThrottleRight). -->
+      <control channel="2">
+        <jointName>motor_stbd_joint</jointName>
+        <type>COMMAND</type>
+        <cmd_topic>/model/{agent_name}/joint/motor_stbd_joint/cmd_thrust</cmd_topic>
+        <multiplier>{multiplier}</multiplier>
+        <offset>-0.5</offset>
+        <servo_min>1000</servo_min>
+        <servo_max>2000</servo_max>
+      </control>
+    </plugin>"""
 
-    hydro = calculate_hydrodynamics(vessel, hull_izz)
-    # added mass
-    xDotU = hydro["xDotU"]
-    yDotV = hydro["yDotV"]
-    zDotW = hydro["zDotW"]
-    nDotR = hydro["nDotR"]
-
-    # linear damping
-    xU = hydro["xU"]
-    yV = hydro["yV"]
-    zW = hydro["zW"]
-    nR = hydro["nR"]
-
-    # quadratic damping
-    xUU = hydro["xUU"]
-    yVV = hydro["yVV"]
-    zWW = hydro["zWW"]
-    nRR = hydro["nRR"]
-
-    hydro1 = f""" 
-<!-- use only if we want gazebo to automatically calculate Fossen matrix -->
-<hydrodynamics>
-      <damping_on>1</damping_on>
-      <viscous_drag_on>1</viscous_drag_on>
-      <pressure_drag_on>1</pressure_drag_on>
-</hydrodynamics>  
-
-<nR>{nR}</nR>
-<nDotR>{nDotR}</nDotR>
-<nRabsR>{nRR}</nRabsR>
-<yVabsV>{yVV}</yVabsV>
-<yDotV>{yDotV}</yDotV>
-<yV>{yV}</yV>
-"""
-
-    hydro2 = f"""
-<!-- Added mass -->
-<xDotU>{xDotU}</xDotU>
-<yDotV>{yDotV}</yDotV>
-<zDotW>{zDotW}</zDotW>
-<nDotR>{nDotR}</nDotR>
-
-<!-- Linear damping -->
-<xU>{xU}</xU>
-<yV>{yV}</yV>
-<zW>{zW}</zW>
-<nR>{nR}</nR>
-
-<!-- Quadratic damping -->
-<xUabsU>{xUU}</xUabsU>
-<yVabsV>{yVV}</yVabsV>
-<zWabsW>{zWW}</zWabsW>
-<nRabsR>{nRR}</nRabsR>
-"""
-
-    hydro3 = f"""
-<xDotU>-115.0</xDotU>
-<yDotV>-1500.5</yDotV>
-<zDotW>-1150.8</zDotW>
-<nDotR>-5000.0</nDotR> 
-
-<xU>-25.0</xU>
-<yV>-1000.0</yV>
-<zW>-230.0</zW>
-<nR>-2000.0</nR> 
-
-<xUabsU>-50.0</xUabsU>
-<yVabsV>-5000.0</yVabsV>
-<zWabsW>-7687.5</zWabsW>
-<nRabsR>-7000.0</nRabsR>
-"""
-
-    hydro_plugin_fragment = f"""
-   <plugin filename="gz-sim-hydrodynamics-system" name="gz::sim::systems::Hydrodynamics">
-    <link_name>base_link</link_name>
-    <enable>base_link</enable>
-    {hydro3}
-   </plugin>
-   """
-
-    thrust_coefficient = calculate_thrust_coefficient(vessel, xU, xUU, xDotU)
-    thrust_multiplier = calculate_thrust_multiplier(vessel, xU, xUU, 2) * 0.01
-    thrust_multiplier = 500
-    model_template = f"""
-<?xml version="1.0"?>
+    return f"""<?xml version="1.0"?>
 <sdf version="1.9">
+  <!-- Parametric twin-thrust vessel, control layer {control_layer.value}: L {_f(d.length)} m, B {_f(d.breadth)} m,
+       draft {_f(d.draft)} m, {_f(d.total_mass)} kg, full thrust {_f(d.max_thrust)} N per thruster for {_f(d.design_speed)} m/s,
+       full differential thrust for {_f(d.design_yaw_rate)} rad/s. Thrust commands: gz.msgs.Double in N on
+       /model/{agent_name}/joint/motor_port_joint/cmd_thrust and /model/{agent_name}/joint/motor_stbd_joint/cmd_thrust. -->
   <model name="{agent_name}">
     <self_collide>false</self_collide>
     <!-- Avoid links auto-disabling mid-run (can destabilize coupled buoyancy/hydro). -->
     <allow_auto_disable>false</allow_auto_disable>
     <static>false</static>
-    <!-- Pose is applied by the world via <include><pose> so this model stays reusable. -->
+    <!-- Pose is applied by the world via <include><pose> so this model stays reusable. Origin at the waterline. -->
 
     <link name="base_link">
       <inertial>
-        <!-- CoM slightly below geometric center for roll stability (scaled from large vessel). -->
-        <pose>0 0 {com_z}  0 0 0</pose>
-        <mass>{vessel.mass}</mass>
-        <inertia>
-          <!-- kg*m^2; izz lowered for snappier yaw; iyy chosen so ixx+izz >= iyy (valid rigid body). -->
-          <ixx>{hull_ixx}</ixx>
-          <iyy>{hull_iyy}</iyy>
-          <izz>{hull_izz}</izz>
-          <ixy>0</ixy>
-          <ixz>0</ixz>
-          <iyz>0</iyz>
-        </inertia>
+        <pose>0 0 {_f(d.com_z)} 0 0 0</pose>
+        <mass>{_f(d.hull_mass)}</mass>
+        <inertia>{_inertia(d.hull_ixx, d.hull_iyy, d.hull_izz)}</inertia>
       </inertial>
-
-      <collision name="collision_hull">
-        <pose>0 0 {collision_hull_pose_z} 0 0 0</pose>
-        <geometry>
-          <box>
-            <size>{collision_hull_size[0]} {collision_hull_size[1]} {collision_hull_size[2]}</size>
-          </box>
-        </geometry>
-      </collision>
-
+      <!-- Buoyant volume: displaces the total mass at the draft (world Buoyancy system), split into
+           {BUOYANCY_GRID} x {BUOYANCY_GRID} cells so that roll and pitch are restored (see vessel_dynamics.BUOYANCY_GRID). -->{collisions}
       <visual name="visual_hull">
-        <pose>0 0 {visual_hull_pose_z} 0 0 0</pose>
+        <pose>0 0 {_f((freeboard - d.draft) / 2.0)} 0 0 0</pose>
         <geometry>
           <box>
-            <size>{visual_hull_size[0]} {visual_hull_size[1]} {visual_hull_size[2]}</size>
+            <size>{_f(d.length)} {_f(d.breadth)} {_f(d.height)}</size>
           </box>
         </geometry>
-      </visual>
-      
-      <sensor name="imu_sensor" type="imu">
-        <pose degrees="true">0 0 0 180 0 0</pose>
-        <always_on>1</always_on>
-        <update_rate>100.0</update_rate>
-      </sensor>
-      <!--<sensor name="navsat_sensor" type="navsat">
-        <pose>0 0 0 0 0 0</pose>
-        <always_on>1</always_on>
-        <update_rate>10.0</update_rate>
-      </sensor>-->
-  </link>
-  
-  <!-- MATHEMATICAL THRUST ANCHORS (Invisible, no collision, locked to hull) -->
-    <link name="motor_stbd_link">
-      <pose degrees="true">{thruster_x} {-thruster_y} {thruster_z} 0 0 0</pose>
-      <inertial>
-        <mass>{vessel.thruster_mass}</mass>
-        <inertia>
-          <ixx>{thruster_ixx}</ixx><iyy>{thruster_iyy}</iyy><izz>{thruster_izz}</izz>
-          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
-        </inertia>
-      </inertial>
+      </visual>{imu_sensor}
     </link>
 
-    <joint name="motor_stbd_joint" type="revolute">
-      <parent>base_link</parent>
-      <child>motor_stbd_link</child>
-      <axis>
-        <xyz> 1 0 0</xyz> <!-- The Thruster plugin reads this to know the thrust direction -->
-      </axis>
-    </joint>
-
-    <link name="motor_port_link">
-      <pose degrees="true">{thruster_x} {thruster_y} {thruster_z} 0 0 0</pose>
+    <!-- Windage: the world WindEffects system pushes this link with mass * factor * relative wind,
+         so its mass is the hull's air drag in N per m/s. Fixed to the hull at the center of the side area above water. -->
+    <link name="windage_link">
+      <pose>0 0 {_f(d.windage_z)} 0 0 0</pose>
+      <enable_wind>true</enable_wind>
       <inertial>
-        <mass>{vessel.thruster_mass}</mass>
-        <inertia>
-          <ixx>{thruster_ixx}</ixx><iyy>{thruster_iyy}</iyy><izz>{thruster_izz}</izz>
-          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
-        </inertia>
+        <mass>{_f(d.windage_mass)}</mass>
+        <inertia>{_inertia(windage_ixx, windage_iyy, windage_izz)}</inertia>
       </inertial>
     </link>
-
-    <joint name="motor_port_joint" type="revolute">
+    <joint name="windage_joint" type="fixed">
       <parent>base_link</parent>
-      <child>motor_port_link</child>
-      <axis>
-        <xyz> 1 0 0 </xyz> <!-- The Thruster plugin reads this to know the thrust direction -->
-      </axis>
+      <child>windage_link</child>
     </joint>
+{thruster("port", d.thruster_y)}
+{thruster("stbd", -d.thruster_y)}
 
-  {hydro_plugin_fragment}
+    <!-- Added-mass Coriolis terms off: their Munk moment makes a bare hull directionally unstable
+         (measured: the 5 m hull spun under equal thrust above 2.5 m/s); real twin-screw hulls are kept
+         straight by skegs, which this model does not have. -->
+    <plugin filename="gz-sim-hydrodynamics-system" name="gz::sim::systems::Hydrodynamics">
+      <link_name>base_link</link_name>
+      <disable_coriolis>true</disable_coriolis>
+      <xDotU>{_f(d.xDotU)}</xDotU>
+      <yDotV>{_f(d.yDotV)}</yDotV>
+      <zDotW>{_f(d.zDotW)}</zDotW>
+      <nDotR>{_f(d.nDotR)}</nDotR>
+      <xU>{_f(d.xU)}</xU>
+      <yV>{_f(d.yV)}</yV>
+      <zW>{_f(d.zW)}</zW>
+      <kP>{_f(d.kP)}</kP>
+      <mQ>{_f(d.mQ)}</mQ>
+      <nR>{_f(d.nR)}</nR>
+      <xUabsU>{_f(d.xUabsU)}</xUabsU>
+      <yVabsV>{_f(d.yVabsV)}</yVabsV>
+      <nRabsR>{_f(d.nRabsR)}</nRabsR>
+    </plugin>{wave_buoyancy}
 
+    <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
+    </plugin>
 
-  <plugin name="gz::sim::systems::JointStatePublisher"
-      filename="gz-sim-joint-state-publisher-system">
-  </plugin>
-
-  <plugin name="gz::sim::systems::OdometryPublisher"
-      filename="gz-sim-odometry-publisher-system">
+    <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
       <odom_frame>odom</odom_frame>
       <robot_base_frame>base_link</robot_base_frame>
       <dimensions>3</dimensions>
-  </plugin>
-
-    <plugin filename="gz-sim-thruster-system" name="gz::sim::systems::Thruster">
-      <joint_name>motor_port_joint</joint_name>
-      <thrust_coefficient>{thrust_coefficient}</thrust_coefficient>
-      <fluid_density>1025</fluid_density>
-      <propeller_diameter>{vessel.propeller_diameter}</propeller_diameter>
-      <velocity_control>0</velocity_control>
-      <use_angvel_cmd>0</use_angvel_cmd>
-    </plugin>
-
-  <plugin filename="gz-sim-thruster-system" name="gz::sim::systems::Thruster">
-    <joint_name>motor_stbd_joint</joint_name>
-    <thrust_coefficient>{thrust_coefficient}</thrust_coefficient>
-    <fluid_density>1025</fluid_density>
-    <propeller_diameter>{vessel.propeller_diameter}</propeller_diameter>
-    <velocity_control>0</velocity_control>
-    <use_angvel_cmd>0</use_angvel_cmd>
-  </plugin>
-
-  <plugin filename="ArduPilotPlugin" name="ArduPilotPlugin">
-    <robotNamespace>{agent_name}</robotNamespace>
-    <connectionTimeoutMaxCount>5</connectionTimeoutMaxCount>
-    <lock_step>1</lock_step>
-    <fdm_addr>0.0.0.0</fdm_addr>
-    <fdm_port_in>{fdm_port_in}</fdm_port_in>
-    <!-- Match ardupilot_gazebo iris: ENU world + FLU hull -> NED / aircraft body. -->
-    <modelXYZToAirplaneXForwardZDown>0 0 0 3.141592653589793 0 0</modelXYZToAirplaneXForwardZDown>
-    <gazeboXYZToNED>0 0 0 3.141592653589793 0 1.5707963267948966</gazeboXYZToNED>
-    <imuName>imu_sensor</imuName>
-
-    <!--
-      port motor cw
-
-      SERVO1_FUNCTION 73 (ThrottleLeft)
-      SERVO1_MAX 2000
-      SERVO1_MIN 1000
-    -->
-    <control channel="0">
-      <jointName>motor_port_joint</jointName>
-      <type>COMMAND</type>
-      <cmd_topic>/model/{agent_name}/joint/motor_port_joint/cmd_thrust</cmd_topic>
-      <multiplier>{thrust_multiplier}</multiplier>
-      <offset>-0.5</offset>
-      <servo_min>1000</servo_min>
-      <servo_max>2000</servo_max>
-    </control>
-
-    <!--
-      stbd motor ccw
-
-      SERVO3_FUNCTION 74 (ThrottleRight)
-      SERVO3_MAX 2000
-      SERVO3_MIN 1000
-    -->
-    <control channel="2">
-      <jointName>motor_stbd_joint</jointName>
-      <type>COMMAND</type>
-      <cmd_topic>/model/{agent_name}/joint/motor_stbd_joint/cmd_thrust</cmd_topic>
-      <multiplier>{thrust_multiplier}</multiplier>
-      <offset>-0.5</offset>
-      <servo_min>1000</servo_min>
-      <servo_max>2000</servo_max>
-    </control>
-  </plugin>
-
+      <odom_publish_frequency>{ODOMETRY_RATE_HZ}</odom_publish_frequency>
+    </plugin>{ardupilot_plugin}
   </model>
 </sdf>
-
-    """
-    return model_template
+"""

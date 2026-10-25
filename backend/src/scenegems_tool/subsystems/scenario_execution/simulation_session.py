@@ -98,7 +98,7 @@ class SimulationSession(ABC):
             vessel = scene.get_by_id(vessel_config.agent_id)
             if not isinstance(vessel, ConcreteVessel):
                 continue
-            vessel_model = generate_vessel_model(vessel, vessel_config.require_connection().agent_name)
+            vessel_model = generate_vessel_model(vessel, vessel_config.require_connection().agent_name, vessel_config.stack.control_layer, simulation_config.environment)
             vessel_config.gazebo_vessel_model = vessel_model
 
         message = make_simulation_models_message(simulation_config)

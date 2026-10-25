@@ -78,14 +78,21 @@ sitl_internal_physics:
     requests of 5, 20, 50 and 100, so max_speedup is at least 100.
 
 simulation_layer/gazebo:
-  wind: unsupported
+  wind: supported
   waves: unsupported
   notes:
-    wind: wind had no measurable effect (0.3 m, inside the 0.4 m repeat deviation); the hull links probably lack enable_wind
-    waves: the Gazebo waves system is commented out in world_generator.py and is not enabled yet
+    waves: Gazebo Harmonic has no wave force system; asv_wave_sim applies wave forces in the WP2 spike image but is not in the Gazebo image yet (design doc 12.7)
   evidence: >-
-    Wind of 5 m/s moved the end position by about 0.3 m, inside the repeat deviation. Waves
-    have no effect because the waves system is commented out.
+    WP2, 2026-10-24: generated parametric hulls of 5, 30 and 100 m with a windage link under the
+    WindEffects system, driven open loop over gz-transport without ArduPilot. A 5 m/s cross wind
+    from the south on a vessel at rest heading east drifted it 2.12 m (5 m hull), 0.53 m (30 m)
+    and 1.20 m (100 m) in 120 s, steady 0.018, 0.0045 and 0.010 m/s, against at most 0.003 m in
+    the same runs without wind (open-loop runs repeat to the millimetre). Phase 0 had measured no
+    effect because the hull had no wind-enabled link. Waves: Gazebo Harmonic 8.11 has no waves
+    system at all (the commented-out gz-sim-waves-system does not exist); asv_wave_sim (gz-waves1)
+    moved the 5 m hull 0.94 m in heave and 8.5 degrees in pitch peak to peak in 0.5 m, 5 s waves,
+    but needs a renamed build to load next to the gz-sim Hydrodynamics system and finer buoyancy
+    cells for waves shorter than a cell.
 
 ardupilot_gazebo_plugin:
   repeatability_tier: bounded

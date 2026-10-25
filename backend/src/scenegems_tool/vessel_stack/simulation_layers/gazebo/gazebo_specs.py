@@ -1,10 +1,24 @@
 """Specs of the Gazebo simulation layer and of the ArduPilot link into it."""
 
+from typing import Optional
+
 from scenegems_tool.vessel_stack.contracts.adapter_spec import UPSTREAM_PINS_FILE, AdapterSpec, ContainerSpec, LayerSpec
 from scenegems_tool.vessel_stack.contracts.capabilities import Capabilities, EnvironmentSupport, RepeatabilityTier
 from scenegems_tool.vessel_stack.contracts.ports import Port
 from scenegems_tool.vessel_stack.contracts.roles import ControlLayerId, LayerRef, SimulationLayerId
+from scenegems_tool.vessel_stack.contracts.vessel_stack_config import EnvironmentConfig
 from utils.file_system_utils import GAZEBO_ENTRYPOINT_CONTAINER_PATH
+
+# True once the Gazebo image includes asv_wave_sim (gz-waves1). Then a world with waves replaces
+# the flat Buoyancy system by a wave field, and each vessel model carries the wave-aware
+# buoyancy system. Until then the waves capability stays unsupported and this stays False.
+GAZEBO_WAVE_FORCES_AVAILABLE = False
+
+
+def wave_forces_enabled(environment: Optional[EnvironmentConfig]) -> bool:
+    """Whether the world and every vessel model use the asv_wave_sim wave field (decided once for both)."""
+    return GAZEBO_WAVE_FORCES_AVAILABLE and environment is not None and environment.waves_requested
+
 
 GAZEBO_CONTAINER = ContainerSpec(
     image="${GAZEBO_IMAGE:-scenegems-gazebo-harmonic:latest}",
@@ -15,9 +29,9 @@ GAZEBO_CONTAINER = ContainerSpec(
 
 GAZEBO_LAYER = LayerSpec(
     layer=LayerRef.of(SimulationLayerId.GAZEBO),
-    description="Gazebo Harmonic with a generated ocean world and one generated SDF model per vessel (buoyancy, hydrodynamics, thrusters, asv_sim2 wind).",
+    description="Gazebo Harmonic with a generated ocean world and one parametric twin-thrust SDF model per vessel (buoyancy, hydrodynamics, thrusters, WindEffects wind on a windage link).",
     capabilities=Capabilities(wind=EnvironmentSupport.SUPPORTED, waves=EnvironmentSupport.UNSUPPORTED),
-    restriction_notes=(("waves", "the Gazebo waves system is commented out in world_generator.py and is not enabled yet"),),
+    restriction_notes=(("waves", "Gazebo Harmonic has no wave force system; waves need asv_wave_sim in the Gazebo image (WP2 spike)"),),
     provides_ports=frozenset({Port.VESSEL_STATE, Port.CLOCK}),
     requires_ports=frozenset({Port.ACTUATOR_CMD, Port.ENVIRONMENT}),
     containers=(GAZEBO_CONTAINER,),
