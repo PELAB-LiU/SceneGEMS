@@ -8,6 +8,7 @@ BUILD_BACKEND=0
 BUILD_FRONTEND=0
 BUILD_SIMULATION=0
 BUILD_ARDUAGENT=0
+BUILD_NODE=0
 BUILD_ALL=0
 BUILD_NO_CHECK=0
 
@@ -33,6 +34,9 @@ Options:
 
   -4, --arduagent         ArduPilot agent only (scenegems-arduagent:latest)
 
+  -5, --node              Node daemon image only (scenegems-node:latest); a worker
+                          also needs the subsystem images its capabilities run
+
   --simulation            Simulation runtime images only: Gazebo, SITL, MAVProxy
                           (scenegems-gazebo-harmonic, scenegems-ardupilot-sitl, scenegems-mavproxy)
 
@@ -54,6 +58,7 @@ Examples:
   ./build.sh --frontend             # after UI changes
   ./build.sh --stack                # backend + frontend, skip simulation
   ./build.sh --arduagent            # agent image only
+  ./build.sh --node --backend       # a worker machine: node daemon and subsystems
   ./build.sh --backend --simulation # backend stack + simulation images
   ./build.sh --backend --no-check   # force rebuild backend images
 EOF
@@ -83,6 +88,9 @@ parse_build_args() {
                 ;;
             -4 | --arduagent)
                 BUILD_ARDUAGENT=1
+                ;;
+            -5 | --node)
+                BUILD_NODE=1
                 ;;
             --simulation)
                 BUILD_SIMULATION=1
@@ -151,6 +159,11 @@ build_backend_stack_images() {
         "$SCRIPT_DIR/backend/README.md" "$SCRIPT_DIR/backend/src" "$SCRIPT_DIR/backend/assets"
 }
 
+build_node_image() {
+    [ "${DOCKER_FINGERPRINT_ONLY:-0}" = "1" ] || echo "== Node daemon =="
+    build_subsystem_if_stale "scenegems-node:latest" "$SCRIPT_DIR/deploy/images/node/Dockerfile"         "$SCRIPT_DIR/deploy/images/node/requirements.txt" "$SCRIPT_DIR/deploy/images/node/Dockerfile"         "$SCRIPT_DIR/backend/pyproject.toml" "$SCRIPT_DIR/backend/setup.py" "$SCRIPT_DIR/backend/README.md" "$SCRIPT_DIR/backend/src"         "$SCRIPT_DIR/backend/assets/domain_config" "$SCRIPT_DIR/backend/assets/runtime_assets"
+}
+
 build_frontend_image() {
     [ "${DOCKER_FINGERPRINT_ONLY:-0}" = "1" ] || echo "== Frontend =="
     build_if_stale "scenegems-frontend:dev" "$SCRIPT_DIR/frontend/Dockerfile" "$SCRIPT_DIR/frontend"
@@ -161,7 +174,7 @@ parse_build_args "$@"
 # Modifier-only invocations (e.g. ./build.sh --no-check) should build everything,
 # same as running ./build.sh with no arguments.
 if [ "$BUILD_ALL" -eq 0 ] && [ "$BUILD_BACKEND" -eq 0 ] && [ "$BUILD_FRONTEND" -eq 0 ] \
-    && [ "$BUILD_SIMULATION" -eq 0 ] && [ "$BUILD_ARDUAGENT" -eq 0 ]; then
+    && [ "$BUILD_SIMULATION" -eq 0 ] && [ "$BUILD_ARDUAGENT" -eq 0 ] && [ "$BUILD_NODE" -eq 0 ]; then
     BUILD_ALL=1
 fi
 
@@ -174,6 +187,7 @@ if [ "$BUILD_ALL" -eq 1 ]; then
     BUILD_FRONTEND=1
     BUILD_SIMULATION=1
     BUILD_ARDUAGENT=1
+    BUILD_NODE=1
 fi
 
 print_selected_build_targets() {
@@ -192,6 +206,9 @@ print_selected_build_targets() {
     fi
     if [ "$BUILD_ARDUAGENT" -eq 1 ]; then
         targets+=("arduagent")
+    fi
+    if [ "$BUILD_NODE" -eq 1 ]; then
+        targets+=("node")
     fi
     if [ "${#targets[@]}" -eq 0 ]; then
         echo "No build targets selected." >&2
@@ -224,6 +241,9 @@ if [ "$BUILD_SIMULATION" -eq 1 ]; then
 fi
 if [ "$BUILD_ARDUAGENT" -eq 1 ]; then
     build_arduagent_image
+fi
+if [ "$BUILD_NODE" -eq 1 ]; then
+    build_node_image
 fi
 
 if [ "${DOCKER_FINGERPRINT_ONLY:-0}" = "1" ]; then

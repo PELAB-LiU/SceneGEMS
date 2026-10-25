@@ -20,7 +20,7 @@ Present now:
     cluster/        distributed integration layer
         protocol/               typed, versioned master-node messages, jobs and pairing
         security/               master CA, pairing tokens, node credentials, broker accounts and access rules
-        node/                   instance scopes, launchers and job types; later the node daemon
+        node/                   instance scopes, launchers, job types and the node daemon
         fingerprints/           image build fingerprints: label reader, expected set, comparison
         master/                 node registry, scheduler, lease manager and the master's API and process
     persistence/    the master's Postgres: tables, migrations, node and job stores

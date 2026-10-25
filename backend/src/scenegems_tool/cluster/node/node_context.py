@@ -1,13 +1,14 @@
 """What a job runner needs from its node: identity, slots, broker access and the shared pools.
 
-The node daemon (P3.4) builds one NodeContext from its configuration and pairing response
-and calls `shutdown` when it stops. Tests build one directly.
+The node daemon builds one NodeContext from its configuration and pairing response
+(daemon/node_runtime.py) and calls `shutdown` when it stops. Tests build one directly.
 """
 
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
 from scenegems_tool.cluster.node.instance_scope import InstanceScope
+from scenegems_tool.cluster.node.launchers.ca_certificate_mount import CaCertificateMount
 from scenegems_tool.cluster.node.launchers.pooled.service_pools import ServicePools
 from scenegems_tool.cluster.node.subsystem import Subsystem
 from scenegems_tool.cluster.protocol.jobs import JobSpec, JobType
@@ -31,10 +32,11 @@ class NodeContext:
     reference_geofence: Geofence  # frame of the pooled services; simulation payloads carry their own
     slots: Dict[JobType, int] = field(default_factory=dict)
     broker_network: Optional[str] = None  # Docker network the broker is reachable on; SCENEGEMS_DOCKER_NETWORK when None
+    ca_certificate_mount: Optional[CaCertificateMount] = None  # how containers get the broker's CA file; mqtt_connection's CA path is this process's
     pools: ServicePools = field(init=False)
 
     def __post_init__(self) -> None:
-        self.pools = ServicePools(self.master_id, self.node_id, self.mqtt_connection, self.reference_geofence, self.pool_workers, self.broker_network)
+        self.pools = ServicePools(self.master_id, self.node_id, self.mqtt_connection, self.reference_geofence, self.pool_workers, self.broker_network, self.ca_certificate_mount)
 
     def pool_workers(self, subsystem: Subsystem) -> int:
         return max(1, self.slots.get(_POOL_JOB_TYPES[subsystem], 1))

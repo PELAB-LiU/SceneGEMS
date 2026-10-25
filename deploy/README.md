@@ -8,6 +8,9 @@ Everything needed to build and run SceneGEMS lives here. The repository root kee
 |------|---------|
 | `images/` | One folder per Docker image: `arduagent`, `gazebo`, `sitl`, `mavproxy`, `mqtt_broker`, and the four subsystem images `monitoring`, `scenario_generation`, `scenario_execution`, `trajectory_generation` |
 | `images/upstream_pins.env` | Upstream commits and base image digest the Gazebo and SITL images build from; passed as build arguments and written into `org.scenegems.*` image labels. apt and pip packages stay unpinned; their installed versions are recorded in `/etc/scenegems/package_versions` inside both images |
+| `images/node/` | The node daemon image `scenegems-node` (`./build.sh --node`): Python, the Docker CLI with the compose plugin, Git and the backend source |
+| `node/docker-compose.yml` | One node instance of one master: the daemon with the Docker socket, the checkout and its volumes, `restart: unless-stopped`. Every name carries the master id and node name, so a machine runs nodes for several masters side by side |
+| `node/.env.example` | Template of a node's env file (gitignored): master address, master id, CA hash and pairing token, node name, capabilities with slots |
 | `master/docker-compose.yml` | The main stack: frontend, MQTT broker, backend, and Postgres for the master's job store (`postgres`, volume `scenegems_postgres_data`) |
 | `master/.env.example` | Template of `master/.env` (gitignored), the master's secrets and ports; Compose reads `master/.env` itself. The `postgres` service refuses to start without `POSTGRES_PASSWORD`. Create the tables with `PYTHONPATH=src python -m scenegems_tool.persistence.migrate upgrade head` from `backend/` |
 | `scripts/build.sh` | Builds the images, skipping any whose inputs did not change |

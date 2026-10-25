@@ -49,6 +49,7 @@ dependencies = [
     "uvicorn",
     "fastapi",
     "pydantic==2.13.4",  # cluster protocol and job payloads (scenegems_tool.cluster), also in the runner images
+    "websockets==16.0",  # the node daemon's control connection (cluster/node/daemon), also in the node image
     "omegaconf",
     "flake8",
     "black",
