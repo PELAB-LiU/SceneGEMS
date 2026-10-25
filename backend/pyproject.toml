@@ -64,6 +64,8 @@ dependencies = [
     # unsafe-set package declares protobuf<=3.20.1 and hatch, which it never imports.
     "colav-automaton @ https://github.com/michaelstolberger27/usv-navigation/archive/54866f24a04987334057ae5c5896dfc3ee8ca058.zip",
     "pymavlink>=2.4.50",
+    # Master certificate authority and server certificates (cluster/security, P3.6)
+    "cryptography==49.0.0",
 ]
 
 [project.optional-dependencies]
