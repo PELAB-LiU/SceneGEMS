@@ -1,10 +1,14 @@
 """The pipeline engine: runs every unfinished campaign, one tick at a time, as a control plane timer.
 
-A tick has two parts.
+Only the engine that holds the engine lock ticks (engine_leadership.py); another engine on the
+same database stands by and takes over when the leader's lock connection ends. A tick has two
+parts.
 
 1. One transaction (in a worker thread, so the event loop stays free), holding the cursor row:
-   - the cursor must be where this engine left it; otherwise another engine moved it
-     (CursorConflict), and this one stops ticking;
+   - the lock must still be held by this engine's connection, otherwise the tick writes
+     nothing and the engine stands by (LeadershipLost);
+   - the cursor is read where the database has it, so a tick that failed, whether or not its
+     commit went through, is simply followed by the next one;
    - the job events after the cursor are applied to their cases (case_machine), each in a
      savepoint: a case whose event cannot be processed is quarantined instead of blocking the
      cursor;
@@ -42,9 +46,9 @@ Desired and actual states:
 Stop conditions of the config (max cases, max failed verdicts, max duration) set the desired
 state to draining, with a note event giving the reason.
 
-At start the engine appends engine_started to every unfinished campaign, repairs the class
-counts from the cases, cancels jobs whose cases ended, and checks every class on its first
-tick; intents without a job are resubmitted by that tick.
+At start, and whenever it takes the lock again, the engine appends engine_started to every
+unfinished campaign, repairs the class counts from the cases, cancels jobs whose cases ended,
+and checks every class on its first tick; intents without a job are resubmitted by that tick.
 """
 
 import asyncio
@@ -60,13 +64,14 @@ from scenegems_tool.assurance.campaign.class_catalog import ClassCatalog
 from scenegems_tool.assurance.pipeline.campaign_context import CampaignContext, CampaignContexts
 from scenegems_tool.assurance.pipeline.case_machine import CaseMachine, StepOutbox
 from scenegems_tool.assurance.pipeline.coverage_controller import Backpressure, decide_class, plan_new_cases
+from scenegems_tool.assurance.pipeline.engine_leadership import EngineLeadership, LeadershipLost
 from scenegems_tool.assurance.pipeline.payload_builder import required_fingerprints
 from scenegems_tool.assurance.pipeline.pipeline_queries import UNFINISHED_JOB_STATES, case_states, delete_intent, job_id_by_key, next_case_indexes, pin_fingerprints, unfinished_jobs_of_final_cases
 from scenegems_tool.assurance.pipeline.stage_graph import STAGE_JOB_TYPES
 from scenegems_tool.cluster.protocol.jobs import JobSubmission, JobType
 from scenegems_tool.persistence.clock import Clock, utc_now
 from scenegems_tool.persistence.schema import CampaignActualState, CampaignClassState, CampaignDesiredState, CampaignEventKind, CaseState, JobEventKind, NodeStatus, VerdictState
-from scenegems_tool.persistence.stores import ENGINE_CURSOR, AssuranceStores, CampaignRecord, CursorConflict, CursorPosition, JobStore, NodeRecord, PipelineJobEvent, SubmitOutcome
+from scenegems_tool.persistence.stores import ENGINE_CURSOR, AssuranceStores, CampaignRecord, JobStore, NodeRecord, PipelineJobEvent, SubmitOutcome
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +132,7 @@ class TickReport:
     cancelled: int = 0
     caught_up: bool = True
     stopped: bool = False
+    standby: bool = False  # another engine holds the engine lock
 
 
 class PipelineEngine:
@@ -142,20 +148,22 @@ class PipelineEngine:
         clock: Clock = utc_now,
         settings: EngineSettings = EngineSettings(),
         catalog: Optional[ClassCatalog] = None,
+        leadership: Optional[EngineLeadership] = None,
     ):
         self.stores = stores
         self.jobs = job_store
         self.settings = settings
         self.contexts = CampaignContexts(stores, catalog)
+        self.leadership = leadership or EngineLeadership(stores.session_factory)
         self._submit = submit
         self._cancel = cancel
         self._expected = expected
         self._nodes = nodes
         self._wake = wake
         self._clock = clock
-        self._position: Optional[CursorPosition] = None  # where this engine left the cursor
-        self._advancing_to: Optional[CursorPosition] = None  # where the last tick moved it, until its commit is known to have succeeded
         self._started = False
+        self._started_term: Optional[int] = None  # the leadership term this engine last reconciled in
+        self._standing_by = False
         self._stopped = False
         self._check_every_class = True
         self._unrunnable_since: Dict[str, datetime] = {}
@@ -169,45 +177,59 @@ class PipelineEngine:
         return self._stopped
 
     def stop(self) -> None:
+        """Stops ticking and gives the engine lock up, so another engine can take over."""
         self._stopped = True
+        self.leadership.release()
 
     # Lifetime
 
     async def run(self, interval_s: float) -> None:
-        """Starts the engine and ticks until stopped; a tick that read a full batch is followed at once by the next."""
-        while not self._started and not self._stopped:
-            try:
-                await self.start()
-            except Exception:
-                logger.exception("The pipeline engine could not start; retrying in %.0f s", interval_s)
-                await asyncio.sleep(interval_s)
-        while not self._stopped:
-            report = TickReport()
-            try:
-                report = await self.tick()
-            except Exception:
-                logger.exception("A pipeline engine tick failed; retrying in %.0f s", interval_s)
-            if report.caught_up:
-                await asyncio.sleep(interval_s)
+        """Ticks until stopped or cancelled; a tick that read a full batch is followed at once by the next."""
+        try:
+            while not self._stopped:
+                report = TickReport()
+                try:
+                    report = await self.tick()
+                except Exception:
+                    logger.exception("A pipeline engine tick failed; retrying in %.0f s", interval_s)
+                if report.caught_up:
+                    await asyncio.sleep(interval_s)
+        finally:
+            self.leadership.release()
 
-    async def start(self) -> None:
-        """Reconciles after a (re)start: engine_started per campaign, recounted classes, jobs of ended cases cancelled."""
-        outbox = await anyio.to_thread.run_sync(self._reconcile)
-        self._started = True
+    async def start(self) -> bool:
+        """Takes the engine lock and reconciles: engine_started per campaign, recounted classes, jobs of ended cases cancelled.
+
+        False, with nothing done, while another engine holds the lock.
+        """
+        if not await anyio.to_thread.run_sync(self.leadership.acquire):
+            return False
+        try:
+            outbox = await anyio.to_thread.run_sync(self._reconcile)
+        except LeadershipLost:
+            self._lose_leadership()
+            return False
+        self._started, self._started_term = True, self.leadership.term
         await self._cancel_jobs(outbox)
+        return True
 
     async def tick(self) -> TickReport:
         if self._stopped:
             return TickReport(stopped=True)
-        if not self._started:
-            await self.start()
+        if not await anyio.to_thread.run_sync(self.leadership.acquire):
+            return self._stand_by()
+        if self._standing_by:
+            logger.info("This pipeline engine took the engine lock and leads")
+            self._standing_by = False
+        if not self._started or self._started_term != self.leadership.term:
+            if not await self.start():
+                return self._stand_by()
         nodes = list(self._nodes())
         try:
             plan = await anyio.to_thread.run_sync(self._step, nodes)
-        except CursorConflict as conflict:
-            logger.error("Another pipeline engine is running on this database (%s); this one stops", conflict)
-            self._stopped = True
-            return TickReport(stopped=True)
+        except LeadershipLost:
+            self._lose_leadership()
+            return self._stand_by()
         cancelled = await self._cancel_jobs(plan.outbox)
         submitted = await self._submit_all(plan.submissions)
         if plan.wake or submitted:
@@ -221,12 +243,24 @@ class PipelineEngine:
             caught_up=plan.caught_up,
         )
 
+    def _stand_by(self) -> TickReport:
+        if not self._standing_by:
+            logger.warning("Another pipeline engine holds the engine lock on this database; this one stands by")
+            self._standing_by = True
+        return TickReport(standby=True)
+
+    def _lose_leadership(self) -> None:
+        logger.warning("The pipeline engine lost the engine lock; it stands by and reconciles when it leads again")
+        self.leadership.release()
+        self._started = False
+
     # The transaction of a tick
 
     def _reconcile(self) -> StepOutbox:
         outbox = StepOutbox()
         with self.stores.transaction() as session:
             position = self.stores.pipeline.read_cursor(lock=True, session=session)
+            self.leadership.check(session)
             for campaign in self.stores.campaigns.unfinished_campaigns(session=session):
                 corrected = self.stores.cases.recount_classes(campaign.campaign_id, session=session)
                 orphaned = unfinished_jobs_of_final_cases(session, campaign.campaign_id)
@@ -236,7 +270,6 @@ class PipelineEngine:
                 self.stores.campaigns.append_event(campaign.campaign_id, CampaignEventKind.ENGINE_STARTED, detail, session=session)
                 if corrected:
                     logger.warning("Campaign %s: class counts repaired from the cases for %s", campaign.campaign_id, ", ".join(record.class_id for record in corrected))
-        self._position = position
         self._check_every_class = True
         return outbox
 
@@ -244,10 +277,10 @@ class PipelineEngine:
         now = self._clock()
         plan = StepPlan(StepOutbox())
         with self.stores.transaction() as session:
+            # The cursor row is locked and this engine holds the engine lock, so the cursor is where the
+            # last committed tick left it, also after a tick whose commit failed (committed or not)
             position = self.stores.pipeline.read_cursor(lock=True, session=session)
-            # A tick whose commit failed may still have committed: then the cursor is where that tick moved it
-            if self._position is not None and position not in (self._position, self._advancing_to):
-                raise CursorConflict(f"the cursor is at {position}, this engine left it at {self._position}")
+            self.leadership.check(session)
             campaigns = self.stores.campaigns.unfinished_campaigns(session=session)
             self.contexts.refresh(campaigns)
             machine = CaseMachine(self.stores, session, self.contexts, plan.outbox)
@@ -258,8 +291,6 @@ class PipelineEngine:
                 self._converge(machine, session, campaign, nodes, plan, now)
             self.stores.pipeline.advance_cursor(ENGINE_CURSOR, position, batch.position, session=session)
             plan.submissions = self._pending_submissions(session, plan.outbox)
-            self._advancing_to = batch.position
-        self._position, self._advancing_to = batch.position, None
         self._check_every_class = False
         plan.events_read = len(batch.events)
         plan.caught_up = len(batch.events) < self.settings.batch_size

@@ -3,6 +3,8 @@
 A Harness holds the stores, a ControlPlane (fixed expected fingerprints, no timers), the
 engine on it, a FakeExecutor that claims from the job store, a manual clock and an event
 loop. drive() alternates engine ticks and executor rounds until the campaign is finished.
+crash() ends an engine's lock connection as a dead master's would, and replace_engine()
+starts the engine of a restarted master; every engine's lock is released at the end.
 """
 
 import asyncio
@@ -59,10 +61,11 @@ class Harness:
     nodes: List[NodeAvailability] = field(default_factory=list)
     reports: List[TickReport] = field(default_factory=list)
     tick_seconds: float = 0.0  # wall time spent in engine ticks
+    engines: List[PipelineEngine] = field(default_factory=list)  # every engine made, for the release at the end
 
     def new_engine(self, settings: Optional[EngineSettings] = None) -> PipelineEngine:
-        """An engine on the same database, as a restarted master builds it."""
-        return PipelineEngine(
+        """An engine on the same database, as a master process builds it."""
+        engine = PipelineEngine(
             self.stores,
             self.job_store,
             submit=self.plane.submit,
@@ -72,6 +75,22 @@ class Harness:
             clock=self.clock,
             settings=settings or self.settings,
         )
+        self.engines.append(engine)
+        return engine
+
+    def crash(self, engine: Optional[PipelineEngine] = None) -> None:
+        """The engine's master dies: its lock connection ends, nothing else is cleaned up."""
+        (engine or self.engine).leadership.release()
+
+    def replace_engine(self, settings: Optional[EngineSettings] = None) -> PipelineEngine:
+        """The master dies and restarts: the old engine crashes, a new one takes over."""
+        self.crash()
+        self.engine = self.new_engine(settings)
+        return self.engine
+
+    def release_all(self) -> None:
+        for engine in self.engines:
+            engine.leadership.release()
 
     def run(self, coroutine):
         return self.loop.run_until_complete(coroutine)
@@ -123,6 +142,8 @@ def loop() -> Iterator[asyncio.AbstractEventLoop]:
 
 @pytest.fixture
 def make_harness(session_factory, clock, loop):
+    harnesses: List[Harness] = []
+
     def make(references: bool = False, scripts=None, settings: EngineSettings = EngineSettings(stall_after_s=30.0), **executor_options) -> Harness:
         stores = AssuranceStores.create(session_factory, clock)
         node_store, job_store = NodeStore(session_factory, clock), JobStore(session_factory, clock)
@@ -131,9 +152,12 @@ def make_harness(session_factory, clock, loop):
         harness = Harness(stores, job_store, node_store, clock, loop, plane, executor, settings)
         harness.nodes = [NodeAvailability(executor.node)]
         harness.engine = harness.new_engine()
+        harnesses.append(harness)
         return harness
 
-    return make
+    yield make
+    for harness in harnesses:
+        harness.release_all()
 
 
 @pytest.fixture

@@ -9,6 +9,7 @@ verdicts.py             verdicts, run records, calibration results, artifact ref
 retention.py            which artifact references a case keeps once judged
 pipeline_queries.py     the engine's queries beyond the store API
 pipeline_engine.py      the tick: events, desired and actual states, submissions, restart
+engine_leadership.py    one engine per database: the advisory lock the leading engine holds
 
 The module is loaded by the master when it builds its control plane, not when its package is
 imported, so importing the master stays light.
