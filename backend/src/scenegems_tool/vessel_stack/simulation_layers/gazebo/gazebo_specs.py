@@ -1,6 +1,6 @@
 """Specs of the Gazebo simulation layer and of the ArduPilot link into it."""
 
-from scenegems_tool.vessel_stack.contracts.adapter_spec import AdapterSpec, ContainerSpec, LayerSpec
+from scenegems_tool.vessel_stack.contracts.adapter_spec import UPSTREAM_PINS_FILE, AdapterSpec, ContainerSpec, LayerSpec
 from scenegems_tool.vessel_stack.contracts.capabilities import Capabilities, EnvironmentSupport, RepeatabilityTier
 from scenegems_tool.vessel_stack.contracts.ports import Port
 from scenegems_tool.vessel_stack.contracts.roles import ControlLayerId, LayerRef, SimulationLayerId
@@ -10,6 +10,7 @@ GAZEBO_CONTAINER = ContainerSpec(
     image="${GAZEBO_IMAGE:-scenegems-gazebo-harmonic:latest}",
     build_fingerprint_source="deploy/images/gazebo",
     entrypoint=GAZEBO_ENTRYPOINT_CONTAINER_PATH,
+    upstream_pins_file=UPSTREAM_PINS_FILE,
 )
 
 GAZEBO_LAYER = LayerSpec(

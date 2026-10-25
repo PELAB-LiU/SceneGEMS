@@ -7,6 +7,7 @@ docker_common_init() {
     export REPO_ROOT="$SCRIPT_DIR"
     COMPOSE_FILE="$SCRIPT_DIR/deploy/master/docker-compose.yml"
     COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-scenegems}"
+    UPSTREAM_PINS_FILE="$SCRIPT_DIR/deploy/images/upstream_pins.env"
 }
 
 compose_cmd() {
@@ -44,11 +45,51 @@ fingerprint_find_excluded_files() {
         ! -path '*/runtime_assets/*/gen_tmp/*'
 }
 
+# Upstream source pins: every KEY=VALUE line of deploy/images/upstream_pins.env whose KEY a
+# Dockerfile declares with ARG is passed to that image's docker build, and the pins file is
+# then part of the image fingerprint.
+
+# Prints the --build-arg flags, one word per line, for the pins the Dockerfile declares.
+upstream_pin_build_args() {
+    local dockerfile="$1"
+    local line key
+    [ -f "$UPSTREAM_PINS_FILE" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%$'\r'}"
+        case "$line" in
+            '' | '#'*) continue ;;
+        esac
+        key="${line%%=*}"
+        if grep -Eq "^[[:space:]]*ARG[[:space:]]+${key}([[:space:]=]|\$)" "$dockerfile"; then
+            printf '%s\n' --build-arg "$line"
+        fi
+    done <"$UPSTREAM_PINS_FILE"
+}
+
+dockerfile_uses_upstream_pins() {
+    [ -n "$(upstream_pin_build_args "$1")" ]
+}
+
+docker_build_image() {
+    local tag="$1"
+    local dockerfile="$2"
+    local context_dir="$3"
+    local build_args=()
+    local arg
+    while IFS= read -r arg; do
+        build_args+=("$arg")
+    done < <(upstream_pin_build_args "$dockerfile")
+    docker build ${build_args[@]+"${build_args[@]}"} -f "$dockerfile" -t "$tag" "$context_dir"
+}
+
 fingerprint_docker_context() {
     local dockerfile="$1"
     local context_dir="$2"
     {
         sha256sum "$dockerfile"
+        if dockerfile_uses_upstream_pins "$dockerfile"; then
+            sha256sum "$UPSTREAM_PINS_FILE"
+        fi
         fingerprint_find_excluded_files "$context_dir" | LC_ALL=C sort | while IFS= read -r file; do
             sha256sum "$file"
         done
@@ -68,6 +109,16 @@ fingerprint_paths() {
             fi
         done
     } | sha256sum | awk '{print $1}'
+}
+
+fingerprint_image_inputs() {
+    local dockerfile="$1"
+    shift
+    if dockerfile_uses_upstream_pins "$dockerfile"; then
+        fingerprint_paths "$dockerfile" "$@" "$UPSTREAM_PINS_FILE"
+    else
+        fingerprint_paths "$dockerfile" "$@"
+    fi
 }
 
 image_exists() {
@@ -91,7 +142,7 @@ build_if_stale() {
 
     if [ "${DOCKER_BUILD_SKIP_CHECK:-0}" = "1" ]; then
         echo "Building $tag (--no-check)..."
-        docker build -f "$dockerfile" -t "$tag" "$context_dir"
+        docker_build_image "$tag" "$dockerfile" "$context_dir"
         fingerprint=$(fingerprint_docker_context "$dockerfile" "$context_dir")
         write_build_stamp "$tag" "$fingerprint"
         return
@@ -111,7 +162,7 @@ build_if_stale() {
     fi
 
     echo "Building $tag..."
-    docker build -f "$dockerfile" -t "$tag" "$context_dir"
+    docker_build_image "$tag" "$dockerfile" "$context_dir"
     write_build_stamp "$tag" "$fingerprint"
 }
 
@@ -123,14 +174,14 @@ build_subsystem_if_stale() {
 
     if [ "${DOCKER_BUILD_SKIP_CHECK:-0}" = "1" ]; then
         echo "Building $tag (--no-check)..."
-        docker build -f "$dockerfile" -t "$tag" "$SCRIPT_DIR"
-        fingerprint=$(fingerprint_paths "$dockerfile" "$@")
+        docker_build_image "$tag" "$dockerfile" "$SCRIPT_DIR"
+        fingerprint=$(fingerprint_image_inputs "$dockerfile" "$@")
         write_build_stamp "$tag" "$fingerprint"
         return
     fi
 
     echo "Checking image $tag..."
-    fingerprint=$(fingerprint_paths "$dockerfile" "$@")
+    fingerprint=$(fingerprint_image_inputs "$dockerfile" "$@")
     stamp_path=$(stamp_path_for_tag "$tag")
     stored=""
     if [ -f "$stamp_path" ]; then
@@ -143,7 +194,7 @@ build_subsystem_if_stale() {
     fi
 
     echo "Building $tag..."
-    docker build -f "$dockerfile" -t "$tag" "$SCRIPT_DIR"
+    docker_build_image "$tag" "$dockerfile" "$SCRIPT_DIR"
     write_build_stamp "$tag" "$fingerprint"
 }
 
