@@ -38,8 +38,32 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  # Job store and node registry of the master (scenegems_tool.persistence). The password
+  # comes from deploy/master/.env; without it the container refuses to start, while the
+  # workbench services above keep working.
+  postgres:
+    image: postgres:16.10-alpine
+    container_name: scenegems_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-scenegems}
+      POSTGRES_USER: ${POSTGRES_USER:-scenegems}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - scenegems_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
 volumes:
   scenegems_runtime_assets:
     name: scenegems_runtime_assets
   scenegems_broker_data:
     name: scenegems_broker_data
+  scenegems_postgres_data:
+    name: scenegems_postgres_data

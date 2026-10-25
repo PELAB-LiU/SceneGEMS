@@ -8,7 +8,8 @@ Everything needed to build and run SceneGEMS lives here. The repository root kee
 |------|---------|
 | `images/` | One folder per Docker image: `arduagent`, `gazebo`, `sitl`, `mavproxy`, `mqtt_broker`, and the four subsystem images `monitoring`, `scenario_generation`, `scenario_execution`, `trajectory_generation` |
 | `images/upstream_pins.env` | Upstream commits and base image digest the Gazebo and SITL images build from; passed as build arguments and written into `org.scenegems.*` image labels. apt and pip packages stay unpinned; their installed versions are recorded in `/etc/scenegems/package_versions` inside both images |
-| `master/docker-compose.yml` | The main stack: frontend, MQTT broker, backend |
+| `master/docker-compose.yml` | The main stack: frontend, MQTT broker, backend, and Postgres for the master's job store (`postgres`, volume `scenegems_postgres_data`) |
+| `master/.env.example` | Template of `master/.env` (gitignored), the master's secrets and ports; Compose reads `master/.env` itself. The `postgres` service refuses to start without `POSTGRES_PASSWORD`. Create the tables with `PYTHONPATH=src python -m scenegems_tool.persistence.migrate upgrade head` from `backend/` |
 | `scripts/build.sh` | Builds the images, skipping any whose inputs did not change |
 | `scripts/start.sh` | Starts the main stack and tails the backend logs |
 | `scripts/docker-common.sh` | Shared helpers: fingerprints, compose wrapper, volume setup |

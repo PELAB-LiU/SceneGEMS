@@ -1,0 +1,92 @@
+"""Jobs and their append-only history.
+
+A job row holds the submission, the queue state and the latest lease. The lease columns
+describe the most recent lease and are only active while the state is leased or running.
+Attempts count leases (the attempt number of the latest one); failed attempts count the
+leases that ended in a failure or an expiry, and max_attempts limits those.
+"""
+
+from datetime import datetime
+from enum import Enum
+from typing import Any, Dict, Optional
+
+from sqlalchemy import BigInteger, CheckConstraint, Float, ForeignKey, Identity, Index, Integer, String, Text, text
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column
+
+from scenegems_tool.cluster.protocol.jobs import JobState, JobType
+from scenegems_tool.persistence.schema.base import Base, enum_column, utc_timestamp
+
+
+class JobRow(Base):
+    __tablename__ = "job"
+    __table_args__ = (
+        CheckConstraint("max_attempts >= 1", name="max_attempts_positive"),
+        CheckConstraint("attempt >= 0", name="attempt_not_negative"),
+        CheckConstraint("failed_attempts >= 0 AND failed_attempts <= attempt", name="failed_attempts_within_attempts"),
+        CheckConstraint("state NOT IN ('leased', 'running') OR (lease_id IS NOT NULL AND lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL)", name="active_lease_complete"),
+        # The claim walks this index in queue order
+        Index("ix_job_queue_order", text("priority DESC"), "submitted_at", "seq", postgresql_where=text("state = 'queued'")),
+        Index("ix_job_active_lease_expiry", "lease_expires_at", postgresql_where=text("state IN ('leased', 'running')")),
+        Index("ix_job_lease_owner_state", "lease_owner", "state"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    seq: Mapped[int] = mapped_column(BigInteger, Identity(always=True), unique=True)  # submission order among equal timestamps
+    job_type: Mapped[JobType] = mapped_column(enum_column(JobType, "job_type"))
+    payload: Mapped[Dict[str, Any]] = mapped_column(JSONB)
+    # JobRequirements, one column each so the claim filters on them in SQL
+    required_labels: Mapped[Dict[str, str]] = mapped_column(JSONB)
+    required_fingerprints: Mapped[Dict[str, str]] = mapped_column(JSONB)
+    min_memory_mb: Mapped[int] = mapped_column(Integer)
+    min_cpus: Mapped[float] = mapped_column(Float)
+    priority: Mapped[int] = mapped_column(Integer)  # higher runs first
+    max_attempts: Mapped[int] = mapped_column(Integer)
+    idempotency_key: Mapped[str] = mapped_column(String(256), unique=True)
+
+    state: Mapped[JobState] = mapped_column(enum_column(JobState, "state"))
+    attempt: Mapped[int] = mapped_column(Integer)
+    failed_attempts: Mapped[int] = mapped_column(Integer)
+    lease_id: Mapped[Optional[str]] = mapped_column(String(36), unique=True)
+    lease_owner: Mapped[Optional[str]] = mapped_column(ForeignKey("node.id"))
+    lease_expires_at: Mapped[Optional[datetime]] = mapped_column(utc_timestamp())
+
+    submitted_at: Mapped[datetime] = mapped_column(utc_timestamp())
+    updated_at: Mapped[datetime] = mapped_column(utc_timestamp())
+    started_at: Mapped[Optional[datetime]] = mapped_column(utc_timestamp())  # first accepted lease
+    finished_at: Mapped[Optional[datetime]] = mapped_column(utc_timestamp())
+
+    result_attempt: Mapped[Optional[int]] = mapped_column(Integer)  # attempt whose result was stored last
+    result: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
+    error: Mapped[Optional[str]] = mapped_column(Text)
+
+
+class JobEventKind(str, Enum):
+    SUBMITTED = "submitted"
+    LEASED = "leased"  # claimed for a node and offered
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"  # the node refused the offer; back to the queue, no failed attempt
+    RELEASED = "released"  # the node gave the job back unfinished; back to the queue, no failed attempt
+    EXPIRED = "expired"  # the lease ran out; a failed attempt
+    ATTEMPT_FAILED = "attempt_failed"  # a retryable failure; back to the queue
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class JobEventRow(Base):
+    """One state change of a job. Rows are only ever inserted."""
+
+    __tablename__ = "job_event"
+    __table_args__ = (Index("ix_job_event_job_id_id", "job_id", "id"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("job.id", ondelete="CASCADE"))
+    at: Mapped[datetime] = mapped_column(utc_timestamp())
+    kind: Mapped[JobEventKind] = mapped_column(enum_column(JobEventKind, "kind"))
+    from_state: Mapped[Optional[JobState]] = mapped_column(enum_column(JobState, "from_state"))
+    to_state: Mapped[JobState] = mapped_column(enum_column(JobState, "to_state"))
+    attempt: Mapped[int] = mapped_column(Integer)
+    lease_id: Mapped[Optional[str]] = mapped_column(String(36))
+    node_id: Mapped[Optional[str]] = mapped_column(String(128))
+    detail: Mapped[Dict[str, Any]] = mapped_column(JSONB)

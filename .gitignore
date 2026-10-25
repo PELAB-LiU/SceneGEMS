@@ -3,6 +3,9 @@
 # MQTT broker runtime data
 deploy/images/mqtt_broker/data/broker/
 
+# Real env files hold secrets (master, node, remote); only the .env.example templates are tracked
+.env
+
 # Frontend
 frontend/.env
 frontend/node_modules/
