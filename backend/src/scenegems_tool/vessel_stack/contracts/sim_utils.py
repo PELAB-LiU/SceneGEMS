@@ -42,6 +42,10 @@ class Geofence:
     @property
     def center(self) -> np.ndarray:
         return np.array([self.latitude, self.longitude])
+
+    def contains(self, lat: float, lon: float) -> bool:
+        """Whether a WGS84 point lies within the geofence radius of its center (the border counts as inside)."""
+        return float(np.linalg.norm(self.to_coord(lat, lon))) <= self.radius_meters
     
 def to_true_north(heading: float, unit=Unit.RADIANS) -> float:
     if unit == Unit.RADIANS:
