@@ -24,7 +24,7 @@ Requirements: Docker with Compose v2 and Bash (Git Bash or WSL on Windows). From
 ./start.sh
 ```
 
-`build.sh` records a fingerprint of every image's inputs under `.docker-stamps/` and rebuilds only what changed. The first build after pulling the `deploy/` layout rebuilds every image once, because the fingerprint includes file paths.
+`build.sh` computes a fingerprint of every image's inputs (repository-relative paths, LF line endings, the pins file for images that declare pins), stores it in the image as the label `org.scenegems.fingerprint` and rebuilds only images whose label differs. The same commit gives the same fingerprints on Windows and Linux. `./build.sh --fingerprints` prints them without building. The first build after this change rebuilds every image once, because the fingerprint algorithm changed.
 
 Open http://localhost:5173 for the web console. Press Ctrl+C in the terminal that runs `start.sh` to stop the stack and the subsystem containers it started.
 

@@ -20,6 +20,7 @@ Present now:
     cluster/        distributed integration layer
         protocol/               typed, versioned master-node messages, jobs and pairing
         node/                   local subsystem launcher teardown, later the node daemon
+        fingerprints/           image build fingerprints: label reader, expected set, comparison
 
 Planned (added by later phases):
     assurance/      campaign configuration and the per-scenario pipeline
