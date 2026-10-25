@@ -5,16 +5,18 @@ scenegems_tool.backend_service.session. The session no longer polls a status: th
 pushes `simulation_status` messages, so the checks are on the messages and on the session objects.
 """
 
+import json
 from types import SimpleNamespace
 
 import pytest
 
+from logical_level.constraint_satisfaction.evaluation_data import EvaluationData
 from scenegems_tool.gateway.protocol import SimulationStatus
-from scenegems_tool.gateway.socket_session import SocketSession
+from scenegems_tool.gateway.socket_session import NO_TRAJECTORIES_MESSAGE, SocketSession
 from scenegems_tool.vessel_stack.contracts.roles import ControlLayerId, SimulationLayerId
 from scenegems_tool.workbench.empty_subsystem_integration_session import EmptySubsystemIntegrationSession
 from tests.scenegems_tool.gateway.conftest import settle
-from tests.scenegems_tool.vessel_stack.scenarios import encounter_trajectories, stack_instance
+from tests.scenegems_tool.vessel_stack.scenarios import encounter_scene, encounter_trajectories, stack_instance
 
 pytestmark = pytest.mark.anyio
 
@@ -105,7 +107,7 @@ class TestSimulationConfigValidation:
     async def loaded(self, session, monkeypatch):
         """A session whose scenario counts as loaded and whose simulation session records what it is given."""
         trajectories = encounter_trajectories("head_on", 20)
-        session.scenario_session = SimpleNamespace(is_initialized=True, trajectories=trajectories)
+        session.scenario_session = SimpleNamespace(is_initialized=True, has_trajectories=True, trajectories=trajectories)
         calls = SimpleNamespace(initialized=[], models=[])
         monkeypatch.setattr(session.subsystem_integration_session, "set_simulation_session", lambda **kwargs: calls.initialized.append(kwargs))
         monkeypatch.setattr(session.subsystem_integration_session.simulation_session, "generate_vessel_models", lambda scene, config: calls.models.append((scene, config)))
@@ -151,6 +153,56 @@ class TestSimulationConfigValidation:
         await settle()
         assert "Simulation configuration warning:" in capsys.readouterr().out
         assert len(loaded.initialized) == 1
+
+
+class TestScenarioWithoutTrajectories:
+    """A bare scene loaded into the workbench has its initial scene only: the simulation is refused, never fed invented trajectories."""
+
+    @pytest.fixture
+    async def bare(self, session, websocket, monkeypatch):
+        calls = SimpleNamespace(initialized=[], models=[])
+        monkeypatch.setattr(session.subsystem_integration_session, "set_simulation_session", lambda **kwargs: calls.initialized.append(kwargs))
+        content = json.dumps(EvaluationData(best_scene=encounter_scene("head_on"), timeout=1, random_seed=3).to_dict())
+        session.set_scenario_session("s1", "scene.json", "scene.json", content)  # replaces the simulation session
+        monkeypatch.setattr(session.subsystem_integration_session.simulation_session, "generate_vessel_models", lambda scene, config: calls.models.append((scene, config)))
+        await settle()
+        return calls
+
+    def errors(self, websocket):
+        return [payload["message"] for payload in websocket.sent if payload["type"] == "error"]
+
+    async def test_the_scene_is_loaded_without_trajectories(self, session, bare):
+        assert session.scenario_session.is_initialized
+        assert not session.scenario_session.has_trajectories
+
+    async def test_initializing_the_simulation_is_refused_with_the_reason(self, session, bare, websocket):
+        session.set_simulation_session(stack_instance(SimulationLayerId.ARDUPILOT_SIM, [0, 1], adapter_ids=["replay_arduagent_follower"]))
+        await settle()
+        assert bare.initialized == []
+        assert self.errors(websocket) == [NO_TRAJECTORIES_MESSAGE]
+        assert "generate trajectories first" in NO_TRAJECTORIES_MESSAGE and "monitor-driven RRT or straight" in NO_TRAJECTORIES_MESSAGE
+
+    async def test_the_refusal_comes_before_the_configuration_is_judged(self, session, bare, websocket):
+        session.set_simulation_session(stack_instance(SimulationLayerId.GAZEBO, [0], control_layer=ControlLayerId.NONE))
+        await settle()
+        assert self.errors(websocket) == [NO_TRAJECTORIES_MESSAGE]
+
+    async def test_vessel_models_can_still_be_generated_from_the_initial_scene(self, session, bare, websocket):
+        config = stack_instance(SimulationLayerId.ARDUPILOT_SIM, [0, 1], adapter_ids=["replay_arduagent_follower"])
+        session.generate_simulation_models(config)
+        await settle()
+        assert [(scene, given) for scene, given in bare.models] == [(session.scenario_session.trajectories.initial_scene, config)]
+        assert self.errors(websocket) == []
+
+    async def test_loading_trajectories_afterwards_allows_the_simulation(self, session, bare, websocket):
+        content = json.dumps(
+            {"trajectories": encounter_trajectories("head_on", 30).to_dict(), "algorithm_desc": "straight"},
+        )
+        session.set_scenario_session("s2", "planned.json", "planned.json", content)
+        await settle()
+        assert session.scenario_session.has_trajectories
+        session.set_simulation_session(stack_instance(SimulationLayerId.ARDUPILOT_SIM, [0, 1], adapter_ids=["replay_arduagent_follower"]))
+        assert len(bare.initialized) == 1
 
 
 class TestCancel:

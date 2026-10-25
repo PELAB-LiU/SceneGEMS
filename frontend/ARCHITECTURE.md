@@ -29,6 +29,7 @@ flowchart LR
 1. **Connect**: `BackendWsClient` to `VITE_WS_URL`
 2. **Generate scene**: `generate_scene` with functional spec + domain YAML -> `generated_scene`
 3. **Load scenario**: `load_scenario_file` -> `preview_trajectory_chunk`(s)
+   A bare scene loads as its initial scene only (`initial_state` with trajectory length 0); trajectories come from the trajectory generator (`generate_trajectories` with `generator` monitor_driven_rrt or straight), and the simulation workflow refuses to initialize without them.
 4. **Initialize simulation**: `initialize_simulation` -> `initial_state`
 5. **Run**: `start_simulation` -> `simulation_trajectory_chunk`(s) and live `frame` pushes
 

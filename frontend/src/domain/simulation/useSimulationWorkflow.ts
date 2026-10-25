@@ -16,6 +16,7 @@ import { buildFramesFromTrajectoryData } from "../sceneGeneration/parseEvaluatio
 import { useTrajectoryGenerationStore } from "../trajectoryGeneration/trajectoryGenerationStore";
 import { useConnectionStore } from "../../features/workbench/connection/connectionStore";
 import type { TrajectoryGenerationParamsWire } from "./wireTypes";
+import { missingTrajectoriesReason } from "./trajectoryGuard";
 
 let previewTrajectoryChunkQueue = Promise.resolve();
 let simulationTrajectoryChunkQueue = Promise.resolve();
@@ -58,6 +59,7 @@ export function useSimulationWorkflow() {
   const setMonitorStatus = usePlaybackStore((s) => s.setMonitorStatus);
   const setPlaying = usePlaybackStore((s) => s.setPlaying);
   const setLatestTimestamp = usePlaybackStore((s) => s.setLatestTimestamp);
+  const setScenarioTrajectoryLength = usePlaybackStore((s) => s.setScenarioTrajectoryLength);
   const setActiveScenarioId = usePlaybackStore((s) => s.setActiveScenarioId);
   const setFollowLatestPush = usePlaybackStore((s) => s.setFollowLatestPush);
   const setSpeed = usePlaybackStore((s) => s.setSpeed);
@@ -144,6 +146,7 @@ export function useSimulationWorkflow() {
           setActiveScenarioId(message.scenarioId ?? priorScenarioId);
           markSimulationInitialized();
           setPlaying(false);
+          setScenarioTrajectoryLength(message.totalTrajectoryLength);
           if (message.totalTrajectoryLength !== null) {
             setLatestTimestamp(message.totalTrajectoryLength);
           }
@@ -269,6 +272,7 @@ export function useSimulationWorkflow() {
           }
           tgStore.markResult({
             valid: message.valid,
+            complete: message.complete,
             scenarioJson:
               message.valid && message.trajectoryData
                 ? JSON.stringify(message.trajectoryData)
@@ -341,6 +345,7 @@ export function useSimulationWorkflow() {
       resetForNewScene,
       setError,
       setLatestTimestamp,
+      setScenarioTrajectoryLength,
       setPlaying,
       setSimulationStatus,
       setWarapsStatus,
@@ -466,6 +471,13 @@ export function useSimulationWorkflow() {
     },
     sendMessage: (message: ClientToServerMessage) => {
       if (message.type === "initialize_simulation") {
+        const missing = missingTrajectoriesReason(
+          usePlaybackStore.getState().scenarioTrajectoryLength
+        );
+        if (missing !== null) {
+          setError(missing);
+          return;
+        }
         prepareForSimulationReset();
         // Enter the local "initializing" state so the UI reflects the in-flight
         // request until the backend reports a concrete simulation_status.

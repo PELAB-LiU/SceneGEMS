@@ -215,6 +215,8 @@ class TrajectoryGenerationResultMessage(TypedDict, total=False):
     requestId: str
     trajectoryData: Optional[Dict[str, Any]]
     valid: bool
+    # Present when the subsystem sent it: false for the best partial path of a search that ended without a complete one.
+    complete: bool
     errorMessage: Optional[str]
 
 
@@ -309,14 +311,18 @@ def make_trajectory_generation_result_message(
     trajectory_data: Optional[Dict[str, Any]],
     valid: bool,
     error_message: Optional[str],
+    complete: Optional[bool] = None,
 ) -> TrajectoryGenerationResultMessage:
-    return TrajectoryGenerationResultMessage(
+    message = TrajectoryGenerationResultMessage(
         type="trajectory_generation_result",
         requestId=request_id,
         trajectoryData=trajectory_data,
         valid=bool(valid),
         errorMessage=error_message,
     )
+    if complete is not None:
+        message["complete"] = bool(complete)
+    return message
 
 
 def _parse_agent_port(connection: SimulationConnectionInfo) -> Optional[int]:

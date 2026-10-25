@@ -88,6 +88,12 @@ class TestMessageBuilders:
         result = make_trajectory_generation_result_message("r1", None, 0, "failed")
         assert result == {"type": "trajectory_generation_result", "requestId": "r1", "trajectoryData": None, "valid": False, "errorMessage": "failed"}
 
+    def test_trajectory_generation_result_carries_complete_only_when_given(self):
+        partial = make_trajectory_generation_result_message("r1", {"t": 1}, True, None, complete=False)
+        assert partial == {"type": "trajectory_generation_result", "requestId": "r1", "trajectoryData": {"t": 1}, "valid": True, "complete": False, "errorMessage": None}
+        assert make_trajectory_generation_result_message("r1", {"t": 1}, True, None, complete=True)["complete"] is True
+        assert "complete" not in make_trajectory_generation_result_message("r1", {"t": 1}, True, None)
+
     def test_chunk_messages(self):
         assert make_preview_chunk_message("s", 0, 9, [{"f": 1}]) == {"type": "preview_trajectory_chunk", "scenarioId": "s", "fromTimestamp": 0, "toTimestamp": 9, "frames": [{"f": 1}]}
         assert make_simulation_chunk_message("s", 10, 19, [])["type"] == "simulation_trajectory_chunk"

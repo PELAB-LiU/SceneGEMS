@@ -47,7 +47,7 @@ def test_the_result_says_whether_the_plan_is_complete():
     assert (message["valid"], message["complete"]) == (True, False)
 
 
-def test_a_cluster_job_gets_complete_and_the_workbench_its_message_as_before():
+def test_a_cluster_job_and_the_workbench_both_get_complete_when_the_service_sends_it():
     received, sent = [], []
     job_client = _client(on_result=lambda *args: received.append(args))
     workbench_client = _client(sent)
@@ -56,4 +56,5 @@ def test_a_cluster_job_gets_complete_and_the_workbench_its_message_as_before():
         deliver(client, client.planned_trajectory_topic, {**result, "complete": False})
         deliver(client, client.planned_trajectory_topic, result)  # a service from before the flag: complete means valid
     assert received == [("r1", {"t": 1}, True, False, None), ("r1", {"t": 1}, True, True, None)]
-    assert sent[0] == {"type": "trajectory_generation_result", "requestId": "r1", "trajectoryData": {"t": 1}, "valid": True, "errorMessage": None}
+    assert sent[0] == {"type": "trajectory_generation_result", "requestId": "r1", "trajectoryData": {"t": 1}, "valid": True, "complete": False, "errorMessage": None}
+    assert sent[1] == {"type": "trajectory_generation_result", "requestId": "r1", "trajectoryData": {"t": 1}, "valid": True, "errorMessage": None}  # no flag from the service, none in the message

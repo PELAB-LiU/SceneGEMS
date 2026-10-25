@@ -1,7 +1,10 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { GeneratedSceneData } from "../simulation/types";
-import type { TrajectoryGenerationParamsWire } from "../simulation/wireTypes";
+import type {
+  TrajectoryGenerationParamsWire,
+  TrajectoryGeneratorWire,
+} from "../simulation/wireTypes";
 
 /**
  * Advanced RRT parameter defaults. These mirror the class-level constants in
@@ -25,6 +28,17 @@ export type TrajectoryGenerationParams = {
   [K in keyof typeof TRAJECTORY_GENERATION_PARAM_DEFAULTS]: number;
 };
 
+/** The trajectory generator choices, in the order the control lists them. */
+export const TRAJECTORY_GENERATORS: { id: TrajectoryGeneratorWire; label: string }[] = [
+  { id: "monitor_driven_rrt", label: "Monitor-driven RRT" },
+  { id: "straight", label: "Straight" },
+];
+
+export const DEFAULT_TRAJECTORY_GENERATOR: TrajectoryGeneratorWire = "monitor_driven_rrt";
+
+/** Seconds the straight generator runs every vessel on from its initial state. */
+export const DEFAULT_STRAIGHT_TIMESPAN = 3600;
+
 export type TrajectoryGenerationStatus = "idle" | "running" | "done" | "error";
 
 export type TrajectoryGenerationTab = "generate" | "advanced" | "preview";
@@ -43,12 +57,21 @@ interface TrajectoryGenerationState {
    * result. Kept apart from `params` because those are all numeric form fields.
    */
   includeMonitorResults: boolean;
+  /** Which generator runs: the RRT search with `params`, or the straight one. */
+  generator: TrajectoryGeneratorWire;
+  /** Seconds of straight trajectory (the straight generator only). */
+  timespan: number;
   status: TrajectoryGenerationStatus;
   activeRequestId: string | null;
   iteration: number;
   /** Full-trajectory scenario JSON of the last result (persisted; drives the preview). */
   resultScenarioJson: string | null;
   resultValid: boolean;
+  /**
+   * Whether the last result is a complete plan. False is the best partial path of a
+   * search that ended without a complete one; null when the backend did not say.
+   */
+  resultComplete: boolean | null;
   errorMessage: string | null;
   /** Which bottom-panel tab is shown on the trajectory generation page. */
   activeTab: TrajectoryGenerationTab;
@@ -56,11 +79,14 @@ interface TrajectoryGenerationState {
   setHandoffScene: (scene: GeneratedSceneData | null, sourceName: string | null) => void;
   setParam: (key: keyof TrajectoryGenerationParams, value: number) => void;
   setIncludeMonitorResults: (value: boolean) => void;
+  setGenerator: (generator: TrajectoryGeneratorWire) => void;
+  setTimespan: (seconds: number) => void;
   resetParams: () => void;
   startRun: (requestId: string) => void;
   markPreview: (iteration: number) => void;
   markResult: (args: {
     valid: boolean;
+    complete?: boolean | null;
     scenarioJson: string | null;
     errorMessage: string | null;
   }) => void;
@@ -75,11 +101,14 @@ export const useTrajectoryGenerationStore = create<TrajectoryGenerationState>()(
       handoffSourceName: null,
       params: { ...TRAJECTORY_GENERATION_PARAM_DEFAULTS },
       includeMonitorResults: DEFAULT_INCLUDE_MONITOR_RESULTS,
+      generator: DEFAULT_TRAJECTORY_GENERATOR,
+      timespan: DEFAULT_STRAIGHT_TIMESPAN,
       status: "idle",
       activeRequestId: null,
       iteration: 0,
       resultScenarioJson: null,
       resultValid: false,
+      resultComplete: null,
       errorMessage: null,
       activeTab: "generate",
       setActiveTab: (activeTab) => set({ activeTab }),
@@ -92,11 +121,14 @@ export const useTrajectoryGenerationStore = create<TrajectoryGenerationState>()(
           iteration: 0,
           resultScenarioJson: null,
           resultValid: false,
+          resultComplete: null,
           errorMessage: null,
         }),
       setParam: (key, value) =>
         set((state) => ({ params: { ...state.params, [key]: value } })),
       setIncludeMonitorResults: (includeMonitorResults) => set({ includeMonitorResults }),
+      setGenerator: (generator) => set({ generator }),
+      setTimespan: (timespan) => set({ timespan }),
       resetParams: () =>
         set({
           params: { ...TRAJECTORY_GENERATION_PARAM_DEFAULTS },
@@ -109,15 +141,17 @@ export const useTrajectoryGenerationStore = create<TrajectoryGenerationState>()(
           iteration: 0,
           resultScenarioJson: null,
           resultValid: false,
+          resultComplete: null,
           errorMessage: null,
         }),
       markPreview: (iteration) => set({ iteration }),
-      markResult: ({ valid, scenarioJson, errorMessage }) =>
+      markResult: ({ valid, complete = null, scenarioJson, errorMessage }) =>
         set({
           status: errorMessage ? "error" : "done",
           activeRequestId: null,
           resultScenarioJson: scenarioJson,
           resultValid: valid,
+          resultComplete: complete,
           errorMessage,
         }),
       markStopped: () =>
@@ -131,6 +165,7 @@ export const useTrajectoryGenerationStore = create<TrajectoryGenerationState>()(
           iteration: 0,
           resultScenarioJson: null,
           resultValid: false,
+          resultComplete: null,
           errorMessage: null,
         }),
     }),
@@ -143,6 +178,8 @@ export const useTrajectoryGenerationStore = create<TrajectoryGenerationState>()(
       partialize: (state) => ({
         params: state.params,
         includeMonitorResults: state.includeMonitorResults,
+        generator: state.generator,
+        timespan: state.timespan,
         activeTab: state.activeTab,
         handoffScene: state.handoffScene,
         handoffSourceName: state.handoffSourceName,
@@ -150,6 +187,7 @@ export const useTrajectoryGenerationStore = create<TrajectoryGenerationState>()(
         iteration: state.iteration,
         resultScenarioJson: state.resultScenarioJson,
         resultValid: state.resultValid,
+        resultComplete: state.resultComplete,
         errorMessage: state.status === "running" ? null : state.errorMessage,
       }),
       migrate: (persisted) => persisted as Partial<TrajectoryGenerationState>,
@@ -157,11 +195,22 @@ export const useTrajectoryGenerationStore = create<TrajectoryGenerationState>()(
   )
 );
 
+/**
+ * The params of a `generate_trajectories` message. The RRT search sends all its tuning
+ * values; the straight generator needs only the step and the timespan, so nothing else
+ * of the search's form leaks into its request.
+ */
 export function toParamsWire(
   params: TrajectoryGenerationParams,
-  includeMonitorResults: boolean = DEFAULT_INCLUDE_MONITOR_RESULTS
+  includeMonitorResults: boolean = DEFAULT_INCLUDE_MONITOR_RESULTS,
+  generator: TrajectoryGeneratorWire = DEFAULT_TRAJECTORY_GENERATOR,
+  timespan: number = DEFAULT_STRAIGHT_TIMESPAN
 ): TrajectoryGenerationParamsWire {
+  if (generator === "straight") {
+    return { generator, timeStep: params.timeStep, timespan };
+  }
   return {
+    generator,
     timeStep: params.timeStep,
     timeout: params.timeout,
     maxIterations: params.maxIterations,

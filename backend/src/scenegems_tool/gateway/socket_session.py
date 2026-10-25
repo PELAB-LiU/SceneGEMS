@@ -19,6 +19,8 @@ from scenegems_tool.workbench.live_subsystem_integration_session import LiveSubs
 from scenegems_tool.workbench.scenario_session import ScenarioSession
 from scenegems_tool.workbench.subsystem_integration_session import SubsystemIntegrationSession
 
+NO_TRAJECTORIES_MESSAGE = "Cannot simulate without trajectories: generate trajectories first (monitor-driven RRT or straight). The simulation never invents trajectories."
+
 
 class SocketSession:
 
@@ -115,7 +117,12 @@ class SocketSession:
     def set_scenario_session(self, scenario_id: str, file_name: str, file_path: str, file_content: str) -> None:
         self.subsystem_integration_session.reset_simulation_session()
         self.scenario_session = LiveScenarioSession(
-            scenario_id=scenario_id, file_name=file_name, file_path=file_path, file_content=file_content, monitor_session=self.subsystem_integration_session.monitor_session, send_payload=self.send_payload
+            scenario_id=scenario_id,
+            file_name=file_name,
+            file_path=file_path,
+            file_content=file_content,
+            monitor_session=self.subsystem_integration_session.monitor_session,
+            send_payload=self.send_payload,
         )
 
     async def monitor_scene(self, request_id: str, scenario_content: str) -> None:
@@ -146,11 +153,14 @@ class SocketSession:
         return True
 
     def set_simulation_session(self, simulation_config: SimulationInstanceConfig) -> None:
-        if self.scenario_session.is_initialized:
-            if self._accept_simulation_config(simulation_config):
-                self.subsystem_integration_session.set_simulation_session(scenario_session=self.scenario_session, simulation_config=simulation_config)
+        if not self.scenario_session.is_initialized:
+            self.send_runtime_error("No scenario loaded")
             return
-        self.send_runtime_error("No scenario loaded")
+        if not self.scenario_session.has_trajectories:
+            self.send_runtime_error(NO_TRAJECTORIES_MESSAGE)
+            return
+        if self._accept_simulation_config(simulation_config):
+            self.subsystem_integration_session.set_simulation_session(scenario_session=self.scenario_session, simulation_config=simulation_config)
 
     def generate_simulation_models(self, simulation_config: SimulationInstanceConfig) -> None:
         if not self.scenario_session.is_initialized:

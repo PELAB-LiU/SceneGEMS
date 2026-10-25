@@ -55,8 +55,18 @@ export interface SimulationModelsPayload {
   connectionsByAgentId: Record<string, SimulationConnectionInfo>;
 }
 
-/** Advanced RRT tuning values sent with `generate_trajectories`. All optional. */
+/** The trajectory generators a pipeline chooses from (backend `TrajectoryGeneratorId`). */
+export type TrajectoryGeneratorWire = "monitor_driven_rrt" | "straight";
+
+/**
+ * Trajectory generation values sent with `generate_trajectories`. All optional.
+ * `generator` picks the generator (the RRT search when absent); the tuning values
+ * are the RRT search's, except `timeStep`, which sets the straight generator's step too.
+ */
 export interface TrajectoryGenerationParamsWire {
+  generator?: TrajectoryGeneratorWire;
+  /** Seconds, straight generator only; the backend uses one hour when absent. */
+  timespan?: number;
   timeStep?: number;
   timeout?: number;
   maxIterations?: number;

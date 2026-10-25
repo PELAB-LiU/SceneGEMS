@@ -8,6 +8,7 @@ import {
 } from "../../../domain/sceneGeneration/parseEvaluationDataFile";
 import {
   TRAJECTORY_GENERATION_PARAM_DEFAULTS,
+  TRAJECTORY_GENERATORS,
   toParamsWire,
   useTrajectoryGenerationStore,
   type TrajectoryGenerationParams,
@@ -18,6 +19,7 @@ import {
   summarizeTrajectoryResult,
   warnAboutTrajectoryRun,
 } from "../../../domain/trajectoryGeneration/summarizeTrajectoryResult";
+import type { TrajectoryGeneratorWire } from "../../../domain/simulation/wireTypes";
 import { AnimationPlaybackControls } from "./AnimationPlaybackControls";
 
 interface TrajectoryGenerationControlsProps {
@@ -67,11 +69,14 @@ export function TrajectoryGenerationControls({
   const handoffSourceName = useTrajectoryGenerationStore((s) => s.handoffSourceName);
   const params = useTrajectoryGenerationStore((s) => s.params);
   const includeMonitorResults = useTrajectoryGenerationStore((s) => s.includeMonitorResults);
+  const generator = useTrajectoryGenerationStore((s) => s.generator);
+  const timespan = useTrajectoryGenerationStore((s) => s.timespan);
   const status = useTrajectoryGenerationStore((s) => s.status);
   const iteration = useTrajectoryGenerationStore((s) => s.iteration);
   const errorMessage = useTrajectoryGenerationStore((s) => s.errorMessage);
   const resultValid = useTrajectoryGenerationStore((s) => s.resultValid);
   const resultScenarioJson = useTrajectoryGenerationStore((s) => s.resultScenarioJson);
+  const resultComplete = useTrajectoryGenerationStore((s) => s.resultComplete);
   const storedTab = useTrajectoryGenerationStore((s) => s.activeTab);
   // A tab persisted before the monitor tab moved to the Connections page falls back to Generate.
   const activeTab = TABS.some((t) => t.id === storedTab) ? storedTab : "generate";
@@ -80,6 +85,8 @@ export function TrajectoryGenerationControls({
   const setIncludeMonitorResults = useTrajectoryGenerationStore(
     (s) => s.setIncludeMonitorResults
   );
+  const setGenerator = useTrajectoryGenerationStore((s) => s.setGenerator);
+  const setTimespan = useTrajectoryGenerationStore((s) => s.setTimespan);
   const resetParams = useTrajectoryGenerationStore((s) => s.resetParams);
   const setHandoffScene = useTrajectoryGenerationStore((s) => s.setHandoffScene);
 
@@ -87,8 +94,11 @@ export function TrajectoryGenerationControls({
   const sceneFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const running = status === "running";
+  const straight = generator === "straight";
+  const timespanValid = Number.isFinite(timespan) && timespan > 0;
   const connected = streamStatus === "connected";
-  const canGenerate = connected && !running && handoffScene?.valid === true;
+  const canGenerate =
+    connected && !running && handoffScene?.valid === true && (!straight || timespanValid);
   const hasResult = status === "done" && resultValid && !!resultScenarioJson;
 
   // Restore the last generated trajectory as the on-canvas preview whenever the page
@@ -136,6 +146,10 @@ export function TrajectoryGenerationControls({
   }, [resultScenarioJson, running]);
 
   const runWarning = runSummary ? warnAboutTrajectoryRun(runSummary) : null;
+  // The search reports a partial best path as a result too; only an explicit false says so.
+  const partialPlan = resultComplete === false;
+  // The straight generator takes the time step only; the rest of the form is the search's.
+  const paramFields = straight ? PARAM_FIELDS.filter(({ key }) => key === "timeStep") : PARAM_FIELDS;
 
   const handleGenerate = useCallback(() => {
     if (!handoffScene?.valid) {
@@ -150,14 +164,16 @@ export function TrajectoryGenerationControls({
       crypto.randomUUID(),
       scenarioContent,
       colregsConstraintsContent,
-      toParamsWire(params, includeMonitorResults)
+      toParamsWire(params, includeMonitorResults, generator, timespan)
     );
   }, [
     colregsConstraintsContent,
+    generator,
     handoffScene,
     includeMonitorResults,
     params,
     streamControls,
+    timespan,
   ]);
 
   const handleSceneFileSelected = useCallback(
@@ -202,10 +218,12 @@ export function TrajectoryGenerationControls({
   }, [resultScenarioJson]);
 
   const statusLabel = running
-    ? `Planning… iteration ${iteration}`
+    ? straight
+      ? "Generating straight trajectories…"
+      : `Planning… iteration ${iteration}`
     : status === "done"
       ? resultValid
-        ? runWarning
+        ? partialPlan || runWarning
           ? "Stopped early - partial trajectory"
           : "Planned trajectory ready"
         : "Finished without a usable trajectory"
@@ -239,6 +257,48 @@ export function TrajectoryGenerationControls({
         <div className="animation-control-stack">
           <section className="animation-control-group" aria-label="Trajectory generation run">
             <h4 className="animation-control-group-title">Run</h4>
+            <div className="toolbar-row" style={{ alignItems: "flex-end" }}>
+              <label className="field">
+                <span>Generator</span>
+                <select
+                  value={generator}
+                  disabled={running}
+                  onChange={(e) => setGenerator(e.target.value as TrajectoryGeneratorWire)}
+                  aria-label="Trajectory generator"
+                >
+                  {TRAJECTORY_GENERATORS.map(({ id, label }) => (
+                    <option key={id} value={id}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {straight && (
+                <label className="toolbar-timeout">
+                  <span className="toolbar-timeout-label">Timespan (s)</span>
+                  <input
+                    className="toolbar-timeout-input"
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={timespan}
+                    disabled={running}
+                    onChange={(e) => {
+                      const value = Number(e.target.value);
+                      if (Number.isFinite(value)) {
+                        setTimespan(value);
+                      }
+                    }}
+                    aria-label="Timespan (s)"
+                  />
+                </label>
+              )}
+            </div>
+            <p className="meta">
+              {straight
+                ? "Every vessel goes straight on from its initial state for the timespan. Nothing is searched, so the result is ready at once and always complete."
+                : "Searches for compliant manoeuvres, guided by the COLREGS monitor. Tune it on the Advanced settings tab."}
+            </p>
             <div className="toolbar-row">
               <button
                 className="primary-btn accent"
@@ -268,6 +328,13 @@ export function TrajectoryGenerationControls({
             {status === "done" && runSummary && (
               <div className="trajectory-run-report" role="status">
                 <p className="meta">{describeTrajectoryRun(runSummary)}</p>
+                {resultComplete !== null && (
+                  <p className={`meta${partialPlan ? " warning" : ""}`} role={partialPlan ? "alert" : undefined}>
+                    {partialPlan
+                      ? "Partial plan: the search ended without reaching a complete trajectory, so this is the best path it found."
+                      : "Complete plan."}
+                  </p>
+                )}
                 {runWarning && (
                   <p className="meta warning" role="alert">
                     {runWarning}
@@ -330,7 +397,7 @@ export function TrajectoryGenerationControls({
             </div>
             <p className="meta">
               {hasResult
-                ? runWarning
+                ? partialPlan || runWarning
                   ? "The partial trajectory is shown on the canvas and can still be simulated and exported, with the COLREGS monitor results the planner recorded for it."
                   : "The last generated trajectory is restored here and shown on the canvas, with the COLREGS monitor results the planner recorded for it."
                 : "Generate or load a trajectory to enable simulation and export."}
@@ -349,10 +416,15 @@ export function TrajectoryGenerationControls({
         </div>
       ) : activeTab === "advanced" ? (
         <div className="animation-control-stack">
-          <section className="animation-control-group" aria-label="Advanced RRT parameters">
-            <h4 className="animation-control-group-title">RRT parameters</h4>
+          <section
+            className="animation-control-group"
+            aria-label={straight ? "Straight generator parameters" : "Advanced RRT parameters"}
+          >
+            <h4 className="animation-control-group-title">
+              {straight ? "Straight parameters" : "RRT parameters"}
+            </h4>
             <div className="toolbar-row trajectory-advanced-params">
-              {PARAM_FIELDS.map(({ key, label, step }) => (
+              {paramFields.map(({ key, label, step }) => (
                 <label key={key} className="toolbar-timeout">
                   <span className="toolbar-timeout-label">{label}</span>
                   <input
@@ -372,31 +444,40 @@ export function TrajectoryGenerationControls({
                 </label>
               ))}
             </div>
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={includeMonitorResults}
-                disabled={running}
-                onChange={(e) => setIncludeMonitorResults(e.target.checked)}
-              />
-              Include monitor results in previews
-            </label>
-            <p className="meta">
-              On, the planner attaches the COLREGS monitor output it recorded for every
-              scene, which fills the side panel and draws the domains on the canvas while
-              planning. Off keeps previews small on long runs with many encounters: the
-              canvas still shows the trajectory, but without monitor data.
-            </p>
-            <div className="toolbar-row">
-              <button type="button" disabled={running} onClick={resetParams}>
-                Reset to defaults ({TRAJECTORY_GENERATION_PARAM_DEFAULTS.timeStep}s step)
-              </button>
-            </div>
-            <p className="meta">
-              Terminates on Stop, the timeout, or the max-iteration cap - whichever
-              comes first. Preview interval controls how often the best-so-far
-              trajectory is streamed to the canvas.
-            </p>
+            {straight ? (
+              <p className="meta">
+                The straight generator samples every vessel at this step for the timespan set on
+                the Generate tab. The search settings of the monitor-driven RRT do not apply.
+              </p>
+            ) : (
+              <>
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={includeMonitorResults}
+                    disabled={running}
+                    onChange={(e) => setIncludeMonitorResults(e.target.checked)}
+                  />
+                  Include monitor results in previews
+                </label>
+                <p className="meta">
+                  On, the planner attaches the COLREGS monitor output it recorded for every
+                  scene, which fills the side panel and draws the domains on the canvas while
+                  planning. Off keeps previews small on long runs with many encounters: the
+                  canvas still shows the trajectory, but without monitor data.
+                </p>
+                <div className="toolbar-row">
+                  <button type="button" disabled={running} onClick={resetParams}>
+                    Reset to defaults ({TRAJECTORY_GENERATION_PARAM_DEFAULTS.timeStep}s step)
+                  </button>
+                </div>
+                <p className="meta">
+                  Terminates on Stop, the timeout, or the max-iteration cap - whichever
+                  comes first. Preview interval controls how often the best-so-far
+                  trajectory is streamed to the canvas.
+                </p>
+              </>
+            )}
           </section>
         </div>
       ) : (

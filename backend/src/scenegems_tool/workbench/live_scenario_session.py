@@ -9,7 +9,7 @@ from logical_level.constraint_satisfaction.evaluation_data import EvaluationData
 from scenegems_tool.gateway.protocol import ServerMessage, make_initial_state_message
 from scenegems_tool.subsystems.monitoring.monitor_session import MonitorSession, iter_scene_batches
 from scenegems_tool.workbench.scenario_session import ScenarioSession
-from utils.global_constants import ONE_HOUR_IN_SEC, ONE_SECOND
+from utils.global_constants import ONE_SECOND
 
 
 class LiveScenarioSession(ScenarioSession):
@@ -22,11 +22,14 @@ class LiveScenarioSession(ScenarioSession):
         if isinstance(raw_data, dict) and raw_data.get("trajectories") is not None:
             trajectory_data: TrajectoryData = TrajectoryData.from_payload(raw_data)
             trajectory_builder = TrajectoryBuilder(trajectory_data.trajectories.time_step, trajectory_data.trajectories.scene_list).convert_to_time_step(ONE_SECOND)
+            trajectory_builder = trajectory_builder.simulate_acceleration_from_zero().shift_positions_to_zero()
         else:
+            # A bare scene is a scenario of its initial scene only. The trajectories come from a
+            # trajectory generator (monitor driven RRT or straight); the workbench never appends any.
             eval_data: EvaluationData = EvaluationData.from_dict(raw_data)
-            trajectory_builder = TrajectoryBuilder.default_builder_from_scene(eval_data.best_scene, ONE_SECOND, ONE_HOUR_IN_SEC)
+            trajectory_builder = TrajectoryBuilder(ONE_SECOND, [eval_data.best_scene]).shift_positions_to_zero()
 
-        trajectories = trajectory_builder.simulate_acceleration_from_zero().shift_positions_to_zero().build()
+        trajectories = trajectory_builder.build()
         self._scenario_id = scenario_id
         self.file_name = file_name
         self.file_path = file_path
@@ -60,7 +63,7 @@ class LiveScenarioSession(ScenarioSession):
 
     @property
     def is_initialized(self) -> bool:
-        return self.trajectory_length > 0
+        return len(self.trajectories) > 0
 
     @property
     def trajectories(self) -> Trajectories:
