@@ -1,6 +1,6 @@
 """The release bundle: what a deployment tool installs on a machine to run a master or a node.
 
-SceneGEMS does not deploy itself. An external tool (waraops) sets up the VPN between the
+SceneGEMS does not deploy itself. An external tool (Machine Hub) sets up the VPN between the
 machines and installs a release bundle on each machine it is given a role for. The bundle
 holds no source code, only what the machine runs:
 

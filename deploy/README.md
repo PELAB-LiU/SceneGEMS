@@ -3,7 +3,7 @@
 Everything needed to build SceneGEMS images and run them lives here. SceneGEMS runs in two ways:
 
 - **Workbench**: everything on this machine, started with `./start.sh`.
-- **Cluster**: a master and any number of nodes on other machines. SceneGEMS does not install machines or set up their network. An external deployment tool (waraops) connects the machines over a WireGuard VPN and installs a release bundle on each one. SceneGEMS then uses whatever machines are ready.
+- **Cluster**: a master and any number of nodes on other machines. SceneGEMS does not install machines or set up their network. An external deployment tool (Machine Hub) connects the machines over a WireGuard VPN and installs a release bundle on each one. SceneGEMS then uses whatever machines are ready.
 
 The repository root keeps two thin wrappers, `./build.sh` and `./start.sh`, that call the scripts in `deploy/scripts/`.
 
