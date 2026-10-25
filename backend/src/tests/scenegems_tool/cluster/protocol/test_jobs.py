@@ -12,6 +12,7 @@ def test_job_type_wire_values_are_stable():
         "simulation.kinematic",
         "simulation.ardupilot",
         "monitoring.post_hoc",
+        "calibration.deviation",
     }
 
 

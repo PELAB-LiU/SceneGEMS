@@ -30,7 +30,7 @@ class MqttScenarioGenerationService(MqttClient):
         self.max_workers = max_workers
         super().__init__(SCENARIO_GENERATION_SERVICE_NAME, SCENARIO_GENERATION_SERVICE_TOPIC, mqtt_connection, reference_geofence)
         self.scene_generation_task_queue: Queue[MqttSceneGenerationTask] = Queue()
-        self.generated_scene_queue: Queue[Tuple[MqttSceneGenerationTask, EvaluationData]] = Queue()
+        self.generated_scene_queue: Queue[Tuple[MqttSceneGenerationTask, EvaluationData, bool]] = Queue()  # task, scene, final
         self.terminate_last_generation_event = multiprocessing.Event()
         self.current_tasks: List[MqttSceneGenerationTask] = []
         self._active_workers: List[Process] = []
@@ -72,6 +72,7 @@ class MqttScenarioGenerationService(MqttClient):
                 obstacle_types_content=payload["task"]["params"]["obstacle-types-content"],
                 timeout=payload["task"]["params"]["timeout"],
                 enforce_low_tcpa=bool(payload["task"]["params"].get("enforce-low-tcpa", False)),
+                seed=payload["task"]["params"].get("seed"),
             )
             self.scene_generation_task_queue.put_nowait(task)
             self.current_tasks.append(task)
@@ -132,7 +133,7 @@ class MqttScenarioGenerationService(MqttClient):
         str_direct_execution_info_command = json.dumps(direct_execution_info_command)
         self.client.publish(self.direct_execution_topic, str_direct_execution_info_command, qos=1)
 
-    def publish_generated_scene(self, task: MqttSceneGenerationTask, evaluation_data: EvaluationData):
+    def publish_generated_scene(self, task: MqttSceneGenerationTask, evaluation_data: EvaluationData, final: bool = True):
         generated_scene_command = {
             "stamp": time.time(),
             "task_sender": task.sender,
@@ -141,6 +142,7 @@ class MqttScenarioGenerationService(MqttClient):
             "generated-frame": serialize_frame(scenario_id=task.request_id, scene=evaluation_data.best_scene, timestamp=0, time_step=1),
             "evaluation-data": evaluation_data.to_dict(),
             "valid": bool(evaluation_data.is_valid),
+            "final": bool(final),  # the worker's last scene for the task; earlier ones are search progress
         }
         str_generated_scene_command = json.dumps(generated_scene_command)
         self.client.publish(self.generated_scene_topic, str_generated_scene_command, qos=1)
@@ -173,8 +175,8 @@ class MqttScenarioGenerationService(MqttClient):
                 continue
             if not self.is_connected:
                 continue
-            task, eval_data = result
-            self.publish_generated_scene(task, eval_data)
+            task, eval_data, final = result
+            self.publish_generated_scene(task, eval_data, final)
             self.current_tasks = [current_task for current_task in self.current_tasks if current_task.task_uuid != task.task_uuid]
 
     def _terminate_active_workers(self) -> None:

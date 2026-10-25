@@ -10,3 +10,5 @@ colav-automaton @ https://github.com/michaelstolberger27/usv-navigation/archive/
 pymavlink==2.4.50
 # Job payloads and the cluster protocol of per-job runner containers (scenegems_tool.cluster.node.jobs)
 pydantic==2.13.4
+# The COLREGS monitor of the live monitor in kinematic runs (utils/interval.py)
+portion

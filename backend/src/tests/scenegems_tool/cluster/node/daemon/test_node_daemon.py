@@ -32,6 +32,7 @@ from scenegems_tool.cluster.protocol.messages import (
     Welcome,
 )
 from scenegems_tool.cluster.protocol.node_description import CapabilityOffer
+from scenegems_tool.cluster.protocol.version import PROTOCOL_VERSION
 from scenegems_tool.cluster.security.certificates.certificate_authority import CertificateAuthority
 from scenegems_tool.cluster.security.credentials.node_credentials import revoke_node_credential
 from tests.scenegems_tool.cluster.node.daemon.conftest import FINGERPRINTS, make_job, make_offer, wait_for
@@ -295,12 +296,12 @@ def test_shutdown_releases_running_leases(fake_master, node_configuration, start
 
 def test_a_master_of_another_protocol_version_stops_the_daemon(fake_master, node_configuration, start_daemon):
     def newer_welcome(_hello):
-        return json.dumps({"type": "welcome", "protocol_version": 2, "master_id": fake_master.security.master_id, "heartbeat_interval_s": 1.0, "lease_timeout_s": 3.0})
+        return json.dumps({"type": "welcome", "protocol_version": PROTOCOL_VERSION + 1, "master_id": fake_master.security.master_id, "heartbeat_interval_s": 1.0, "lease_timeout_s": 3.0})
 
     fake_master.hello_reply = newer_welcome
     error = start_daemon(node_configuration()).wait_exit()
     assert isinstance(error, DaemonStopped)
-    assert "received 2, this side speaks 1" in str(error)
+    assert f"received {PROTOCOL_VERSION + 1}, this side speaks {PROTOCOL_VERSION}" in str(error)
 
 
 def test_a_version_mismatch_error_from_the_master_stops_the_daemon(fake_master, node_configuration, start_daemon):

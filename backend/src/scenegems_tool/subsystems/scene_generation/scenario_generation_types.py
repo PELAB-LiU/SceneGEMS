@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Optional
 
 # Kept apart from the service module, which imports the generation code, so launchers and
 # clients can name the service without loading it.
@@ -18,3 +19,4 @@ class MqttSceneGenerationTask:
     obstacle_types_content: str
     timeout: int
     enforce_low_tcpa: bool = False
+    seed: Optional[int] = None  # seeds random and numpy at task start; a fresh seed when None

@@ -7,18 +7,21 @@ from scenegems_tool.cluster.master.api.master_apps import create_operator_app
 from scenegems_tool.cluster.master.api.operator_routes import NODES_PATH, STATUS_PATH
 from scenegems_tool.cluster.master.control_plane import ControlPlane
 from scenegems_tool.cluster.master.scheduling.fingerprint_policy import ExpectedFingerprints
+from scenegems_tool.cluster.protocol.jobs import JobType
 from scenegems_tool.cluster.protocol.messages import Cancel, Drain, JobStatus, LeaseOffer, LogLine, LogLines, LogStream
 from scenegems_tool.cluster.protocol.routes import JOBS_PATH
 from tests.scenegems_tool.cluster.master.conftest import EXPECTED, KINEMATIC, SCENE
+from tests.scenegems_tool.cluster.payloads import valid_payload
 
 
 def _submit(client, **body):
     body.setdefault("job_type", SCENE.value)
+    body.setdefault("payload", valid_payload(JobType(body["job_type"])) if body["job_type"] in {job_type.value for job_type in JobType} else {})
     return client.post(JOBS_PATH, json=body)
 
 
 def test_a_submission_is_queued_with_the_expected_fingerprints(client):
-    response = _submit(client, payload={"scene": 1}, priority=3)
+    response = _submit(client, payload=valid_payload(SCENE, seed=1), priority=3)
     assert response.status_code == 201
     job = response.json()
     assert job["state"] == "queued" and job["priority"] == 3 and job["attempt"] == 0
@@ -27,7 +30,7 @@ def test_a_submission_is_queued_with_the_expected_fingerprints(client):
 
 def test_a_known_idempotency_key_returns_the_first_job(client):
     first = _submit(client, idempotency_key="scene-42")
-    second = _submit(client, idempotency_key="scene-42", payload={"other": True})
+    second = _submit(client, idempotency_key="scene-42", payload=valid_payload(SCENE, seed=2))
     assert (first.status_code, second.status_code) == (201, 200)
     assert first.json()["job_id"] == second.json()["job_id"]
 
@@ -36,6 +39,15 @@ def test_an_invalid_submission_is_refused(client):
     assert _submit(client, unknown_field=1).status_code == 422
     assert _submit(client, job_type="no.such.type").status_code == 422
     assert _submit(client, max_attempts=0).status_code == 422
+
+
+def test_a_payload_that_does_not_match_its_job_type_is_answered_with_422(client):
+    response = _submit(client, job_type=KINEMATIC.value, payload={"trajectories": {"time_step": 1, "scene_list": []}})
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["job_type"] == "simulation.kinematic" and "no scene" in detail["message"]
+    assert [error["loc"] for error in detail["errors"]] == [["trajectories", "inline"]]
+    assert client.get(JOBS_PATH).json() == []
 
 
 def test_submissions_wait_for_the_expected_fingerprints(stores, clock):
@@ -65,7 +77,7 @@ def test_job_queries(client, make_node, schedule):
     detail = client.get(f"{JOBS_PATH}/{first['job_id']}").json()
     assert detail["state"] == "running" and detail["lease_owner"] == node.node_id
     assert [event["kind"] for event in detail["events"]] == ["submitted", "leased", "accepted"]
-    assert detail["payload"] == {} and detail["log_lines"] == []
+    assert detail["payload"] == valid_payload(SCENE) and detail["log_lines"] == []
     assert client.get(f"{JOBS_PATH}/no-such-job").status_code == 404
 
 

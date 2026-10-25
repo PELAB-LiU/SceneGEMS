@@ -70,6 +70,7 @@ class MqttTrajectoryGenerationService(MqttClient):
                 scenario_content=task_params["scenario-content"],
                 colregs_constraints_content=task_params["colregs-constraints-content"],
                 params=TrajectoryGenerationParams.from_task_params(task_params.get("params", {})),
+                seed=task_params.get("seed"),
             )
             if self.max_workers == 1:
                 # Single-worker subsystem (the workbench): a new request supersedes whatever is running.
@@ -129,7 +130,7 @@ class MqttTrajectoryGenerationService(MqttClient):
         }
         self.client.publish(self.planned_trajectory_preview_topic, json.dumps(command), qos=1)
 
-    def publish_result(self, task: MqttTrajectoryGenerationTask, trajectory_data: Optional[dict], valid: bool, error_message: Optional[str]) -> None:
+    def publish_result(self, task: MqttTrajectoryGenerationTask, trajectory_data: Optional[dict], valid: bool, error_message: Optional[str], complete: bool = False) -> None:
         command = {
             "stamp": time.time(),
             "task_sender": task.sender,
@@ -137,6 +138,7 @@ class MqttTrajectoryGenerationService(MqttClient):
             "request-id": task.request_id,
             "trajectory-data": trajectory_data,
             "valid": bool(valid),
+            "complete": bool(complete),  # a complete plan; false for the best partial path, which is still valid
             "error-message": error_message,
         }
         self.client.publish(self.planned_trajectory_topic, json.dumps(command), qos=1)
@@ -172,9 +174,9 @@ class MqttTrajectoryGenerationService(MqttClient):
             except queue.Empty:
                 pass
             try:
-                task, trajectory_data, valid, error_message = self.result_queue.get_nowait()
+                task, trajectory_data, valid, complete, error_message = self.result_queue.get_nowait()
                 if self.is_connected:
-                    self.publish_result(task, trajectory_data, valid, error_message)
+                    self.publish_result(task, trajectory_data, valid, error_message, complete)
                 self.current_tasks = [t for t in self.current_tasks if t.task_uuid != task.task_uuid]
                 published = True
             except queue.Empty:

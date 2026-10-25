@@ -16,11 +16,12 @@ from concrete_level.trajectory_generation.trajectory_data import MONITOR_FRAMES_
 from concrete_level.trajectory_generation.trajectory_generator import TIME_STEP as DEFAULT_TIME_STEP
 from logical_level.constraint_satisfaction.evaluation_data import EvaluationData
 from scenegems_tool.gateway.serialization import serialize_monitored_trajectory
-from scenegems_tool.subsystems.trajectory_generation.trajectory_generation_types import MqttTrajectoryGenerationTask
+from scenegems_tool.subsystems.trajectory_generation.straight_trajectory_generator import straight_trajectory_data
+from scenegems_tool.subsystems.trajectory_generation.trajectory_generation_types import MqttTrajectoryGenerationTask, TrajectoryGeneratorId
 from utils.colregs_approximations import COLREGSConstraints
 from utils.global_constants import ONE_HOUR_IN_SEC
 
-_SEED = 1234
+_SEED = 1234  # every task's seed unless the task names one
 _MIN_PREVIEW_INTERVAL_SEC = 1.0
 
 TrajectoryDataFactory = Callable[[Trajectories, int], TrajectoryData]
@@ -51,7 +52,7 @@ def _scenario_name(scenario_content: str) -> str:
     return "trajectory_generation"
 
 
-def _make_trajectory_data_factory(scenario_content: str, start_time: datetime) -> TrajectoryDataFactory:
+def _make_trajectory_data_factory(scenario_content: str, start_time: datetime, seed: int) -> TrajectoryDataFactory:
     config_name = _scenario_name(scenario_content)
 
     def _factory(trajectories: Trajectories, iteration: int) -> TrajectoryData:
@@ -62,7 +63,7 @@ def _make_trajectory_data_factory(scenario_content: str, start_time: datetime) -
             algorithm_desc="RRTStar_algo",
             config_name=config_name,
             scene_path=None,
-            random_seed=_SEED,
+            random_seed=seed,
             timestamp=datetime.now().isoformat(),
             trajectories=trajectories,
             overall_eval_time=elapsed,
@@ -137,21 +138,22 @@ def _emit_result(
         trajectories, iter_number = rrt.plan_trajectory()
         valid = trajectories is not None and len(trajectories) > 1
         payload = _trajectory_payload(factory(trajectories, iter_number), _current_monitored_trajectory(rrt, include_monitor_results))
-        result_queue.put((task, payload, valid, None))
+        result_queue.put((task, payload, valid, valid, None))
         return
     except Exception as exc:
         error = str(exc)
 
-    # Per spec: return the best partial path when the search ends without a complete one.
+    # Per spec: return the best partial path when the search ends without a complete one. It
+    # stays valid for the workbench, and complete false tells the two apart.
     try:
         partial = rrt.current_best_trajectories()
     except Exception:
         partial = None
     if partial is not None and len(partial) > 1:
         payload = _trajectory_payload(factory(partial, rrt.iteration_count), _current_monitored_trajectory(rrt, include_monitor_results))
-        result_queue.put((task, payload, True, None))
+        result_queue.put((task, payload, True, False, None))
     else:
-        result_queue.put((task, None, False, f"No trajectory could be planned: {error}"))
+        result_queue.put((task, None, False, False, f"No trajectory could be planned: {error}"))
 
 
 def run_trajectory_generation_worker(
@@ -160,8 +162,9 @@ def run_trajectory_generation_worker(
     result_queue,
     terminate_event: Event,
 ) -> None:
-    random.seed(_SEED)
-    np.random.seed(_SEED)
+    seed = task.seed if task.seed is not None else _SEED
+    random.seed(seed)
+    np.random.seed(seed)
 
     params = task.params
     time_step = int(params.time_step) if params.time_step else DEFAULT_TIME_STEP
@@ -173,11 +176,17 @@ def run_trajectory_generation_worker(
         initial_scene = _parse_initial_scene(task.scenario_content)
         colregs_constants = COLREGSConstraints.from_file_content(task.colregs_constraints_content)
     except Exception as exc:
-        result_queue.put((task, None, False, f"Failed to load scenario: {exc}"))
+        result_queue.put((task, None, False, False, f"Failed to load scenario: {exc}"))
         return
 
+    if params.generator_id == TrajectoryGeneratorId.STRAIGHT:
+        trajectory_data = straight_trajectory_data(initial_scene, time_step, params.timespan, _scenario_name(task.scenario_content), seed)
+        result_queue.put((task, trajectory_data.to_dict(), True, True, None))
+        return
+
+    # The search plans one vessel against the others going straight on; that is part of the search.
     other_trajectories = TrajectoryBuilder.default_trajectory_from_scene(initial_scene, time_step, ONE_HOUR_IN_SEC)
-    factory = _make_trajectory_data_factory(task.scenario_content, datetime.now())
+    factory = _make_trajectory_data_factory(task.scenario_content, datetime.now(), seed)
     last_preview_mono = 0.0
 
     def _termination_signal() -> bool:

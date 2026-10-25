@@ -1,7 +1,7 @@
 import json
 import time
 import uuid
-from typing import Any, Callable, List
+from typing import Any, Callable, Dict, List, Optional
 
 import paho.mqtt.client as mqtt
 
@@ -9,6 +9,9 @@ from scenegems_tool.gateway.protocol import ServerMessage, make_trajectory_gener
 from scenegems_tool.messaging.mqtt_client import MqttClient, MQttConnectionInfo
 from scenegems_tool.subsystems.trajectory_generation.trajectory_generation_types import TrajectoryGenerationParams
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+
+# (request_id, trajectory_data, valid, complete, error_message): the result as the service sent it.
+TrajectoryResultHandler = Callable[[str, Optional[Dict[str, Any]], bool, bool, Optional[str]], None]
 
 
 class MqttTrajectoryGenerationClient(MqttClient):
@@ -19,10 +22,12 @@ class MqttTrajectoryGenerationClient(MqttClient):
         reference_geofence: Geofence,
         parent_service_name: str,
         send_payload: Callable[[ServerMessage], None],
+        on_result: Optional[TrajectoryResultHandler] = None,
     ):
         super().__init__(name="trajectory_generation_client", topic=topic, mqtt_connection=mqtt_connection, reference_geofence=reference_geofence)
         self.parent_service_name = parent_service_name
         self.send_payload = send_payload
+        self.on_result = on_result  # when set, it gets the result instead of send_payload (cluster jobs); previews still go to send_payload
         self.last_heartbeat_timestamp = 0.0
         self.timeout_sec = 10.0
         self.heartbeat_interval_sec = 5.0
@@ -50,6 +55,11 @@ class MqttTrajectoryGenerationClient(MqttClient):
                 )
             case self.planned_trajectory_topic:
                 if payload["task_sender"] != self.parent_service_name:
+                    return
+                if self.on_result is not None:
+                    valid = bool(payload.get("valid", False))
+                    # A service from before the complete flag reported a partial path as valid.
+                    self.on_result(payload["request-id"], payload.get("trajectory-data"), valid, bool(payload.get("complete", valid)), payload.get("error-message"))
                     return
                 self.send_payload(
                     make_trajectory_generation_result_message(
@@ -79,6 +89,7 @@ class MqttTrajectoryGenerationClient(MqttClient):
         scenario_content: str,
         colregs_constraints_content: str,
         params: TrajectoryGenerationParams,
+        seed: Optional[int] = None,
     ):
         self.wait_for_heartbeat()
         command = {
@@ -94,6 +105,7 @@ class MqttTrajectoryGenerationClient(MqttClient):
                     "scenario-content": scenario_content,
                     "colregs-constraints-content": colregs_constraints_content,
                     "params": params.to_wire(),
+                    **({"seed": int(seed)} if seed is not None else {}),
                 },
             },
         }

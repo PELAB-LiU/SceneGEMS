@@ -3,19 +3,28 @@
 Each test runs on the in-memory stores and, with `-m postgres`, on a real database.
 """
 
+import os
+import subprocess
+import sys
 from datetime import timedelta
+from pathlib import Path
+
+import pytest
 
 from scenegems_tool.cluster.fingerprints.job_images import GAZEBO_IMAGE, SCENARIO_EXECUTION_IMAGE, SITL_IMAGE
+from scenegems_tool.cluster.master.control_plane import InvalidPayload
 from scenegems_tool.cluster.protocol.jobs import JobOutcome, JobRequirements, JobState, JobSubmission, JobType
 from scenegems_tool.cluster.protocol.messages import Cancel, Drain, LeaseOffer, LeaseRelease, LeaseRenewed, ProtocolError, ProtocolErrorCode, Welcome
 from scenegems_tool.persistence.schema import JobEventKind, NodeStatus
 from tests.scenegems_tool.cluster.master.conftest import EXPECTED, KINEMATIC, SCENE
+from tests.scenegems_tool.cluster.payloads import valid_payload
 from tests.scenegems_tool.persistence.stores.builders import make_resources
 
 ARDUPILOT = JobType.SIMULATION_ARDUPILOT
 
 
 def _submit(on_loop, plane, job_type=SCENE, **fields):
+    fields.setdefault("payload", valid_payload(job_type))
     return on_loop(plane.submit, JobSubmission(job_type=job_type, **fields)).job
 
 
@@ -30,7 +39,7 @@ def test_two_nodes_compete_and_each_job_runs_once(make_node, plane, stores, on_l
     a, b = make_node("lab a", slots={SCENE: 2}), make_node("lab b", slots={SCENE: 2})
     a.connect()
     b.connect()
-    jobs = [_submit(on_loop, plane, payload={"n": index}) for index in range(6)]
+    jobs = [_submit(on_loop, plane, payload=valid_payload(SCENE, seed=index)) for index in range(6)]
 
     assert schedule() == 4  # two slots each
     offers = {a.node_id: _offers(a, 2), b.node_id: _offers(b, 2)}
@@ -158,8 +167,8 @@ def test_a_gazebo_job_needs_the_gazebo_image_and_an_ardupilot_sim_job_does_not(m
     without_gazebo = {image: fingerprint for image, fingerprint in EXPECTED.items() if image != GAZEBO_IMAGE}
     sitl_only = make_node("sitl only", slots={ARDUPILOT: 2}, fingerprints=without_gazebo)
     sitl_only.connect()
-    gazebo_job = _submit(on_loop, plane, job_type=ARDUPILOT, payload={"simulation_layer": "gazebo"})
-    sim_job = _submit(on_loop, plane, job_type=ARDUPILOT, payload={"simulation_layer": "ardupilot_sim"})
+    gazebo_job = _submit(on_loop, plane, job_type=ARDUPILOT, payload=valid_payload(ARDUPILOT, simulation_layer="gazebo"))
+    sim_job = _submit(on_loop, plane, job_type=ARDUPILOT, payload=valid_payload(ARDUPILOT, simulation_layer="ardupilot_sim"))
     assert stores.jobs.get(gazebo_job.job_id).requirements.fingerprints == {SCENARIO_EXECUTION_IMAGE: "fp-execution", SITL_IMAGE: "fp-sitl", GAZEBO_IMAGE: "fp-gazebo"}
     assert schedule() == 1
     assert sitl_only.expect(LeaseOffer).job.job_id == sim_job.job_id
@@ -310,7 +319,7 @@ def test_a_reconnect_reconciles_the_reported_leases(make_node, client, plane, st
 
     node = make_node("lab 1", slots={SCENE: 4})
     node.connect()
-    jobs = [_submit(on_loop, plane, payload={"n": index}) for index in range(4)]
+    jobs = [_submit(on_loop, plane, payload=valid_payload(SCENE, seed=index)) for index in range(4)]
     schedule()
     kept, unconfirmed, lost, forgotten = _offers(node, 4)
     node.accept(kept)
@@ -382,3 +391,31 @@ def test_the_scheduler_runs_by_itself_when_timers_are_on(make_node, plane, on_lo
         assert node.expect(LeaseOffer).job.job_id == job.job_id
     finally:
         on_loop(plane.stop)
+
+
+# Payload validation at submission
+
+
+def test_a_payload_that_does_not_match_its_job_type_is_refused_before_it_is_stored(plane, stores, on_loop):
+    with pytest.raises(InvalidPayload) as refusal:
+        _submit(on_loop, plane, payload={"scene": 1})
+    assert refusal.value.job_type == SCENE
+    assert {error["loc"][0] for error in refusal.value.errors} >= {"functional_scenario_content", "scene"}
+    with pytest.raises(InvalidPayload):
+        _submit(on_loop, plane, job_type=KINEMATIC, payload=valid_payload(KINEMATIC, monitor="post_hoc"))
+    assert stores.jobs.list_jobs() == []
+
+
+def test_a_referenced_input_gets_a_structural_check_only(plane, stores, on_loop):
+    reference = {"sha256": "ab" * 32, "size_bytes": 1024, "kind": "trajectories"}
+    job = _submit(on_loop, plane, job_type=KINEMATIC, payload={"trajectories": reference, "monitor": "live"})
+    assert stores.jobs.get(job.job_id).payload["trajectories"] == reference
+    with pytest.raises(InvalidPayload):
+        _submit(on_loop, plane, job_type=KINEMATIC, payload={"trajectories": {**reference, "sha256": "AB" * 32}})
+
+
+def test_the_master_imports_no_job_type_module_until_a_submission():
+    script = "import sys, scenegems_tool.cluster.master.server; print(sorted(m for m in ('numpy', 'concrete_level', 'scenegems_tool.cluster.node.jobs.job_types') if m in sys.modules))"
+    source = Path(__file__).resolve().parents[4]
+    output = subprocess.run([sys.executable, "-c", script], cwd=source.parent, env={**os.environ, "PYTHONPATH": str(source)}, capture_output=True, text=True, check=True).stdout
+    assert output.strip() == "[]"

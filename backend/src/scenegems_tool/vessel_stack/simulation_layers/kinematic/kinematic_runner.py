@@ -4,13 +4,17 @@ trajectories and a closed-loop run of USV Navigation against replaying targets.
 The runner owns no time of its own: every step it takes the simulation's step request,
 collects one command and one acknowledgement per participant, and lets the simulation
 advance. A run is bit-identical across repeats and processes for the same inputs.
+
+An optional step observer sees the recorded states after the start and after every step,
+and may end the run there (the live monitor's early stop). Without one, the loop is the
+same as before it existed.
 """
 
 import dataclasses
 import hashlib
 import struct
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from concrete_level.models.actor_state import ActorState
 from concrete_level.models.concrete_actors import ConcreteActor
@@ -29,6 +33,10 @@ from scenegems_tool.vessel_stack.simulation_layers.kinematic.kinematic_specs imp
 
 KINEMATIC_REPLAY_STACK = VesselStackConfig(asv_software=AsvSoftwareId.REPLAY, control_layer=ControlLayerId.NONE, simulation_layer=SimulationLayerId.KINEMATIC)
 KINEMATIC_USV_NAVIGATION_STACK = VesselStackConfig(asv_software=AsvSoftwareId.USV_NAVIGATION, control_layer=ControlLayerId.NONE, simulation_layer=SimulationLayerId.KINEMATIC)
+
+# Called with the step index (0 for the initial states) and the states in actor order after
+# that step; returning True ends the run after the step.
+StepObserver = Callable[[int, Tuple[ActorState, ...]], bool]
 
 
 @dataclass(frozen=True)
@@ -61,8 +69,8 @@ class KinematicRunResult:
         return builder.build()
 
 
-def run_lockstep(simulation: KinematicSimulation, participants: Mapping[int, LockstepParticipant], steps: int, run_seed: int) -> KinematicRunResult:
-    """Run `steps` lockstep steps. `participants` maps a vessel id to the participant that commands it."""
+def run_lockstep(simulation: KinematicSimulation, participants: Mapping[int, LockstepParticipant], steps: int, run_seed: int, on_step: Optional[StepObserver] = None) -> KinematicRunResult:
+    """Run `steps` lockstep steps, fewer when on_step ends the run. `participants` maps a vessel id to the participant that commands it."""
     ordered = sorted(participants.items())
     participant_ids = tuple(sorted(participant.participant_id for _, participant in ordered))
     if participant_ids != simulation.clock.participant_ids:
@@ -73,7 +81,8 @@ def run_lockstep(simulation: KinematicSimulation, participants: Mapping[int, Loc
         participant.start(seeds[participant.participant_id])
 
     recorded = [simulation.snapshot()]
-    for _ in range(steps):
+    stopped = on_step is not None and on_step(0, recorded[0])
+    for _ in range(0 if stopped else steps):
         request = simulation.step_request()
         commands = {}
         acks = []
@@ -82,6 +91,8 @@ def run_lockstep(simulation: KinematicSimulation, participants: Mapping[int, Loc
             acks.append(StepAck(participant_id=participant.participant_id, index=request.index))
         simulation.step(commands, acks)
         recorded.append(simulation.snapshot())
+        if on_step is not None and on_step(len(recorded) - 1, recorded[-1]):
+            break
     return KinematicRunResult(
         actors=simulation.actors,
         dt=simulation.dt,
@@ -99,12 +110,14 @@ def run_kinematic_replay(
     dt: Optional[float] = None,
     steps: Optional[int] = None,
     resolver: Optional[StackResolver] = None,
+    on_step: Optional[StepObserver] = None,
 ) -> KinematicRunResult:
     """Replay every vessel of a generated trajectory on the kinematic layer, through the registry.
 
     The stack (replay, none, kinematic) and the environment are validated by the resolver
     first, so wind or waves are rejected with a reason. dt defaults to the trajectory time
-    step and steps to its timespan. The run seed is environment.seed.
+    step and steps to its timespan. The run seed is environment.seed. on_step observes every
+    step and may end the run early.
     """
     resolver = resolver or default_resolver()
     environment = environment or EnvironmentConfig.calm()
@@ -121,7 +134,7 @@ def run_kinematic_replay(
     simulation_class = resolver.registry.runtime(KINEMATIC_LAYER.id)
     followers = {vessel.id: follower_class(vessel, trajectories.state_list(vessel), trajectories.time_step) for vessel in vessels}
     simulation = simulation_class(trajectories.initial_scene, dt, [follower.participant_id for follower in followers.values()])
-    result = run_lockstep(simulation, followers, steps if steps is not None else int(round(trajectories.timespan / dt)), environment.seed)
+    result = run_lockstep(simulation, followers, steps if steps is not None else int(round(trajectories.timespan / dt)), environment.seed, on_step)
 
     specs = _unique_ids(spec.id for chain in resolution.chains.values() for spec in chain.specs)
     tier = resolution.repeatability_tier
@@ -148,6 +161,7 @@ def run_kinematic_closed_loop(
     dt: Optional[float] = None,
     steps: Optional[int] = None,
     resolver: Optional[StackResolver] = None,
+    on_step: Optional[StepObserver] = None,
 ) -> KinematicRunResult:
     """Close the loop around USV Navigation on the own ship while every other vessel replays its trajectory.
 
@@ -156,7 +170,8 @@ def run_kinematic_closed_loop(
     KinematicSimulation and clock. The instance and the environment are validated by the
     resolver first. The USV Navigation parameters default to UsvNavigationParameters.from_reference
     on the own ship's generated trajectory. dt defaults to the trajectory time step and steps to
-    its timespan. The run seed is environment.seed.
+    its timespan. The run seed is environment.seed. on_step observes every step and may end the
+    run early.
     """
     resolver = resolver or default_resolver()
     environment = environment or EnvironmentConfig.calm()
@@ -182,7 +197,7 @@ def run_kinematic_closed_loop(
     }
     simulation_class = resolver.registry.runtime(KINEMATIC_LAYER.id)
     simulation = simulation_class(scene, dt, [participant.participant_id for participant in participants.values()])
-    result = run_lockstep(simulation, participants, steps if steps is not None else int(round(trajectories.timespan / dt)), environment.seed)
+    result = run_lockstep(simulation, participants, steps if steps is not None else int(round(trajectories.timespan / dt)), environment.seed, on_step)
 
     specs = _unique_ids(spec.id for chain in resolution.chains.values() for spec in chain.specs)
     tier = resolution.repeatability_tier

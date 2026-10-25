@@ -139,13 +139,14 @@ def test_invalid_capabilities_fail(text, problem):
 
 
 def test_capabilities_cover_every_job_type():
-    text = "scene_generation:1,trajectory_generation:2,simulation.kinematic:3,simulation.ardupilot:1,monitoring.post_hoc:5"
+    text = "scene_generation:1,trajectory_generation:2,simulation.kinematic:3,simulation.ardupilot:1,monitoring.post_hoc:5,calibration.deviation:2"
     assert parse_capabilities(text) == {
         JobType.SCENE_GENERATION: 1,
         JobType.TRAJECTORY_GENERATION: 2,
         JobType.SIMULATION_KINEMATIC: 3,
         JobType.SIMULATION_ARDUPILOT: 1,
         JobType.MONITORING_POST_HOC: 5,
+        JobType.CALIBRATION_DEVIATION: 2,
     }
 
 

@@ -12,20 +12,24 @@ or the workbench backend's.
 
 import threading
 from enum import Enum
-from typing import Optional
+from typing import Optional, Tuple
 
 from pydantic import Field
 
 from scenegems_tool.cluster.node.job_report import JobFailed, JobReport, JobResultData
-from scenegems_tool.cluster.node.jobs.job_payload import GeofencePayload, TrajectoriesData, parse_payload, to_trajectories
+from scenegems_tool.cluster.node.jobs.job_payload import GeofencePayload, TrajectoriesInput, parse_payload, to_trajectories
 from scenegems_tool.cluster.node.jobs.runner_container import StatusCallback, job_document
 from scenegems_tool.cluster.node.launchers.per_job.job_stack import RUNNER_SERVICE, JobStack, runner_service
 from scenegems_tool.cluster.node.node_context import NodeContext
 from scenegems_tool.cluster.node.subsystem import Subsystem, subsystem_image
+from scenegems_tool.cluster.protocol.artifacts import ArtifactField, ArtifactKind
 from scenegems_tool.cluster.protocol.jobs import JobSpec
 from scenegems_tool.cluster.protocol.model_base import ProtocolModel
 
 STACK_NETWORK = "maritime_net"  # the network build_simulation_docker_stack_artifacts puts every vessel service on
+
+ARTIFACT_INPUT_FIELDS: Tuple[ArtifactField, ...] = (ArtifactField("trajectories", ArtifactKind.TRAJECTORIES),)
+ARTIFACT_RESULT_FIELDS: Tuple[ArtifactField, ...] = (ArtifactField("states", ArtifactKind.TRAJECTORIES),)  # the state log
 
 
 class ArduPilotSimulationLayer(str, Enum):
@@ -35,7 +39,7 @@ class ArduPilotSimulationLayer(str, Enum):
 
 class ArduPilotSimulationPayload(ProtocolModel):
     simulation_layer: ArduPilotSimulationLayer
-    trajectories: TrajectoriesData
+    trajectories: TrajectoriesInput
     geofence: GeofencePayload  # maps the local frame to SITL's home positions
     speedup: int = Field(default=1, ge=1)  # requested SITL pace
     dt: Optional[float] = Field(default=None, gt=0.0)  # the trajectories' time step when None
@@ -44,6 +48,9 @@ class ArduPilotSimulationPayload(ProtocolModel):
     start_boot_s: Optional[float] = Field(default=None, ge=0.0)  # SITL time of scenario time 0; the next quantum when None
     include_states: bool = True  # return the observed state of every vessel at every step
     timeout_s: float = Field(default=1800.0, gt=0.0)
+
+
+PAYLOAD_MODEL = ArduPilotSimulationPayload
 
 
 def _instance(payload: ArduPilotSimulationPayload):
@@ -92,7 +99,7 @@ def execute(job: JobSpec, status: StatusCallback) -> JobResultData:
     """The in-container part: drive every vessel's SITL in lockstep and describe the run."""
     from scenegems_tool.vessel_stack.control_layers.ardupilot.mavlink_lockstep_runner import run_mavlink_replay
 
-    payload = ArduPilotSimulationPayload.model_validate(job.payload)
+    payload = parse_payload(ArduPilotSimulationPayload, job)
     trajectories, instance = _instance(payload)
     status("connecting to SITL")
     result = run_mavlink_replay(trajectories, instance, payload.geofence.to_geofence(), dt=payload.dt, steps=payload.steps, start_boot_s=payload.start_boot_s)

@@ -5,8 +5,9 @@ them only on its operator listener, which is bound to the local machine, next to
 workbench gateway.
 
     POST JOBS_PATH                       JobSubmission; 201 with the new job, 200 with the job the
-                                         idempotency key already names, 503 while the master's
-                                         expected fingerprints are not available
+                                         idempotency key already names, 422 when the payload does
+                                         not match its job type, 503 while the master's expected
+                                         fingerprints are not available
     GET  JOBS_PATH?state=&limit=         jobs in submission order
     GET  JOBS_PATH/<job id>              one job with its payload, events, progress and recent log lines
     POST JOBS_PATH/<job id>/cancel       cancels the job; its node is told to stop
@@ -23,10 +24,10 @@ import anyio
 from fastapi import APIRouter, Body, HTTPException, Response
 
 from scenegems_tool.cluster.master.api.views import job_detail_view, job_view, node_view
-from scenegems_tool.cluster.master.control_plane import ControlPlane, FingerprintsUnavailable
+from scenegems_tool.cluster.master.control_plane import ControlPlane, FingerprintsUnavailable, InvalidPayload
 from scenegems_tool.cluster.protocol.jobs import JobState, JobSubmission
 from scenegems_tool.cluster.protocol.routes import JOBS_PATH
-from scenegems_tool.persistence.stores import UnknownJob
+from scenegems_tool.persistence.stores import SubmitOutcome, UnknownJob
 
 NODES_PATH = "/cluster/nodes"
 STATUS_PATH = "/cluster/status"
@@ -40,15 +41,21 @@ def operator_router(plane: ControlPlane) -> APIRouter:
     return router
 
 
+async def _submit(plane: ControlPlane, submission: JobSubmission) -> SubmitOutcome:
+    try:
+        return await plane.submit(submission)
+    except FingerprintsUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error))
+    except InvalidPayload as error:
+        raise HTTPException(status_code=422, detail={"message": str(error), "job_type": error.job_type.value, "errors": error.errors})
+
+
 def _job_routes(plane: ControlPlane) -> APIRouter:
     router = APIRouter()
 
     @router.post(JOBS_PATH)
     async def submit_job(submission: JobSubmission, response: Response) -> dict:
-        try:
-            outcome = await plane.submit(submission)
-        except FingerprintsUnavailable as error:
-            raise HTTPException(status_code=503, detail=str(error))
+        outcome = await _submit(plane, submission)
         response.status_code = 201 if outcome.created else 200
         return job_view(outcome.job)
 

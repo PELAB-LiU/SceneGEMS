@@ -5,7 +5,7 @@ import pytest
 from scenegems_tool.cluster.node.daemon.pairing.ca_pinning import verified_context
 from scenegems_tool.cluster.node.daemon.pairing.pairing_client import PairingRefused, decode_pairing_response, request_pairing
 from scenegems_tool.cluster.protocol.pairing import PairingRequest
-from scenegems_tool.cluster.protocol.version import ProtocolVersionMismatch
+from scenegems_tool.cluster.protocol.version import PROTOCOL_VERSION, ProtocolVersionMismatch
 from scenegems_tool.cluster.security.credentials.pairing_tokens import create_pairing_token
 
 
@@ -26,7 +26,7 @@ def test_an_unknown_token_is_refused_with_the_master_s_reason(fake_master):
 
 def test_the_version_is_checked_before_the_fields():
     with pytest.raises(ProtocolVersionMismatch):
-        decode_pairing_response(json.dumps({"protocol_version": 2, "something": "else"}).encode())
+        decode_pairing_response(json.dumps({"protocol_version": PROTOCOL_VERSION + 1, "something": "else"}).encode())
     with pytest.raises(PairingRefused, match="not JSON"):
         decode_pairing_response(b"<html>")
     with pytest.raises(PairingRefused, match="not a JSON object"):

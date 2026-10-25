@@ -3,13 +3,24 @@
 Each job type defines its payload as a ProtocolModel (frozen, unknown fields rejected).
 Large inputs such as trajectories travel as the dictionaries their models serialize to
 and are checked by building the model once, so a bad payload fails before any container starts.
+
+A large input may also be an ArtifactRef (cluster/protocol/artifacts.py). Validation then
+runs in two places:
+
+    validate_structure(model, payload)  the master, at submission: a reference is checked
+                                        for shape only, inline data in full
+    parse_payload(model, job)           the node, after it resolved every reference in the
+                                        job type's ARTIFACT_INPUT_FIELDS: the content of
+                                        every field is checked, and a reference that is
+                                        still there fails the job
 """
 
-from typing import Annotated, Any, Dict, Type, TypeVar
+from typing import Annotated, Any, Dict, Mapping, Type, TypeVar
 
 from pydantic import AfterValidator, Field, ValidationError
 
 from scenegems_tool.cluster.node.job_report import JobFailed
+from scenegems_tool.cluster.protocol.artifacts import ArtifactRef, artifact_or, find_references
 from scenegems_tool.cluster.protocol.jobs import JobSpec
 from scenegems_tool.cluster.protocol.model_base import ProtocolModel
 
@@ -29,6 +40,7 @@ def _check_trajectories(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 TrajectoriesData = Annotated[Dict[str, Any], AfterValidator(_check_trajectories)]  # Trajectories.to_dict()
+TrajectoriesInput = artifact_or(TrajectoriesData)  # inline Trajectories.to_dict() or a reference to one
 
 
 class GeofencePayload(ProtocolModel):
@@ -47,12 +59,24 @@ class GeofencePayload(ProtocolModel):
 def to_trajectories(data: Dict[str, Any]):
     from concrete_level.models.trajectories import Trajectories
 
+    if isinstance(data, ArtifactRef):
+        raise JobFailed(f"Artifact {data.sha256} was not resolved before the job ran", retryable=False)
     return Trajectories.from_dict(data)
 
 
+def validate_structure(model: Type[PayloadModel], payload: Mapping[str, Any]) -> PayloadModel:
+    """The payload as its type's model, references checked for shape only; raises ValidationError."""
+    return model.model_validate(payload)
+
+
 def parse_payload(model: Type[PayloadModel], job: JobSpec) -> PayloadModel:
-    """The job's payload as its type's model; an invalid payload fails for good, without a retry."""
+    """The job's resolved payload as its type's model; an invalid or unresolved payload fails for good, without a retry."""
     try:
-        return model.model_validate(job.payload)
+        payload = model.model_validate(job.payload)
     except ValidationError as error:
         raise JobFailed(f"Invalid {job.job_type.value} payload: {error}", retryable=False) from error
+    unresolved = find_references(payload)
+    if unresolved:
+        paths = ", ".join(".".join(str(part) for part in path) for path, _ in unresolved)
+        raise JobFailed(f"The {job.job_type.value} payload still holds artifact references ({paths}); they are resolved before the job runs", retryable=False)
+    return payload
