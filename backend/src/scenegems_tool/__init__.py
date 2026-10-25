@@ -20,11 +20,12 @@ Present now:
     cluster/        distributed integration layer
         protocol/               typed, versioned master-node messages, jobs and pairing
         node/                   local subsystem launcher teardown, later the node daemon
+    persistence/    the master's Postgres: tables, migrations, node and job stores
 
 Planned (added by later phases):
     assurance/      campaign configuration and the per-scenario pipeline
     cluster/master/ scheduler, node registry, pairing
-    persistence/    database access and artifact store
+    persistence/    artifact store, campaign tables
     vessel_stack/adapters/      shared edges between layers (mavlink, gz_transport)
 """
 
