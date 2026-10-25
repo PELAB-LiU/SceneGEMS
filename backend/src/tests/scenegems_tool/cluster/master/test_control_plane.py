@@ -3,6 +3,7 @@
 Each test runs on the in-memory stores and, with `-m postgres`, on a real database.
 """
 
+import asyncio
 import os
 import subprocess
 import sys
@@ -16,6 +17,7 @@ from scenegems_tool.cluster.master.control_plane import InvalidPayload
 from scenegems_tool.cluster.protocol.jobs import JobOutcome, JobRequirements, JobState, JobSubmission, JobType
 from scenegems_tool.cluster.protocol.messages import Cancel, Drain, LeaseOffer, LeaseRelease, LeaseRenewed, ProtocolError, ProtocolErrorCode, Welcome
 from scenegems_tool.persistence.schema import JobEventKind, NodeStatus
+from scenegems_tool.persistence.stores import AssuranceStores
 from tests.scenegems_tool.cluster.master.conftest import EXPECTED, KINEMATIC, SCENE
 from tests.scenegems_tool.cluster.payloads import valid_payload
 from tests.scenegems_tool.persistence.stores.builders import make_resources
@@ -422,3 +424,42 @@ def test_the_master_imports_no_job_type_module_until_a_submission():
     source = Path(__file__).resolve().parents[4]
     output = subprocess.run([sys.executable, "-c", script], cwd=source.parent, env={**os.environ, "PYTHONPATH": str(source)}, capture_output=True, text=True, check=True).stdout
     assert output.strip() == "[]"
+
+
+# Campaigns
+
+
+def test_the_pipeline_engine_sees_the_connected_nodes(make_node, plane):
+    node = make_node("lab a", slots={SCENE: 1})
+    assert plane.node_availability() == []
+    node.connect()
+    (available,) = plane.node_availability()
+    assert available.record.node_id == node.node_id and not available.out_of_date
+
+
+def test_an_attached_pipeline_engine_submits_through_the_control_plane(plane):
+    from sqlalchemy.orm import sessionmaker
+
+    stores = AssuranceStores.create(sessionmaker())
+    engine = plane.attach_pipeline(stores)
+    assert plane.pipeline is engine and engine.stores is stores and engine.jobs is plane.jobs
+    assert engine.settings.stall_after_s == plane.timing.campaign_stall_after_s
+    assert engine._submit == plane.submit and engine._cancel == plane.cancel
+
+
+def test_the_pipeline_engine_runs_as_a_timer_of_the_control_plane(plane):
+    intervals = []
+
+    class Engine:
+        async def run(self, interval_s):
+            intervals.append(interval_s)
+            await asyncio.Event().wait()
+
+    async def start_and_stop():
+        plane.pipeline = Engine()
+        await plane.start(timers=True)
+        await asyncio.sleep(0)
+        await plane.stop()
+
+    asyncio.run(start_and_stop())
+    assert intervals == [plane.timing.pipeline_tick_interval_s]

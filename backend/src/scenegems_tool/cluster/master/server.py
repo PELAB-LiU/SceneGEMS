@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import List, Optional, Sequence
 
 import uvicorn
+from sqlalchemy.orm import Session, sessionmaker
 
 from scenegems_tool.cluster.master.api.master_apps import MasterApps, create_master_apps
 from scenegems_tool.cluster.master.control_plane import ControlPlane
@@ -31,7 +32,7 @@ from scenegems_tool.cluster.security.security_layout import SecurityLayout
 from scenegems_tool.persistence.artifacts.file_artifact_store import FileArtifactStore
 from scenegems_tool.persistence.artifacts.recorded_artifacts import RecordedArtifacts
 from scenegems_tool.persistence.database import create_database_engine, create_session_factory
-from scenegems_tool.persistence.stores import ArtifactRecordStore, JobStore, NodeStore
+from scenegems_tool.persistence.stores import ArtifactRecordStore, AssuranceStores, JobStore, NodeStore
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +48,17 @@ class _Listener(uvicorn.Server):
         yield
 
 
+def build_assurance_stores(sessions: sessionmaker[Session]) -> AssuranceStores:
+    """The stores of campaigns and their results on the master's database; the campaign routes and the pipeline engine share one."""
+    return AssuranceStores.create(sessions)
+
+
 def build_master(settings: MasterSettings, with_gateway: bool = True) -> MasterApps:
     security = MasterSecurity.load(settings.security_dir)
     sessions = create_session_factory(create_database_engine(settings.database_url))
     plane = ControlPlane(security.master_id, NodeStore(sessions), JobStore(sessions), ExpectedFingerprints.of_release(settings.release_manifest))
+    assurance = build_assurance_stores(sessions)
+    plane.attach_pipeline(assurance)  # the pipeline engine, a timer of the control plane, on the master's one AssuranceStores
     gateway = None
     if with_gateway:
         from scenegems_tool.gateway.websocket_app import app as gateway
