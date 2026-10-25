@@ -1,14 +1,15 @@
 """Command line of the master's security: `python -m scenegems_tool.cluster.security`.
 
     init                     create or update the security folder (CA, certificates, broker files)
-    pairing-token create     print a new one-time pairing token
+    pairing-token create     print a new one-time pairing token with what a node's .env needs
     pairing-token purge      remove expired tokens
     node revoke <node_id>    remove a node's credential and broker account
 
 Settings come from the environment, usually loaded with `--env-file deploy/master/.env`.
 Passwords are read only from there, never from arguments, which other users of the
-machine could see in the process list. Only `pairing-token create` prints a secret: the
-token, alone on stdout, so a script can capture it.
+machine could see in the process list. Only `pairing-token create` prints a secret. It
+prints the three lines of a node's .env on stdout (master URL, token and CA certificate
+hash, design doc 13.9), so a script can append them; --token-only prints the token alone.
 """
 
 import argparse
@@ -20,6 +21,7 @@ from pathlib import Path
 from typing import Mapping, Optional, Sequence
 
 from scenegems_tool.cluster.security.broker.broker_config import TLS_PORT, ClusterBrokerSettings
+from scenegems_tool.cluster.security.certificates.certificate_pinning import certificate_sha256
 from scenegems_tool.cluster.security.certificates.subject_names import split_address_list
 from scenegems_tool.cluster.security.credentials.broker_accounts import remove_broker_account
 from scenegems_tool.cluster.security.credentials.node_credentials import revoke_node_credential
@@ -28,6 +30,11 @@ from scenegems_tool.cluster.security.master_security import MasterSecurity, init
 
 _DURATION_PATTERN = re.compile(r"^(\d+)([smhd])$")
 _DURATION_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
+DEFAULT_API_PORT = 8443
+# The lines of a node's .env that pairing needs
+MASTER_URL_VARIABLE = "SCENEGEMS_MASTER_URL"
+PAIRING_TOKEN_VARIABLE = "SCENEGEMS_PAIRING_TOKEN"
+MASTER_CA_SHA256_VARIABLE = "SCENEGEMS_MASTER_CA_SHA256"
 
 
 class CommandLineError(Exception):
@@ -92,11 +99,28 @@ def _run_init(arguments: argparse.Namespace, environ: Mapping[str, str]) -> int:
     return 0
 
 
+def master_url(security: MasterSecurity, environ: Mapping[str, str]) -> str:
+    """The URL nodes use for the master API: SCENEGEMS_MASTER_URL, else the first master address with SCENEGEMS_API_PORT."""
+    configured = environ.get(MASTER_URL_VARIABLE, "").strip()
+    if configured:
+        return configured.rstrip("/")
+    host = security.identity.addresses[0]
+    if ":" in host:  # an IPv6 address
+        host = f"[{host}]"
+    port = int(environ.get("SCENEGEMS_API_PORT", "").strip() or DEFAULT_API_PORT)
+    return f"https://{host}:{port}"
+
+
 def _run_pairing_token(arguments: argparse.Namespace, environ: Mapping[str, str]) -> int:
     security = MasterSecurity.load(_security_dir(arguments, environ))
     if arguments.token_command == "create":
         created = create_pairing_token(security.store, lifetime=arguments.lifetime, note=arguments.note)
-        print(created.token)
+        if arguments.token_only:
+            print(created.token)
+        else:
+            print(f"{MASTER_URL_VARIABLE}={master_url(security, environ)}")
+            print(f"{PAIRING_TOKEN_VARIABLE}={created.token}")
+            print(f"{MASTER_CA_SHA256_VARIABLE}={certificate_sha256(security.ca_certificate_pem)}")
         print(f"Pairing token for master {security.master_id}, valid once until {created.expires_at.isoformat(timespec='seconds')}", file=sys.stderr)
         return 0
     removed = purge_expired_pairing_tokens(security.store)
@@ -127,7 +151,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     tokens = commands.add_parser("pairing-token", help="one-time pairing tokens")
     token_commands = tokens.add_subparsers(dest="token_command", required=True)
-    create = token_commands.add_parser("create", help="print a new token")
+    create = token_commands.add_parser("create", help="print a new token, the master URL and the CA certificate hash as .env lines")
+    create.add_argument("--token-only", action="store_true", help="print the token alone")
     create.add_argument("--lifetime", type=parse_duration, default=DEFAULT_TOKEN_LIFETIME, help="for example 30m, 2h or 1d (default 30m)")
     create.add_argument("--note", default="", help="a reminder stored with the token, for example the node's name")
     token_commands.add_parser("purge", help="remove expired tokens")

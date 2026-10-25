@@ -44,3 +44,9 @@ def test_claim_query_filters_in_sql():
     assert "job.required_fingerprints <@ %(required_fingerprints_1)s::JSONB" in sql
     assert "job.min_memory_mb <= %(min_memory_mb_1)s" in sql
     assert "job.min_cpus <= %(min_cpus_1)s" in sql
+
+
+def test_claim_query_excludes_held_back_jobs_only_when_asked():
+    assert "NOT IN" not in _compiled_query()
+    query = next_queued_job_query([SCENE], {}, {}, free_memory_mb=4000, cpus=4.0, exclude_job_ids=["job-a", "job-b"])
+    assert "job.id NOT IN (__[POSTCOMPILE_id_1])" in str(query.compile(dialect=postgresql.dialect()))

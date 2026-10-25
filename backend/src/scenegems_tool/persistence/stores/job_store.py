@@ -121,14 +121,14 @@ class JobStore:
 
     # Leases
 
-    def claim_next(self, node_id: str, lease_duration_s: float, job_types: Optional[Collection[JobType]] = None) -> Optional[Lease]:
+    def claim_next(self, node_id: str, lease_duration_s: float, job_types: Optional[Collection[JobType]] = None, exclude_job_ids: Collection[str] = ()) -> Optional[Lease]:
         """Leases the next matching queued job to the node, or returns None.
 
         Considers only online nodes and job types the node has a free slot for (slots minus
-        its leased and running jobs of that type), optionally limited to job_types. The match
-        on labels, fingerprints and resources and the order (priority, then submission) are
-        in next_queued_job_query. The lease starts as an offer that holds for
-        lease_duration_s; the node accepts it with accept().
+        its leased and running jobs of that type), optionally limited to job_types, and skips
+        the jobs in exclude_job_ids. The match on labels, fingerprints and resources and the
+        order (priority, then submission) are in next_queued_job_query. The lease starts as
+        an offer that holds for lease_duration_s; the node accepts it with accept().
         """
         now = self._clock()
         expires_at = _lease_expiry(now, lease_duration_s)
@@ -145,7 +145,7 @@ class JobStore:
             if not job_types:
                 return None
             fingerprints = {fingerprint.image: fingerprint.fingerprint for fingerprint in node.fingerprints}
-            row = session.execute(next_queued_job_query(job_types, node.labels, fingerprints, node.free_memory_mb, node.cpus)).scalar_one_or_none()
+            row = session.execute(next_queued_job_query(job_types, node.labels, fingerprints, node.free_memory_mb, node.cpus, exclude_job_ids)).scalar_one_or_none()
             if row is None:
                 return None
             row.state = JobState.LEASED
