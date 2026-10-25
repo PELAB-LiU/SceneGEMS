@@ -8,7 +8,8 @@ All three run in the master process on one event loop (server.py) and share one 
                  plane and the artifact sweep.
     operator     plain HTTP bound to the local machine: the workbench WebSocket gateway,
                  mounted unchanged with its own lifespan, the job and node routes
-                 (operator_routes.py) and artifact reads. Neither has authentication yet, which is why they are
+                 (operator_routes.py, and campaign_routes.py with the campaign stores) and
+                 artifact reads. Neither has authentication yet, which is why they are
                  not on the node API's listener.
     broker hook  plain HTTP on the compose network only: the cluster broker's login check
                  (cluster/security/broker/auth_hook.py).
@@ -27,6 +28,7 @@ from scenegems_tool.cluster.master.control_plane import ControlPlane
 from scenegems_tool.cluster.master.master_artifacts import MasterArtifacts
 from scenegems_tool.cluster.security.broker.auth_hook import create_broker_auth_app
 from scenegems_tool.cluster.security.master_security import MasterSecurity
+from scenegems_tool.persistence.stores import AssuranceStores
 
 
 @dataclass(frozen=True)
@@ -56,8 +58,11 @@ def create_node_api_app(plane: ControlPlane, security: MasterSecurity, run_timer
     return app
 
 
-def create_operator_app(plane: ControlPlane, gateway: Optional[FastAPI] = None, artifacts: Optional[MasterArtifacts] = None) -> FastAPI:
-    """The operator routes, with the workbench gateway mounted behind them when given."""
+def create_operator_app(plane: ControlPlane, gateway: Optional[FastAPI] = None, artifacts: Optional[MasterArtifacts] = None, assurance: Optional[AssuranceStores] = None) -> FastAPI:
+    """The operator routes, with the workbench gateway mounted behind them when given.
+
+    The campaign routes need the campaign stores (assurance); without them they answer 503.
+    """
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -67,7 +72,7 @@ def create_operator_app(plane: ControlPlane, gateway: Optional[FastAPI] = None, 
             yield
 
     app = FastAPI(title=f"SceneGEMS master {plane.master_id}: operator API", lifespan=lifespan)
-    app.include_router(operator_router(plane))
+    app.include_router(operator_router(plane, assurance))
     if artifacts is not None:
         app.include_router(operator_artifact_router(artifacts.artifacts))
     if gateway is not None:
@@ -76,10 +81,16 @@ def create_operator_app(plane: ControlPlane, gateway: Optional[FastAPI] = None, 
 
 
 def create_master_apps(
-    plane: ControlPlane, security: MasterSecurity, broker_hook_secret: str, gateway: Optional[FastAPI] = None, run_timers: bool = True, artifacts: Optional[MasterArtifacts] = None
+    plane: ControlPlane,
+    security: MasterSecurity,
+    broker_hook_secret: str,
+    gateway: Optional[FastAPI] = None,
+    run_timers: bool = True,
+    artifacts: Optional[MasterArtifacts] = None,
+    assurance: Optional[AssuranceStores] = None,
 ) -> MasterApps:
     return MasterApps(
         node_api=create_node_api_app(plane, security, run_timers, artifacts),
-        operator=create_operator_app(plane, gateway, artifacts),
+        operator=create_operator_app(plane, gateway, artifacts, assurance),
         broker_hook=create_broker_auth_app(security.store, broker_hook_secret),
     )

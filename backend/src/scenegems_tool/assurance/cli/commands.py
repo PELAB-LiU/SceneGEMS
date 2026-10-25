@@ -1,0 +1,128 @@
+"""The campaign commands: each takes the parsed arguments and a Session and prints to its output."""
+
+import hashlib
+import time
+from argparse import Namespace
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable, TextIO
+
+from scenegems_tool.assurance.cli.api_client import ApiError, OperatorApi
+from scenegems_tool.assurance.cli.render import campaign_summary, coverage_table, table
+from scenegems_tool.cluster.protocol.routes import ARTIFACTS_PATH, CAMPAIGNS_PATH
+
+FINAL_STATES = ("stopped", "completed")
+FOLLOW_PAGE = 500
+
+
+@dataclass
+class Session:
+    api: OperatorApi
+    out: TextIO
+    err: TextIO
+    sleep: Callable[[float], None] = field(default=time.sleep)
+
+    def say(self, text: str = "") -> None:
+        print(text, file=self.out)
+
+
+def campaign_path(campaign_id: str, suffix: str = "") -> str:
+    return f"{CAMPAIGNS_PATH}/{campaign_id}{suffix}"
+
+
+def create(session: Session, arguments: Namespace) -> int:
+    path = Path(arguments.config)
+    try:
+        content = path.read_bytes()
+    except OSError as error:
+        raise ApiError(None, [f"cannot read {path}: {error.strerror or error}"])
+    campaign = session.api.post(CAMPAIGNS_PATH, content=content, content_type="application/yaml", name=arguments.name, start=True if arguments.start else None)
+    session.say(campaign_summary(campaign))
+    return 0
+
+
+def list_campaigns(session: Session, arguments: Namespace) -> int:
+    campaigns = session.api.get(CAMPAIGNS_PATH, state=arguments.state or None, limit=arguments.limit, offset=arguments.offset)
+    if not campaigns:
+        session.say("no campaigns")
+        return 0
+    session.say(table(["id", "name", "desired", "actual", "created"], [[c["campaign_id"], c["name"], c["desired_state"], c["actual_state"], c["created_at"]] for c in campaigns]))
+    return 0
+
+
+def show(session: Session, arguments: Namespace) -> int:
+    campaign = session.api.get(campaign_path(arguments.campaign))
+    session.say(campaign_summary(campaign))
+    session.say()
+    session.say(coverage_table(campaign["classes"]))
+    return 0
+
+
+def control(name: str) -> Callable[[Session, Namespace], int]:
+    def run(session: Session, arguments: Namespace) -> int:
+        campaign = session.api.post(campaign_path(arguments.campaign, f"/{name}"))
+        session.say(f"campaign {campaign['campaign_id']}: desired {campaign['desired_state']}, actual {campaign['actual_state']}")
+        return 0
+
+    return run
+
+
+def cases(session: Session, arguments: Namespace) -> int:
+    found = session.api.get(campaign_path(arguments.campaign, "/cases"), class_id=arguments.class_id, state=arguments.state, stage=arguments.stage, limit=arguments.limit, offset=arguments.offset)
+    if not found:
+        session.say("no cases")
+        return 0
+    session.say(table(["class", "index", "case", "stage", "state", "seed", "reason"], [[c["class_id"], c["case_index"], c["case_id"], c["stage"], c["state"], c["seed"], c["reason"]] for c in found]))
+    return 0
+
+
+def verdicts(session: Session, arguments: Namespace) -> int:
+    path = campaign_path(arguments.campaign, "/verdicts")
+    filters = dict(class_id=arguments.class_id, state=arguments.state, run_index=arguments.run, sensitive=True if arguments.sensitive else None)
+    if arguments.csv:
+        size = session.api.download(path, Path(arguments.csv), format="csv", **filters)
+        session.say(f"wrote {size} bytes to {arguments.csv}")
+        return 0
+    found = session.api.get(path, limit=arguments.limit, offset=arguments.offset, **filters)
+    if not found:
+        session.say("no verdicts")
+        return 0
+    rows = [[v["class_id"], v["case_id"], v["run_index"], v["state"], ";".join(v["failed_rules"]), v["first_failure_time_s"], v["sensitive"]] for v in found]
+    session.say(table(["class", "case", "run", "state", "failed rules", "first failure s", "sensitive"], rows))
+    return 0
+
+
+def _print_events(session: Session, events: list) -> None:
+    for event in events:
+        where = f" {event['class_id']}" if event["class_id"] else ""
+        detail = f" {event['detail']}" if event["detail"] else ""
+        session.say(f"{event['event_id']:>6}  {event['at']}  {event['kind']}{where}{detail}")
+
+
+def events(session: Session, arguments: Namespace) -> int:
+    path = campaign_path(arguments.campaign, "/events")
+    after = arguments.after
+    while True:
+        batch = session.api.get(path, after=after, limit=FOLLOW_PAGE if arguments.follow else arguments.limit)
+        _print_events(session, batch)
+        if batch:
+            after = batch[-1]["event_id"]
+        if not arguments.follow:
+            return 0
+        if len(batch) == FOLLOW_PAGE:
+            continue
+        # Read the state after the events: a final campaign has no more to say once this batch came back empty
+        if not batch and session.api.get(campaign_path(arguments.campaign))["actual_state"] in FINAL_STATES:
+            return 0
+        session.sleep(arguments.interval)
+
+
+def artifact(session: Session, arguments: Namespace) -> int:
+    target = Path(arguments.out)
+    size = session.api.download(f"{ARTIFACTS_PATH}/{arguments.sha256}", target)
+    digest = hashlib.sha256(target.read_bytes()).hexdigest()
+    if digest != arguments.sha256:
+        target.unlink(missing_ok=True)
+        raise ApiError(None, [f"the downloaded bytes hash to {digest}, not {arguments.sha256}; the file was removed"])
+    session.say(f"wrote {size} bytes to {arguments.out}")
+    return 0
