@@ -5,7 +5,7 @@ import numpy as np
 from concrete_level.models.actor_state import ActorState
 from concrete_level.models.concrete_actors import ConcreteVessel
 from utils.colregs_approximations import vessel_radius
-from utils.math_utils import abs_heading_diff, heading_diff
+from utils.math_utils import abs_heading_diff
 
 
 class TestConcreteVesselSimulate(unittest.TestCase):

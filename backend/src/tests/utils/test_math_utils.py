@@ -46,6 +46,7 @@ class TestMathUtils(unittest.TestCase):
         center, radius = find_center_and_radius(points)
 
         expected_center = np.array([1.5, 1.0])
+        np.testing.assert_array_almost_equal(center, expected_center)
         # Distance from center to any vertex should be the radius
         distances = np.linalg.norm(points - center, axis=1)
         self.assertAlmostEqual(radius, np.max(distances))

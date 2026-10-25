@@ -1,5 +1,5 @@
 import unittest
-from typing import List, Tuple
+from typing import List
 from unittest.mock import Mock
 
 from concrete_level.models.concrete_actors import ConcreteVessel
