@@ -1,0 +1,164 @@
+services:
+  agent_0:
+    image: ${SITL_IMAGE:-scenegems-ardupilot-sitl:latest}
+    restart: unless-stopped
+    environment:
+    - SITL_SIMULATOR=ardupilot
+    - SITL_VEHICLE=Rover
+    - SITL_FRAME=motorboat
+    - SITL_PARAM_FILE=<backend>/assets/runtime_assets/scenario_execution/gen_tmp/params-agent_0.params
+    - SITL_NO_MAVPROXY=1
+    - SITL_NO_REBUILD=1
+    - SITL_SPEEDUP=1
+    - SITL_CUSTOM_LOCATION=57.757128,16.673189,0,90.0
+    - SITL_SYSID=1
+    - SITL_INSTANCE=0
+    volumes:
+    - scenegems_runtime_assets:<backend>/assets/runtime_assets:ro
+    entrypoint:
+    - /bin/bash
+    - -c
+    - 'set -euo pipefail
+
+      tr -d ''\r'' < /scripts/sitl_entrypoint.sh > /tmp/sitl_entrypoint.sh
+
+      chmod +x /tmp/sitl_entrypoint.sh
+
+      exec /tmp/sitl_entrypoint.sh'
+    extra_hosts:
+    - host.docker.internal:host-gateway
+    networks:
+    - maritime_net
+  agent_0_mavproxy:
+    image: ${MAVPROXY_IMAGE:-scenegems-mavproxy:latest}
+    tty: true
+    stdin_open: true
+    restart: unless-stopped
+    environment: &id001
+    - NAME=agent_0
+    - DOMAIN=surface
+    - REAL_SIM=simulation
+    - AGENT_DESCRIPTION=surface vessel
+    - AGENT_MODEL=vessel.mini_usv
+    - VIDEO_SRC0=/dev/video0
+    - VIDEO_SERVER=ome.waraps.org
+    - BROKER=broker
+    - PORT=1883
+    - TLS_CERTIFICE=0
+    - MQTT_USER=user
+    - MQTT_PASSWORD=password
+    - FCS_SERIAL=/dev/serial0
+    - BAUD_RATE=57600
+    - CONNECTION_STRING=tcp:agent_0_mavproxy:14551
+    - SIM_PORT=5760
+    - SPEEDUP=1
+    - VEHICLE=Rover
+    - MODEL=motorboat
+    - VEHICLE_PARAMS=motorboat
+    - MAVPROXY=tcpin:agent_0_mavproxy:14551
+    - LOCAL_BRIDGE=udp:host.docker.internal:14550
+    - GCS_1=udp:host.docker.internal:14550
+    networks:
+    - maritime_net
+    command:
+    - python3
+    - -m
+    - MAVProxy.mavproxy
+    - --default-modules=link,log,signing,wp,rally,fence,ftp,param,relay,tuneopt,arm,mode,calibration,rc,auxopt,misc,cmdlong,battery,output,layout
+    - --master=tcp:agent_0:5760
+    - --out=tcpin:agent_0_mavproxy:14551
+    - --out=udp:host.docker.internal:14550
+  agent_0_arduagent:
+    image: ${ARDUAGENT_IMAGE:-scenegems-arduagent:latest}
+    depends_on:
+    - agent_0_mavproxy
+    restart: unless-stopped
+    environment: *id001
+    networks:
+    - maritime_net
+    command: python -B -u /app/main.py
+  agent_1:
+    image: ${SITL_IMAGE:-scenegems-ardupilot-sitl:latest}
+    restart: unless-stopped
+    environment:
+    - SITL_SIMULATOR=ardupilot
+    - SITL_VEHICLE=Rover
+    - SITL_FRAME=motorboat
+    - SITL_PARAM_FILE=<backend>/assets/runtime_assets/scenario_execution/gen_tmp/params-agent_1.params
+    - SITL_NO_MAVPROXY=1
+    - SITL_NO_REBUILD=1
+    - SITL_SPEEDUP=1
+    - SITL_CUSTOM_LOCATION=57.75575696615576,16.773966726653292,0,270.0
+    - SITL_SYSID=2
+    - SITL_INSTANCE=1
+    volumes:
+    - scenegems_runtime_assets:<backend>/assets/runtime_assets:ro
+    entrypoint:
+    - /bin/bash
+    - -c
+    - 'set -euo pipefail
+
+      tr -d ''\r'' < /scripts/sitl_entrypoint.sh > /tmp/sitl_entrypoint.sh
+
+      chmod +x /tmp/sitl_entrypoint.sh
+
+      exec /tmp/sitl_entrypoint.sh'
+    extra_hosts:
+    - host.docker.internal:host-gateway
+    networks:
+    - maritime_net
+  agent_1_mavproxy:
+    image: ${MAVPROXY_IMAGE:-scenegems-mavproxy:latest}
+    tty: true
+    stdin_open: true
+    restart: unless-stopped
+    environment: &id002
+    - NAME=agent_1
+    - DOMAIN=surface
+    - REAL_SIM=simulation
+    - AGENT_DESCRIPTION=surface vessel
+    - AGENT_MODEL=vessel.mini_usv
+    - VIDEO_SRC0=/dev/video0
+    - VIDEO_SERVER=ome.waraps.org
+    - BROKER=broker
+    - PORT=1883
+    - TLS_CERTIFICE=0
+    - MQTT_USER=user
+    - MQTT_PASSWORD=password
+    - FCS_SERIAL=/dev/serial0
+    - BAUD_RATE=57600
+    - CONNECTION_STRING=tcp:agent_1_mavproxy:14551
+    - SIM_PORT=5770
+    - SPEEDUP=1
+    - VEHICLE=Rover
+    - MODEL=motorboat
+    - VEHICLE_PARAMS=motorboat
+    - MAVPROXY=tcpin:agent_1_mavproxy:14551
+    - LOCAL_BRIDGE=udp:host.docker.internal:14550
+    - GCS_1=udp:host.docker.internal:14560
+    networks:
+    - maritime_net
+    command:
+    - python3
+    - -m
+    - MAVProxy.mavproxy
+    - --default-modules=link,log,signing,wp,rally,fence,ftp,param,relay,tuneopt,arm,mode,calibration,rc,auxopt,misc,cmdlong,battery,output,layout
+    - --master=tcp:agent_1:5770
+    - --out=tcpin:agent_1_mavproxy:14551
+    - --out=udp:host.docker.internal:14560
+  agent_1_arduagent:
+    image: ${ARDUAGENT_IMAGE:-scenegems-arduagent:latest}
+    depends_on:
+    - agent_1_mavproxy
+    restart: unless-stopped
+    environment: *id002
+    networks:
+    - maritime_net
+    command: python -B -u /app/main.py
+networks:
+  maritime_net:
+    name: asv_maritime_net
+    driver: bridge
+volumes:
+  scenegems_runtime_assets:
+    external: true
