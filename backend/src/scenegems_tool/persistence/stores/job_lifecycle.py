@@ -7,6 +7,9 @@ depends on when the sweep runs.
 A failed attempt is a lease that expired or reported a failure. Leases given back unused
 (rejected or released) are not failed attempts, so draining a node does not use up a
 job's retries.
+
+A reported retryable failure puts the job back in the queue after an exponential backoff;
+an expired lease requeues it at once, since its node is gone and another may take it.
 """
 
 from datetime import datetime
@@ -27,6 +30,15 @@ def state_after_failed_attempt(failed_attempts: int, max_attempts: int, retryabl
     if retryable and failed_attempts < max_attempts:
         return JobState.QUEUED
     return JobState.FAILED
+
+
+def retry_backoff_s(failed_attempts: int, base_s: float, cap_s: float) -> float:
+    """Seconds a job waits after its failed_attempts-th failed attempt: base doubled per earlier failure, at most cap."""
+    if failed_attempts < 1:
+        raise ValueError(f"the backoff follows a failed attempt, got failed_attempts={failed_attempts}")
+    # Doubling stops at the cap, so a long retry limit cannot overflow the float
+    exponent = min(failed_attempts - 1, 64)
+    return min(base_s * 2.0**exponent, cap_s)
 
 
 def result_status(

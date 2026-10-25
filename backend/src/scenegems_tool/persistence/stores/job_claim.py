@@ -4,9 +4,11 @@ The node's facts (free slots per job type, labels, fingerprints, resources) are 
 a lock on the node row, so concurrent claims for one node never exceed its slots. The job
 itself is picked in SQL with SELECT ... FOR UPDATE SKIP LOCKED: concurrent claims for
 different nodes skip the rows another claim holds instead of waiting for it, and no job is
-claimed twice.
+claimed twice. Only jobs whose available_at has passed are taken, so a job in its retry
+backoff or held by a paused campaign waits in the queue without blocking the ones behind it.
 """
 
+from datetime import datetime
 from typing import Collection, Dict, List, Mapping, Optional
 
 from sqlalchemy import Select, select
@@ -27,16 +29,19 @@ def next_queued_job_query(
     free_memory_mb: int,
     cpus: float,
     exclude_job_ids: Collection[str] = (),
+    *,
+    now: datetime,
 ) -> Select:
     """The highest-priority, oldest queued job a node with these facts may run, locked.
 
     A job matches when its type is among job_types, its required labels and fingerprints
     are contained in the node's (JSONB containment), its memory and CPU minimums fit the
-    node's free memory and CPUs, and it is not among exclude_job_ids (jobs the scheduler
-    holds back from this node, for example after the node rejected them).
+    node's free memory and CPUs, it is available by now, and it is not among exclude_job_ids
+    (jobs the scheduler holds back from this node, for example after the node rejected them).
     """
     conditions = [
         JobRow.state == JobState.QUEUED,
+        JobRow.available_at <= now,
         JobRow.job_type.in_(list(job_types)),
         JobRow.required_labels.contained_by(labels),
         JobRow.required_fingerprints.contained_by(fingerprints),

@@ -4,9 +4,12 @@ A job row holds the submission, the queue state and the latest lease. The lease 
 describe the most recent lease and are only active while the state is leased or running.
 Attempts count leases (the attempt number of the latest one); failed attempts count the
 leases that ended in a failure or an expiry, and max_attempts limits those.
+
+A queued job is claimed only once its available_at has passed: a retryable failure moves
+it ahead by the backoff, and holding a campaign's jobs (pause) moves it to HELD_UNTIL.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Optional
 
@@ -16,6 +19,11 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from scenegems_tool.cluster.protocol.jobs import JobState, JobType
 from scenegems_tool.persistence.schema.base import Base, enum_column, utc_timestamp
+
+HELD_UNTIL = datetime(9999, 1, 1, tzinfo=timezone.utc)  # available_at of a held job
+
+# The id of the writing transaction as a bigint (xid8 values stay far below 2**63)
+CURRENT_TRANSACTION_ID = "(pg_current_xact_id()::text::bigint)"
 
 
 class JobRow(Base):
@@ -52,6 +60,7 @@ class JobRow(Base):
     lease_expires_at: Mapped[Optional[datetime]] = mapped_column(utc_timestamp())
 
     submitted_at: Mapped[datetime] = mapped_column(utc_timestamp())
+    available_at: Mapped[datetime] = mapped_column(utc_timestamp())  # not claimed before; backoff and holds move it
     updated_at: Mapped[datetime] = mapped_column(utc_timestamp())
     started_at: Mapped[Optional[datetime]] = mapped_column(utc_timestamp())  # first accepted lease
     finished_at: Mapped[Optional[datetime]] = mapped_column(utc_timestamp())
@@ -75,12 +84,22 @@ class JobEventKind(str, Enum):
 
 
 class JobEventRow(Base):
-    """One state change of a job. Rows are only ever inserted."""
+    """One state change of a job. Rows are only ever inserted.
+
+    Event ids are taken at insert, so a transaction that commits late can make an event
+    visible after one with a higher id. tx_id is the writing transaction's id: a reader
+    that takes only events of transactions older than every transaction still running
+    (pg_snapshot_xmin), in (tx_id, id) order, sees each event once and skips none.
+    """
 
     __tablename__ = "job_event"
-    __table_args__ = (Index("ix_job_event_job_id_id", "job_id", "id"),)
+    __table_args__ = (
+        Index("ix_job_event_job_id_id", "job_id", "id"),
+        Index("ix_job_event_tx_id_id", "tx_id", "id"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    tx_id: Mapped[int] = mapped_column(BigInteger, server_default=text(CURRENT_TRANSACTION_ID))
     job_id: Mapped[str] = mapped_column(ForeignKey("job.id", ondelete="CASCADE"))
     at: Mapped[datetime] = mapped_column(utc_timestamp())
     kind: Mapped[JobEventKind] = mapped_column(enum_column(JobEventKind, "kind"))

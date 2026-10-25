@@ -1,5 +1,7 @@
 from sqlalchemy.dialects import postgresql
 
+from tests.scenegems_tool.persistence.stores.builders import START
+
 from scenegems_tool.cluster.protocol.jobs import JobType
 from scenegems_tool.persistence.stores.job_claim import free_job_types, next_queued_job_query
 
@@ -23,7 +25,7 @@ def test_free_job_types_can_be_limited():
 
 
 def _compiled_query() -> str:
-    query = next_queued_job_query([SCENE], {"site": "lab"}, {"scenegems-scenario-generation": "f1"}, free_memory_mb=4000, cpus=4.0)
+    query = next_queued_job_query([SCENE], {"site": "lab"}, {"scenegems-scenario-generation": "f1"}, free_memory_mb=4000, cpus=4.0, now=START)
     return str(query.compile(dialect=postgresql.dialect()))
 
 
@@ -39,6 +41,7 @@ def test_claim_query_orders_by_priority_then_submission():
 def test_claim_query_filters_in_sql():
     sql = _compiled_query()
     assert "job.state = %(state_1)s" in sql
+    assert "job.available_at <= %(available_at_1)s" in sql
     assert "job.job_type IN" in sql
     assert "job.required_labels <@ %(required_labels_1)s::JSONB" in sql
     assert "job.required_fingerprints <@ %(required_fingerprints_1)s::JSONB" in sql
@@ -48,5 +51,5 @@ def test_claim_query_filters_in_sql():
 
 def test_claim_query_excludes_held_back_jobs_only_when_asked():
     assert "NOT IN" not in _compiled_query()
-    query = next_queued_job_query([SCENE], {}, {}, free_memory_mb=4000, cpus=4.0, exclude_job_ids=["job-a", "job-b"])
+    query = next_queued_job_query([SCENE], {}, {}, free_memory_mb=4000, cpus=4.0, exclude_job_ids=["job-a", "job-b"], now=START)
     assert "job.id NOT IN (__[POSTCOMPILE_id_1])" in str(query.compile(dialect=postgresql.dialect()))
