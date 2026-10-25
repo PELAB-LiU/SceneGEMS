@@ -1,0 +1,150 @@
+"""Run records, verdicts and coverage as the result store takes and returns them."""
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Dict, Optional, Tuple
+
+from scenegems_tool.persistence.schema import CampaignClassState, MonitorImplementation, RunRecordRow, TrajectoryGeneratorImplementation, VerdictRow, VerdictState
+
+
+@dataclass(frozen=True)
+class NewRunRecord:
+    case_id: int
+    run_index: int
+    trajectory_generator: TrajectoryGeneratorImplementation
+    trajectories_complete: bool
+    stack: Dict[str, Any]
+    environment: Dict[str, Any]
+    seed: int
+    repeat_index: int = 0
+    repeatability_tier: Optional[str] = None
+    dt: Optional[float] = None
+    steps: Optional[int] = None
+    state_digest: Optional[str] = None
+    artifacts: Dict[str, str] = field(default_factory=dict)  # role to sha256
+    job_id: Optional[str] = None
+    node_id: Optional[str] = None
+    fingerprints: Dict[str, str] = field(default_factory=dict)
+    durations_s: Dict[str, float] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RunRecord:
+    run_record_id: int
+    case_id: int
+    campaign_id: str
+    class_id: str
+    run_index: int
+    repeat_index: int
+    trajectory_generator: TrajectoryGeneratorImplementation
+    trajectories_complete: bool
+    stack: Dict[str, Any]
+    repeatability_tier: Optional[str]
+    environment: Dict[str, Any]
+    seed: int
+    dt: Optional[float]
+    steps: Optional[int]
+    state_digest: Optional[str]
+    artifacts: Dict[str, str]
+    job_id: Optional[str]
+    node_id: Optional[str]
+    fingerprints: Dict[str, str]
+    durations_s: Dict[str, float]
+    created_at: datetime
+
+    @classmethod
+    def from_row(cls, row: RunRecordRow) -> "RunRecord":
+        return cls(
+            run_record_id=row.id,
+            case_id=row.case_id,
+            campaign_id=row.campaign_id,
+            class_id=row.class_id,
+            run_index=row.run_index,
+            repeat_index=row.repeat_index,
+            trajectory_generator=row.trajectory_generator,
+            trajectories_complete=row.trajectories_complete,
+            stack=dict(row.stack),
+            repeatability_tier=row.repeatability_tier,
+            environment=dict(row.environment),
+            seed=row.seed,
+            dt=row.dt,
+            steps=row.steps,
+            state_digest=row.state_digest,
+            artifacts=dict(row.artifacts),
+            job_id=row.job_id,
+            node_id=row.node_id,
+            fingerprints=dict(row.fingerprints),
+            durations_s=dict(row.durations_s),
+            created_at=row.created_at,
+        )
+
+
+@dataclass(frozen=True)
+class NewVerdict:
+    case_id: int
+    run_index: int
+    state: VerdictState
+    monitor: MonitorImplementation
+    rule_outcomes: Dict[str, Any] = field(default_factory=dict)
+    failed_rules: Tuple[str, ...] = ()
+    first_failure_time_s: Optional[float] = None
+    margin: Optional[float] = None
+    sensitive: bool = False
+    early_stop_time_s: Optional[float] = None
+    run_record_id: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class VerdictRecord:
+    verdict_id: int
+    case_id: int
+    campaign_id: str
+    class_id: str
+    run_index: int
+    run_record_id: Optional[int]
+    state: VerdictState
+    monitor: MonitorImplementation
+    rule_outcomes: Dict[str, Any]
+    failed_rules: Tuple[str, ...]
+    first_failure_time_s: Optional[float]
+    margin: Optional[float]
+    sensitive: bool
+    early_stop_time_s: Optional[float]
+    created_at: datetime
+
+    @classmethod
+    def from_row(cls, row: VerdictRow) -> "VerdictRecord":
+        return cls(
+            verdict_id=row.id,
+            case_id=row.case_id,
+            campaign_id=row.campaign_id,
+            class_id=row.class_id,
+            run_index=row.run_index,
+            run_record_id=row.run_record_id,
+            state=row.state,
+            monitor=row.monitor,
+            rule_outcomes=dict(row.rule_outcomes),
+            failed_rules=tuple(row.failed_rules),
+            first_failure_time_s=row.first_failure_time_s,
+            margin=row.margin,
+            sensitive=row.sensitive,
+            early_stop_time_s=row.early_stop_time_s,
+            created_at=row.created_at,
+        )
+
+
+@dataclass(frozen=True)
+class ClassCoverage:
+    """Where one class of a campaign stands: its counts, and its verdicts per run and state."""
+
+    class_id: str
+    state: CampaignClassState
+    quota: int
+    failure_budget: int
+    complete: int
+    dropped: int
+    in_flight: int
+    verdicts: Dict[int, Dict[VerdictState, int]]  # run index to verdict state to count
+
+    def verdict_count(self, state: Optional[VerdictState] = None, run_index: Optional[int] = None) -> int:
+        return sum(count for run, states in self.verdicts.items() if run_index is None or run == run_index for verdict_state, count in states.items() if state is None or verdict_state == state)

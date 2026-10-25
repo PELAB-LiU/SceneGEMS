@@ -16,9 +16,8 @@ picks the job with FOR UPDATE SKIP LOCKED (so claims for different nodes never b
 other or take the same job). Every other step locks the job row it changes.
 """
 
-from contextlib import contextmanager
 from datetime import datetime, timedelta
-from typing import Collection, Iterator, List, Optional
+from typing import Collection, List, Optional
 from uuid import uuid4
 
 from sqlalchemy import func, select, update
@@ -33,6 +32,7 @@ from scenegems_tool.persistence.schema import HELD_UNTIL, JobEventKind, JobRow, 
 from scenegems_tool.persistence.stores.job_claim import free_job_types, next_queued_job_query
 from scenegems_tool.persistence.stores.job_event_log import append_job_event, job_events
 from scenegems_tool.persistence.stores.job_lifecycle import ACTIVE_STATES, lease_is_current, result_status, retry_backoff_s, state_after_failed_attempt
+from scenegems_tool.persistence.stores.store_session import session_scope
 from scenegems_tool.persistence.stores.job_records import CancelOutcome, ExpiredLease, JobEventRecord, JobRecord, Lease, ResultReport, ResultStatus, SubmitOutcome
 
 
@@ -342,16 +342,8 @@ class JobStore:
             .returning(JobRow.id)
             .execution_options(synchronize_session=False)
         )
-        with self._scope(session) as scope:
+        with session_scope(self._sessions, session) as scope:
             return sorted(scope.execute(statement).scalars())
-
-    @contextmanager
-    def _scope(self, session: Optional[Session]) -> Iterator[Session]:
-        if session is not None:
-            yield session
-            return
-        with transaction(self._sessions) as own:
-            yield own
 
     @staticmethod
     def _lock_by_lease(session: Session, lease_id: str) -> Optional[JobRow]:

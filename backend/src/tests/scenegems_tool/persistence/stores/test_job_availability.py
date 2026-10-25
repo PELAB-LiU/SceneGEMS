@@ -22,7 +22,7 @@ BASE_S, CAP_S = 5.0, 40.0
 
 
 @pytest.fixture(params=["memory", pytest.param("postgres", marks=pytest.mark.postgres)])
-def stores(request, clock):
+def job_stores(request, clock):
     if request.param == "memory":
         nodes = InMemoryNodeStore(clock)
         jobs = InMemoryJobStore(nodes, clock, retry_backoff_base_s=BASE_S, retry_backoff_cap_s=CAP_S)
@@ -35,8 +35,8 @@ def stores(request, clock):
 
 
 @pytest.fixture
-def jobs(stores):
-    return stores[1]
+def jobs(job_stores):
+    return job_stores[1]
 
 
 def _failure(lease, retryable=True) -> JobResult:
