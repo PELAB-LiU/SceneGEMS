@@ -15,6 +15,8 @@ Variables (deploy/node/.env.example is the template):
     SCENEGEMS_DOCKER_NETWORK      optional, the Docker network pooled services join
     SCENEGEMS_NODE_REFERENCE_GEOFENCE  optional, latitude,longitude,radius of the pools' local frame
     SCENEGEMS_SOFTWARE_REVISION   optional, the revision the node reports (its release's revision)
+    SCENEGEMS_NODE_ARTIFACT_CACHE_DIR        optional, the cache of downloaded artifacts (<state>/artifacts)
+    SCENEGEMS_NODE_ARTIFACT_CACHE_MAX_BYTES  optional, the cache's bound in bytes (2 GiB)
 
 Process variables win over the file; an empty process variable counts as unset, since
 Compose passes unset optional variables as empty strings. Every problem is reported at
@@ -36,6 +38,8 @@ ENV_FILE_VARIABLE = "SCENEGEMS_ENV_FILE"  # read from the process environment on
 DEFAULT_ENV_FILE = ".env"
 # The workbench's default reference geofence (frontend referenceGeofence.ts).
 DEFAULT_REFERENCE_GEOFENCE = (57.76080082972655, 16.680965995056, 20.0)
+DEFAULT_ARTIFACT_CACHE_MAX_BYTES = 2 * 1024 * 1024 * 1024
+ARTIFACT_CACHE_FOLDER = "artifacts"  # under the state folder
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _LABEL_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
@@ -63,6 +67,12 @@ class NodeConfiguration:
     docker_network: Optional[str] = None
     reference_geofence: Tuple[float, float, float] = DEFAULT_REFERENCE_GEOFENCE
     software_revision: Optional[str] = None
+    artifact_cache_dir: Optional[Path] = None  # <state_dir>/artifacts when None
+    artifact_cache_max_bytes: int = DEFAULT_ARTIFACT_CACHE_MAX_BYTES
+
+    @property
+    def artifact_cache_folder(self) -> Path:
+        return self.artifact_cache_dir or Path(self.state_dir) / ARTIFACT_CACHE_FOLDER
 
     @property
     def docker_name(self) -> str:
@@ -122,6 +132,8 @@ class NodeConfiguration:
         state_text = required("SCENEGEMS_NODE_STATE_DIR")
         geofence_text = get("SCENEGEMS_NODE_REFERENCE_GEOFENCE")
         geofence = parsed("SCENEGEMS_NODE_REFERENCE_GEOFENCE", parse_geofence, geofence_text, DEFAULT_REFERENCE_GEOFENCE) if geofence_text else DEFAULT_REFERENCE_GEOFENCE
+        cache_text = get("SCENEGEMS_NODE_ARTIFACT_CACHE_MAX_BYTES")
+        cache_max_bytes = parsed("SCENEGEMS_NODE_ARTIFACT_CACHE_MAX_BYTES", parse_byte_count, cache_text, DEFAULT_ARTIFACT_CACHE_MAX_BYTES) if cache_text else DEFAULT_ARTIFACT_CACHE_MAX_BYTES
         if problems:
             raise ConfigurationError(problems)
 
@@ -141,6 +153,8 @@ class NodeConfiguration:
             docker_network=get("SCENEGEMS_DOCKER_NETWORK") or None,
             reference_geofence=geofence,
             software_revision=get("SCENEGEMS_SOFTWARE_REVISION") or None,
+            artifact_cache_dir=Path(get("SCENEGEMS_NODE_ARTIFACT_CACHE_DIR")) if get("SCENEGEMS_NODE_ARTIFACT_CACHE_DIR") else None,
+            artifact_cache_max_bytes=cache_max_bytes,
         )
 
 
@@ -206,6 +220,16 @@ def parse_labels(text: str) -> Dict[str, str]:
             raise ValueError(f"label {key!r} is set twice")
         labels[key] = value
     return labels
+
+
+def parse_byte_count(text: str) -> int:
+    try:
+        value = int(text.strip())
+    except ValueError:
+        raise ValueError(f"{text!r} must be a whole number of bytes") from None
+    if value < 0:
+        raise ValueError(f"{text!r} must not be negative")
+    return value
 
 
 def parse_geofence(text: str) -> Tuple[float, float, float]:

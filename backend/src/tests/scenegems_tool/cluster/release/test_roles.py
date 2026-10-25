@@ -69,3 +69,15 @@ def test_cluster_ids_and_names_are_single_scope_names():
     pattern = re.compile(NAME_PATTERN)
     assert pattern.fullmatch("master-1") and pattern.fullmatch("worker-2")
     assert not pattern.fullmatch("Master_1") and not pattern.fullmatch("a/b")
+
+
+def test_the_artifact_settings_are_parameters_with_the_code_s_defaults():
+    from scenegems_tool.cluster.master.settings import ArtifactSettings
+    from scenegems_tool.cluster.node.daemon.configuration.node_configuration import DEFAULT_ARTIFACT_CACHE_MAX_BYTES
+
+    roles = scenegems_roles()
+    master, node = roles["master"]["parameters"], roles["node"]["parameters"]
+    assert int(master["SCENEGEMS_ARTIFACT_MAX_BYTES"]["default"]) == ArtifactSettings.max_bytes
+    assert float(master["SCENEGEMS_ARTIFACT_SWEEP_INTERVAL_S"]["default"]) == ArtifactSettings.sweep_interval_s
+    assert float(master["SCENEGEMS_ARTIFACT_SWEEP_GRACE_S"]["default"]) == ArtifactSettings.sweep_grace_s
+    assert int(node["SCENEGEMS_NODE_ARTIFACT_CACHE_MAX_BYTES"]["default"]) == DEFAULT_ARTIFACT_CACHE_MAX_BYTES

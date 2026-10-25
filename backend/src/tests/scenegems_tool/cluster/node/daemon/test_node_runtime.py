@@ -55,6 +55,13 @@ def test_the_node_context_carries_ids_slots_network_and_the_ca_mount(tmp_path):
     assert node.pools.scope(Subsystem.SCENE_GENERATION).topic_prefix.startswith(f"{RESPONSE.broker.topic_scope}/")
 
 
+def test_the_node_context_moves_artifacts_over_the_node_api_with_a_cache_in_the_state_folder(tmp_path):
+    node = build_node_context(configuration(tmp_path, SCENEGEMS_NODE_ARTIFACT_CACHE_MAX_BYTES="1000"), RESPONSE)
+    assert node.artifacts.client.master_url == "https://192.168.1.10:8443"
+    assert node.artifacts.cache.folder == tmp_path / "state" / "artifacts" and node.artifacts.cache.max_bytes == 1000
+    assert build_node_context(configuration(tmp_path, SCENEGEMS_NODE_ARTIFACT_CACHE_MAX_BYTES="0"), RESPONSE).artifacts.cache is None
+
+
 def test_pool_containers_get_the_ca_path_inside_the_container(tmp_path, monkeypatch):
     from scenegems_tool.cluster.node.launchers.pooled.pooled_service import PooledService
 

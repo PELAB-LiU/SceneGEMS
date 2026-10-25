@@ -10,6 +10,10 @@ The compose service sets the listeners and folders itself; the secrets come from
     SCENEGEMS_BROKER_HOOK_LISTEN_HOST, _PORT  broker login hook (default 127.0.0.1:8090)
     SCENEGEMS_RELEASE_MANIFEST        release.json of the release the master runs (cluster/release); its
                                       image fingerprints are the ones the master requires of nodes and jobs
+    SCENEGEMS_ARTIFACT_DIR            the artifact store's folder (default /var/lib/scenegems/artifacts)
+    SCENEGEMS_ARTIFACT_MAX_BYTES      largest artifact a node may upload, uncompressed (default 256 MiB)
+    SCENEGEMS_ARTIFACT_SWEEP_INTERVAL_S  how often unreferenced artifacts are deleted (default 600; 0 turns the sweep off)
+    SCENEGEMS_ARTIFACT_SWEEP_GRACE_S  how long an unreferenced artifact is kept after its last use (default 3600)
 """
 
 import os
@@ -18,6 +22,8 @@ from pathlib import Path
 from typing import Mapping, Optional
 
 from scenegems_tool.persistence.database import DATABASE_URL_ENV
+
+DEFAULT_ARTIFACT_DIR = Path("/var/lib/scenegems/artifacts")
 
 
 class SettingMissing(ValueError):
@@ -39,6 +45,7 @@ class MasterSettings:
     operator: Listener = Listener("127.0.0.1", 5174)
     broker_hook: Listener = Listener("127.0.0.1", 8090)
     release_manifest: Optional[Path] = None
+    artifacts: "ArtifactSettings" = field(default_factory=lambda: ArtifactSettings())
 
     @classmethod
     def from_environment(cls, environ: Optional[Mapping[str, str]] = None, env_file_folder: Optional[Path] = None) -> "MasterSettings":
@@ -56,7 +63,42 @@ class MasterSettings:
             operator=_listener(environ, "SCENEGEMS_OPERATOR", cls.operator),
             broker_hook=_listener(environ, "SCENEGEMS_BROKER_HOOK", cls.broker_hook),
             release_manifest=Path(release_manifest) if release_manifest else None,
+            artifacts=ArtifactSettings.from_environment(environ),
         )
+
+
+@dataclass(frozen=True)
+class ArtifactSettings:
+    """The artifact store (persistence/artifacts/) and its sweep of unreferenced artifacts."""
+
+    folder: Path = DEFAULT_ARTIFACT_DIR
+    max_bytes: int = 256 * 1024 * 1024
+    sweep_interval_s: float = 600.0  # 0: no sweep
+    sweep_grace_s: float = 3600.0
+
+    def __post_init__(self) -> None:
+        if self.max_bytes <= 0 or self.sweep_interval_s < 0 or self.sweep_grace_s < 0:
+            raise ValueError(f"invalid artifact settings: {self}")
+
+    @classmethod
+    def from_environment(cls, environ: Mapping[str, str]) -> "ArtifactSettings":
+        folder = environ.get("SCENEGEMS_ARTIFACT_DIR", "").strip()
+        return cls(
+            folder=Path(folder) if folder else cls.folder,
+            max_bytes=int(_number(environ, "SCENEGEMS_ARTIFACT_MAX_BYTES", cls.max_bytes, int)),
+            sweep_interval_s=_number(environ, "SCENEGEMS_ARTIFACT_SWEEP_INTERVAL_S", cls.sweep_interval_s, float),
+            sweep_grace_s=_number(environ, "SCENEGEMS_ARTIFACT_SWEEP_GRACE_S", cls.sweep_grace_s, float),
+        )
+
+
+def _number(environ: Mapping[str, str], name: str, default, parse):
+    text = environ.get(name, "").strip()
+    if not text:
+        return default
+    try:
+        return parse(text)
+    except ValueError:
+        raise ValueError(f"{name} must be a number, got {text!r}") from None
 
 
 def _required(environ: Mapping[str, str], name: str) -> str:

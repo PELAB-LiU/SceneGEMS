@@ -1,0 +1,51 @@
+"""The master's artifact store with its routes' limit and its sweep timer (P4.3).
+
+The sweep runs on the master's event loop next to the control plane's timers, started and
+stopped by the node API's lifespan (api/master_apps.py). Each round deletes the artifacts
+that nothing references and nobody used for the grace period (recorded_artifacts.py); the
+store calls run in a worker thread.
+"""
+
+import asyncio
+import logging
+from dataclasses import dataclass
+from typing import List, Optional
+
+import anyio
+
+from scenegems_tool.cluster.master.api.artifact_routes import DEFAULT_MAX_ARTIFACT_BYTES
+from scenegems_tool.persistence.artifacts.recorded_artifacts import RecordedArtifacts
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class MasterArtifacts:
+    artifacts: RecordedArtifacts
+    max_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES
+    sweep_interval_s: float = 600.0  # 0: no sweep
+    sweep_grace_s: float = 3600.0
+
+    def __post_init__(self) -> None:
+        self._task: Optional[asyncio.Task] = None
+
+    async def sweep_once(self) -> List[str]:
+        return await anyio.to_thread.run_sync(self.artifacts.sweep, self.sweep_grace_s)
+
+    async def _sweep_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self.sweep_interval_s)
+            try:
+                await self.sweep_once()
+            except Exception:
+                logger.exception("Artifact sweep failed; retrying in %.0f s", self.sweep_interval_s)
+
+    def start_sweep(self) -> None:
+        if self.sweep_interval_s > 0 and self._task is None:
+            self._task = asyncio.create_task(self._sweep_loop())
+
+    async def stop_sweep(self) -> None:
+        task, self._task = self._task, None
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)

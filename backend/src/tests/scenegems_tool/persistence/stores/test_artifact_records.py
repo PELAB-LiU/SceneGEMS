@@ -92,3 +92,14 @@ def test_delete_spares_artifacts_used_since_they_were_listed(stores, clock):
     stores.artifacts.remove_references_of(CASE, "9")
     assert stores.artifacts.delete_unreferenced([SCENE], UNUSED_S) == []  # just used
     assert stores.artifacts.delete_unreferenced([], UNUSED_S) == []
+
+
+def test_a_read_marks_the_artifact_used(stores, clock):
+    _record(stores)
+    clock.advance(UNUSED_S + 1)
+    assert [record.artifact_hash for record in stores.artifacts.list_unreferenced(UNUSED_S)] == [SCENE]
+    marked = stores.artifacts.mark_used(SCENE)
+    assert marked.last_used_at == clock.now and marked.created_at == START
+    assert stores.artifacts.list_unreferenced(UNUSED_S) == []
+    assert stores.artifacts.delete_unreferenced([SCENE], UNUSED_S) == []
+    assert stores.artifacts.mark_used(TRAJECTORIES) is None

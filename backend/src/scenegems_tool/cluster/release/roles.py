@@ -43,6 +43,11 @@ NODE_IMAGE = "scenegems-node:latest"
 _SECURITY_TOOL = ["docker", "compose", "--profile", "tools", "run", "--rm", "-T", "security"]
 
 DEFAULT_NODE_CAPABILITIES = "simulation.kinematic:2,scene_generation:1,trajectory_generation:1,monitoring.post_hoc:1"
+# The artifact store on the master and the artifact cache on a node (cluster/master/settings.py, node_configuration.py)
+DEFAULT_ARTIFACT_MAX_BYTES = str(256 * 1024 * 1024)
+DEFAULT_ARTIFACT_SWEEP_INTERVAL_S = "600"
+DEFAULT_ARTIFACT_SWEEP_GRACE_S = "3600"
+DEFAULT_NODE_ARTIFACT_CACHE_MAX_BYTES = str(2 * 1024 * 1024 * 1024)
 
 
 def capability_item_images() -> Dict[str, List[str]]:
@@ -76,6 +81,9 @@ def master_role() -> Dict[str, Any]:
             "POSTGRES_HOST_PORT": {"default": "5432", "description": "Postgres, published on 127.0.0.1 only"},
             "SCENEGEMS_API_BIND_ADDRESS": {"default": "0.0.0.0", "description": "host address the node API is published on"},
             "SCENEGEMS_BROKER_BIND_ADDRESS": {"default": "0.0.0.0", "description": "host address the cluster broker is published on"},
+            "SCENEGEMS_ARTIFACT_MAX_BYTES": {"default": DEFAULT_ARTIFACT_MAX_BYTES, "description": "largest artifact a node may upload, uncompressed, in bytes"},
+            "SCENEGEMS_ARTIFACT_SWEEP_INTERVAL_S": {"default": DEFAULT_ARTIFACT_SWEEP_INTERVAL_S, "description": "seconds between sweeps of unreferenced artifacts; 0 turns the sweep off"},
+            "SCENEGEMS_ARTIFACT_SWEEP_GRACE_S": {"default": DEFAULT_ARTIFACT_SWEEP_GRACE_S, "description": "seconds an unreferenced artifact is kept after its last use"},
         },
         "secrets": ["POSTGRES_PASSWORD", "SCENEGEMS_BROKER_MASTER_PASSWORD", "SCENEGEMS_BROKER_AUTH_HOOK_SECRET"],
         "setup": [_SECURITY_TOOL + ["init"]],
@@ -107,6 +115,7 @@ def node_role() -> Dict[str, Any]:
                 "items": {"separator": ",", "key_separator": ":", "images": capability_item_images()},
             },
             "SCENEGEMS_NODE_LABELS": {"default": "", "description": "optional labels jobs can require, as key=value separated by commas"},
+            "SCENEGEMS_NODE_ARTIFACT_CACHE_MAX_BYTES": {"default": DEFAULT_NODE_ARTIFACT_CACHE_MAX_BYTES, "description": "bound of the node's artifact cache in bytes; 0 turns it off"},
         },
         "secrets": [],
         "setup": [],

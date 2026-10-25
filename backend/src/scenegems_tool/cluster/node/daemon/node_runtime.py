@@ -3,6 +3,8 @@
 The broker is the master's central broker over TLS, verified against the paired CA, with
 the node's own broker account. This process dials it with the CA file from its state
 folder; job containers get the trust folder mounted and their own path to the same file.
+Artifacts travel over the master's node API with the node credential, verified against
+the same CA, through a cache in the state volume.
 """
 
 import logging
@@ -10,7 +12,11 @@ import shutil
 from pathlib import Path
 from typing import List
 
+from scenegems_tool.cluster.node.artifacts.artifact_cache import ArtifactCache
+from scenegems_tool.cluster.node.artifacts.artifact_client import ArtifactClient
+from scenegems_tool.cluster.node.artifacts.node_artifacts import NodeArtifacts
 from scenegems_tool.cluster.node.daemon.configuration.node_configuration import NodeConfiguration
+from scenegems_tool.cluster.node.daemon.pairing.ca_pinning import verified_context
 from scenegems_tool.cluster.node.daemon.pairing.pairing_state import PairingState
 from scenegems_tool.cluster.node.instance_scope import INSTANCES_FOLDER, SCOPE_ROOT
 from scenegems_tool.cluster.node.launchers.ca_certificate_mount import CaCertificateMount
@@ -48,7 +54,14 @@ def build_node_context(configuration: NodeConfiguration, response: PairingRespon
         slots=dict(configuration.capabilities),
         broker_network=configuration.docker_network,
         ca_certificate_mount=CaCertificateMount(configuration.trust_source),
+        artifacts=node_artifacts(configuration, response),
     )
+
+
+def node_artifacts(configuration: NodeConfiguration, response: PairingResponse) -> NodeArtifacts:
+    client = ArtifactClient(configuration.master_url, response.node_credential, lambda: verified_context(response.ca_certificate_pem))
+    cache = ArtifactCache(configuration.artifact_cache_folder, configuration.artifact_cache_max_bytes) if configuration.artifact_cache_max_bytes > 0 else None
+    return NodeArtifacts(client, cache)
 
 
 def instance_prefix(master_id: str, node_id: str) -> str:

@@ -108,6 +108,13 @@ class ArtifactRecordStore:
             row = scope.get(ArtifactRow, artifact_hash, populate_existing=True)
             return None if row is None else ArtifactRecord.from_row(row)
 
+    def mark_used(self, artifact_hash: str, *, session: Optional[Session] = None) -> Optional[ArtifactRecord]:
+        """Marks an artifact as used now (it was read), so the sweep spares it; None when there is no record."""
+        with session_scope(self._sessions, session) as scope:
+            statement = update(ArtifactRow).where(ArtifactRow.hash == artifact_hash).values(last_used_at=self._clock()).returning(ArtifactRow).execution_options(synchronize_session=False)
+            row = scope.execute(statement).scalar_one_or_none()
+            return None if row is None else ArtifactRecord.from_row(row)
+
     def list_unreferenced(self, unused_for_s: float, limit: Optional[int] = 100, *, session: Optional[Session] = None) -> List[ArtifactRecord]:
         """Artifacts without references, not used for unused_for_s seconds, least recently used first."""
         cutoff = self._clock() - timedelta(seconds=unused_for_s)

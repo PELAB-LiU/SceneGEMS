@@ -108,3 +108,22 @@ def test_docker_compose_accepts_the_stack_with_the_role_env(role_name, tmp_path)
     (tmp_path / "release.json").write_text("{}", encoding="utf-8")
     completed = subprocess.run(["docker", "compose", "--profile", "tools", "config", "-q"], cwd=tmp_path, capture_output=True, text=True)
     assert completed.returncode == 0, completed.stderr
+
+
+def test_the_master_keeps_artifacts_on_their_own_volume():
+    compose = _compose("master")
+    service = compose["services"]["master-api"]
+    folder = service["environment"]["SCENEGEMS_ARTIFACT_DIR"]
+    assert f"artifacts:{folder}" in service["volumes"]
+    assert compose["volumes"]["artifacts"]["name"] == "scenegems-${SCENEGEMS_MASTER_ID}-artifacts"
+    for key in ("SCENEGEMS_ARTIFACT_MAX_BYTES", "SCENEGEMS_ARTIFACT_SWEEP_INTERVAL_S", "SCENEGEMS_ARTIFACT_SWEEP_GRACE_S"):
+        assert service["environment"][key] == f"${{{key}:-{scenegems_roles()['master']['parameters'][key]['default']}}}"
+
+
+def test_the_node_caches_artifacts_in_its_state_volume():
+    service = _compose("node")["services"]["node"]
+    state = service["environment"]["SCENEGEMS_NODE_STATE_DIR"]
+    assert f"state:{state}" in service["volumes"]
+    assert service["environment"]["SCENEGEMS_NODE_ARTIFACT_CACHE_DIR"].startswith(state + "/")
+    default = scenegems_roles()["node"]["parameters"]["SCENEGEMS_NODE_ARTIFACT_CACHE_MAX_BYTES"]["default"]
+    assert service["environment"]["SCENEGEMS_NODE_ARTIFACT_CACHE_MAX_BYTES"] == f"${{SCENEGEMS_NODE_ARTIFACT_CACHE_MAX_BYTES:-{default}}}"

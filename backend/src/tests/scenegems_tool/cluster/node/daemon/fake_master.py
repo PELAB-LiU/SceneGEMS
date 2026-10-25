@@ -12,6 +12,9 @@ each node connection from its own thread through FakeNodeConnection:
 
 By default the master answers Hello with Welcome and LeaseRenew with LeaseRenewed, the
 behaviour the node relies on (design doc 13.8.4); both can be switched off or replaced.
+
+With `artifacts` it also serves the real artifact routes (cluster/master/api/artifact_routes.py)
+on that store; a job offered on a connection counts as leased to its node (`leased_jobs`).
 """
 
 import asyncio
@@ -20,20 +23,22 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Callable, List, Optional, Sequence, Tuple, Type, Union
+from typing import Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
 
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, PlainTextResponse
 
+from scenegems_tool.cluster.master.api.artifact_routes import DEFAULT_MAX_ARTIFACT_BYTES, node_artifact_router
 from scenegems_tool.cluster.protocol.codec import decode_node_message, encode
-from scenegems_tool.cluster.protocol.messages import Heartbeat, Hello, JobStatus, LeaseRenew, LeaseRenewed, LogLines, Welcome
+from scenegems_tool.cluster.protocol.messages import Heartbeat, Hello, JobStatus, LeaseOffer, LeaseRenew, LeaseRenewed, LogLines, Welcome
 from scenegems_tool.cluster.protocol.model_base import ProtocolFrame
 from scenegems_tool.cluster.protocol.pairing import PairingRequest
 from scenegems_tool.cluster.protocol.routes import CA_CERTIFICATE_PATH, NODE_CONTROL_PATH, PAIRING_PATH, credential_from_authorization
 from scenegems_tool.cluster.security.credentials.node_credentials import authenticate_node
 from scenegems_tool.cluster.security.master_security import MasterSecurity
 from scenegems_tool.cluster.security.pairing import PairingTokenRejected, pair_node
+from scenegems_tool.persistence.artifacts.recorded_artifacts import RecordedArtifacts
 
 TIMEOUT_S = 10.0
 # Frames a test usually does not wait for; expect() skips them unless asked for.
@@ -47,8 +52,9 @@ def _utc_now() -> datetime:
 
 
 class FakeNodeConnection:
-    def __init__(self, loop: asyncio.AbstractEventLoop, node_id: str):
+    def __init__(self, loop: asyncio.AbstractEventLoop, node_id: str, leased_jobs: Optional[Dict[str, str]] = None):
         self.node_id = node_id
+        self._leased_jobs = leased_jobs if leased_jobs is not None else {}
         self._loop = loop
         self._outbox: asyncio.Queue = asyncio.Queue()
         self._inbox: "queue.Queue" = queue.Queue()
@@ -56,6 +62,8 @@ class FakeNodeConnection:
         self.closed = threading.Event()
 
     def send(self, frame: Union[ProtocolFrame, str]) -> None:
+        if isinstance(frame, LeaseOffer):
+            self._leased_jobs[frame.job.job_id] = self.node_id  # as the master's job store records the lease
         text = frame if isinstance(frame, str) else encode(frame)
         self._loop.call_soon_threadsafe(self._outbox.put_nowait, text)
 
@@ -110,6 +118,9 @@ class FakeMaster:
     connections: "queue.Queue[FakeNodeConnection]" = field(default_factory=queue.Queue)  # handed out by wait_for_connection
     all_connections: List[FakeNodeConnection] = field(default_factory=list)  # every connection, in order
     port: int = 0
+    artifacts: Optional[RecordedArtifacts] = None
+    leased_jobs: Dict[str, str] = field(default_factory=dict)  # job id to the node it was offered to, for uploads
+    max_artifact_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES
 
     def __post_init__(self) -> None:
         self._server: Optional[uvicorn.Server] = None
@@ -169,6 +180,7 @@ class FakeMaster:
     def _app(self) -> FastAPI:
         app = FastAPI()
         master = self
+        self._include_artifact_routes(app)
 
         @app.get(CA_CERTIFICATE_PATH)
         def ca_certificate() -> PlainTextResponse:
@@ -192,7 +204,7 @@ class FakeMaster:
                 await websocket.close(code=1008)  # before accept: the handshake is answered with HTTP 403
                 return
             await websocket.accept()
-            connection = FakeNodeConnection(asyncio.get_running_loop(), node_id)
+            connection = FakeNodeConnection(asyncio.get_running_loop(), node_id, master.leased_jobs)
             master.all_connections.append(connection)
             master.connections.put(connection)
             sender = asyncio.create_task(master._send_loop(websocket, connection))
@@ -208,6 +220,10 @@ class FakeMaster:
                 sender.cancel()
 
         return app
+
+    def _include_artifact_routes(self, app: FastAPI) -> None:
+        if self.artifacts is not None:
+            app.include_router(node_artifact_router(self.artifacts, self.security, self.leased_jobs.get, self.max_artifact_bytes))
 
     async def _send_loop(self, websocket: WebSocket, connection: FakeNodeConnection) -> None:
         while True:

@@ -22,13 +22,16 @@ import uvicorn
 
 from scenegems_tool.cluster.master.api.master_apps import MasterApps, create_master_apps
 from scenegems_tool.cluster.master.control_plane import ControlPlane
+from scenegems_tool.cluster.master.master_artifacts import MasterArtifacts
 from scenegems_tool.cluster.master.scheduling.fingerprint_policy import ExpectedFingerprints
 from scenegems_tool.cluster.master.settings import MasterSettings, SettingMissing
 from scenegems_tool.cluster.security.command_line import load_env_file
 from scenegems_tool.cluster.security.master_security import MasterSecurity
 from scenegems_tool.cluster.security.security_layout import SecurityLayout
+from scenegems_tool.persistence.artifacts.file_artifact_store import FileArtifactStore
+from scenegems_tool.persistence.artifacts.recorded_artifacts import RecordedArtifacts
 from scenegems_tool.persistence.database import create_database_engine, create_session_factory
-from scenegems_tool.persistence.stores import JobStore, NodeStore
+from scenegems_tool.persistence.stores import ArtifactRecordStore, JobStore, NodeStore
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +55,13 @@ def build_master(settings: MasterSettings, with_gateway: bool = True) -> MasterA
     if with_gateway:
         from scenegems_tool.gateway.websocket_app import app as gateway
 
-    return create_master_apps(plane, security, settings.broker_hook_secret, gateway=gateway)
+    return create_master_apps(plane, security, settings.broker_hook_secret, gateway=gateway, artifacts=build_artifacts(settings, sessions))
+
+
+def build_artifacts(settings: MasterSettings, sessions) -> MasterArtifacts:
+    """The artifact store on its folder with its Postgres records, and the sweep's timing."""
+    artifacts = RecordedArtifacts(FileArtifactStore(settings.artifacts.folder), ArtifactRecordStore(sessions))
+    return MasterArtifacts(artifacts, settings.artifacts.max_bytes, settings.artifacts.sweep_interval_s, settings.artifacts.sweep_grace_s)
 
 
 def listeners(settings: MasterSettings, apps: MasterApps) -> List[uvicorn.Server]:

@@ -6,7 +6,7 @@
 # The values come from .env (template: deploy/node/.env.example). The project, the container,
 # the network and the volumes are all named scenegems-node-<master id>-<node name>, so one
 # machine can run nodes for several masters, and several nodes of one master, side by side.
-# Pairing state lives in the state volume; remove it to pair again.
+# Pairing state and the cache of downloaded artifacts live in the state volume; remove it to pair again.
 name: scenegems-node-${SCENEGEMS_MASTER_ID:?set SCENEGEMS_MASTER_ID in the env file}-${SCENEGEMS_NODE_NAME:?set SCENEGEMS_NODE_NAME in the env file}
 
 services:
@@ -26,8 +26,10 @@ services:
       SCENEGEMS_NODE_LABELS: ${SCENEGEMS_NODE_LABELS:-}
       SCENEGEMS_NODE_REFERENCE_GEOFENCE: ${SCENEGEMS_NODE_REFERENCE_GEOFENCE:-}
       SCENEGEMS_SOFTWARE_REVISION: ${SCENEGEMS_SOFTWARE_REVISION:-}
+      SCENEGEMS_NODE_ARTIFACT_CACHE_MAX_BYTES: ${SCENEGEMS_NODE_ARTIFACT_CACHE_MAX_BYTES:-2147483648}
       # Paths inside this container and the Docker names job containers use; not for the env file.
       SCENEGEMS_NODE_STATE_DIR: /var/lib/scenegems-node
+      SCENEGEMS_NODE_ARTIFACT_CACHE_DIR: /var/lib/scenegems-node/artifacts
       SCENEGEMS_NODE_TRUST_DIR: /etc/scenegems/trust
       SCENEGEMS_NODE_TRUST_SOURCE: scenegems-node-${SCENEGEMS_MASTER_ID}-${SCENEGEMS_NODE_NAME}-trust
       SCENEGEMS_DOCKER_NETWORK: scenegems-node-${SCENEGEMS_MASTER_ID}-${SCENEGEMS_NODE_NAME}
