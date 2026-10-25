@@ -3,6 +3,7 @@
 docker_cli.py             thin wrappers around the Docker CLI
 compose_project.py        one compose project: its file and the CLI calls that run it
 container_environment.py  environment between a launcher and the subsystem main it starts
+ca_certificate_mount.py   the master's CA file inside a container, for TLS to the cluster broker
 pooled/                   long-lived services that serve many requests (design doc 4.3)
 per_job/                  stacks created for one job or simulation and removed after it
 """

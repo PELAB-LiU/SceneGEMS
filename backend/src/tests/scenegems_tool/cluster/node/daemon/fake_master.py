@@ -1,0 +1,226 @@
+"""A scripted master for the node daemon tests: HTTPS and the control WebSocket on one TLS port.
+
+It serves the master's routes from cluster/protocol/routes.py with a real security
+folder (cluster/security): the CA certificate, pairing through pair_node and node
+authentication through authenticate_node. It runs uvicorn in a thread; the test drives
+each node connection from its own thread through FakeNodeConnection:
+
+    connection = master.wait_for_connection()
+    hello = connection.expect(Hello)
+    connection.send(LeaseOffer(...))
+    accept = connection.expect(LeaseAccept)
+
+By default the master answers Hello with Welcome and LeaseRenew with LeaseRenewed, the
+behaviour the node relies on (design doc 13.8.4); both can be switched off or replaced.
+"""
+
+import asyncio
+import queue
+import threading
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from typing import Callable, List, Optional, Sequence, Tuple, Type, Union
+
+import uvicorn
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse, PlainTextResponse
+
+from scenegems_tool.cluster.protocol.codec import decode_node_message, encode
+from scenegems_tool.cluster.protocol.messages import Heartbeat, Hello, JobStatus, LeaseRenew, LeaseRenewed, LogLines, Welcome
+from scenegems_tool.cluster.protocol.model_base import ProtocolFrame
+from scenegems_tool.cluster.protocol.pairing import PairingRequest
+from scenegems_tool.cluster.protocol.routes import CA_CERTIFICATE_PATH, NODE_CONTROL_PATH, PAIRING_PATH, credential_from_authorization
+from scenegems_tool.cluster.security.credentials.node_credentials import authenticate_node
+from scenegems_tool.cluster.security.master_security import MasterSecurity
+from scenegems_tool.cluster.security.pairing import PairingTokenRejected, pair_node
+
+TIMEOUT_S = 10.0
+# Frames a test usually does not wait for; expect() skips them unless asked for.
+BACKGROUND_FRAMES = (Heartbeat, JobStatus, LogLines, LeaseRenew)
+
+HelloReply = Callable[[Hello], Union[ProtocolFrame, str, None]]  # a frame, raw text, or None for no answer
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class FakeNodeConnection:
+    def __init__(self, loop: asyncio.AbstractEventLoop, node_id: str):
+        self.node_id = node_id
+        self._loop = loop
+        self._outbox: asyncio.Queue = asyncio.Queue()
+        self._inbox: "queue.Queue" = queue.Queue()
+        self.history: List[ProtocolFrame] = []  # every frame received, in order
+        self.closed = threading.Event()
+
+    def send(self, frame: Union[ProtocolFrame, str]) -> None:
+        text = frame if isinstance(frame, str) else encode(frame)
+        self._loop.call_soon_threadsafe(self._outbox.put_nowait, text)
+
+    def close(self) -> None:
+        """The master drops the connection."""
+        self._loop.call_soon_threadsafe(self._outbox.put_nowait, None)
+
+    def expect(self, kinds: Union[Type, Tuple[Type, ...]], timeout_s: float = TIMEOUT_S, skip: Sequence[Type] = BACKGROUND_FRAMES):
+        """The next frame of the given type; frames of the skipped types are passed over, anything else fails."""
+        kinds = kinds if isinstance(kinds, tuple) else (kinds,)
+        deadline = time.monotonic() + timeout_s
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise AssertionError(f"No {', '.join(kind.__name__ for kind in kinds)} from node {self.node_id} within {timeout_s} s")
+            try:
+                frame = self._inbox.get(timeout=remaining)
+            except queue.Empty:
+                continue
+            if isinstance(frame, kinds):
+                return frame
+            if not isinstance(frame, tuple(skip)):
+                raise AssertionError(f"Expected {', '.join(kind.__name__ for kind in kinds)}, got {frame!r}")
+
+    def received(self, kind: Type) -> List[ProtocolFrame]:
+        return [frame for frame in self.history if isinstance(frame, kind)]
+
+    def wait_until(self, condition: Callable[[], bool], timeout_s: float = TIMEOUT_S) -> None:
+        deadline = time.monotonic() + timeout_s
+        while not condition():
+            if time.monotonic() > deadline:
+                raise AssertionError(f"Condition not met within {timeout_s} s")
+            time.sleep(0.02)
+
+    # The master's side, on the event loop
+
+    def _received(self, frame: ProtocolFrame) -> None:
+        self.history.append(frame)
+        self._inbox.put(frame)
+
+
+@dataclass
+class FakeMaster:
+    security: MasterSecurity
+    host: str = "127.0.0.1"
+    heartbeat_interval_s: float = 0.2
+    lease_timeout_s: float = 3.0
+    served_ca_certificate_pem: Optional[str] = None  # serve another CA than the real one, for the pin test
+    hello_reply: Optional[HelloReply] = None  # replaces the Welcome
+    renew_leases: bool = True
+    pairing_requests: List[PairingRequest] = field(default_factory=list)
+    connections: "queue.Queue[FakeNodeConnection]" = field(default_factory=queue.Queue)  # handed out by wait_for_connection
+    all_connections: List[FakeNodeConnection] = field(default_factory=list)  # every connection, in order
+    port: int = 0
+
+    def __post_init__(self) -> None:
+        self._server: Optional[uvicorn.Server] = None
+        self._thread: Optional[threading.Thread] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+    @property
+    def url(self) -> str:
+        return f"https://{self.host}:{self.port}"
+
+    def welcome(self) -> Welcome:
+        return Welcome(master_id=self.security.master_id, heartbeat_interval_s=self.heartbeat_interval_s, lease_timeout_s=self.lease_timeout_s)
+
+    def wait_for_connection(self, timeout_s: float = TIMEOUT_S) -> FakeNodeConnection:
+        try:
+            return self.connections.get(timeout=timeout_s)
+        except queue.Empty:
+            raise AssertionError(f"No node connected within {timeout_s} s") from None
+
+    # Server
+
+    def start(self, bind: str = "127.0.0.1") -> "FakeMaster":
+        config = uvicorn.Config(
+            self._app(),
+            host=bind,
+            port=self.port,
+            ssl_certfile=str(self.security.layout.api_certificate),
+            ssl_keyfile=str(self.security.layout.api_key),
+            ws="websockets-sansio",
+            timeout_graceful_shutdown=2,
+            ws_max_size=64 * 1024 * 1024,
+            lifespan="off",
+            log_level="warning",
+        )
+        self._server = uvicorn.Server(config)
+        self._thread = threading.Thread(target=self._server.run, name="fake-master", daemon=True)
+        self._thread.start()
+        deadline = time.monotonic() + TIMEOUT_S
+        while not self._server.started:
+            if time.monotonic() > deadline or not self._thread.is_alive():
+                raise RuntimeError("The fake master did not start")
+            time.sleep(0.02)
+        self.port = self._server.servers[0].sockets[0].getsockname()[1]
+        return self
+
+    def stop(self) -> None:
+        if self._server is not None:
+            self._server.should_exit = True
+            self._thread.join(timeout=TIMEOUT_S)
+
+    def __enter__(self) -> "FakeMaster":
+        return self.start()
+
+    def __exit__(self, *_exc) -> None:
+        self.stop()
+
+    def _app(self) -> FastAPI:
+        app = FastAPI()
+        master = self
+
+        @app.get(CA_CERTIFICATE_PATH)
+        def ca_certificate() -> PlainTextResponse:
+            return PlainTextResponse(master.served_ca_certificate_pem or master.security.ca_certificate_pem, media_type="application/x-pem-file")
+
+        @app.post(PAIRING_PATH)
+        async def pairing(request: Request) -> JSONResponse:
+            pairing_request = PairingRequest.model_validate_json(await request.body())
+            master.pairing_requests.append(pairing_request)
+            try:
+                response = pair_node(master.security, pairing_request)
+            except PairingTokenRejected:
+                return JSONResponse({"detail": "pairing token rejected"}, status_code=403)
+            return JSONResponse(response.model_dump(mode="json"))
+
+        @app.websocket(NODE_CONTROL_PATH)
+        async def control(websocket: WebSocket) -> None:
+            credential = credential_from_authorization(websocket.headers.get("authorization", ""))
+            node_id = authenticate_node(master.security.store, credential)
+            if node_id is None:
+                await websocket.close(code=1008)  # before accept: the handshake is answered with HTTP 403
+                return
+            await websocket.accept()
+            connection = FakeNodeConnection(asyncio.get_running_loop(), node_id)
+            master.all_connections.append(connection)
+            master.connections.put(connection)
+            sender = asyncio.create_task(master._send_loop(websocket, connection))
+            try:
+                while True:
+                    frame = decode_node_message(await websocket.receive_text())
+                    connection._received(frame)
+                    master._auto_reply(connection, frame)
+            except (WebSocketDisconnect, RuntimeError):
+                pass
+            finally:
+                connection.closed.set()
+                sender.cancel()
+
+        return app
+
+    async def _send_loop(self, websocket: WebSocket, connection: FakeNodeConnection) -> None:
+        while True:
+            text = await connection._outbox.get()
+            if text is None:
+                await websocket.close(code=1001)
+                return
+            await websocket.send_text(text)
+
+    def _auto_reply(self, connection: FakeNodeConnection, frame: ProtocolFrame) -> None:
+        if isinstance(frame, Hello):
+            reply = self.hello_reply(frame) if self.hello_reply is not None else self.welcome()
+            if reply is not None:
+                connection.send(reply)
+        elif isinstance(frame, LeaseRenew) and self.renew_leases:
+            connection.send(LeaseRenewed(lease_id=frame.lease_id, expires_at=_utc_now() + timedelta(seconds=self.lease_timeout_s)))

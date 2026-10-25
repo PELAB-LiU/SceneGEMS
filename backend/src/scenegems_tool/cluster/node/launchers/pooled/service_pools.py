@@ -4,6 +4,7 @@ import threading
 from typing import Callable, Dict, Optional
 
 from scenegems_tool.cluster.node.instance_scope import InstanceScope
+from scenegems_tool.cluster.node.launchers.ca_certificate_mount import CaCertificateMount
 from scenegems_tool.cluster.node.launchers.pooled.pooled_service import PooledService
 from scenegems_tool.cluster.node.launchers.pooled.scene_generation_pool import SceneGenerationPool
 from scenegems_tool.cluster.node.launchers.pooled.trajectory_generation_pool import TrajectoryGenerationPool
@@ -27,6 +28,7 @@ class ServicePools:
         reference_geofence: Geofence,
         workers: Callable[[Subsystem], int],
         broker_network: Optional[str] = None,
+        ca_certificate_mount: Optional[CaCertificateMount] = None,
     ):
         self.master_id = master_id
         self.node_id = node_id
@@ -34,6 +36,7 @@ class ServicePools:
         self.reference_geofence = reference_geofence
         self.workers = workers
         self.broker_network = broker_network
+        self.ca_certificate_mount = ca_certificate_mount
         self._pools: Dict[Subsystem, PooledService] = {}
         self._lock = threading.Lock()
 
@@ -45,7 +48,7 @@ class ServicePools:
         with self._lock:
             pool = self._pools.get(subsystem)
             if pool is None:
-                pool = _POOL_CLASSES[subsystem].for_scope(self.scope(subsystem), self.mqtt_connection, self.reference_geofence, self.workers(subsystem), self.broker_network)
+                pool = _POOL_CLASSES[subsystem].for_scope(self.scope(subsystem), self.mqtt_connection, self.reference_geofence, self.workers(subsystem), self.broker_network, self.ca_certificate_mount)
                 self._pools[subsystem] = pool
             return pool
 

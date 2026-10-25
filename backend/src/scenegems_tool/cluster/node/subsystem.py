@@ -27,5 +27,5 @@ IMAGE_ENVIRONMENT_VARIABLES = {
 
 
 def subsystem_image(subsystem: Subsystem) -> str:
-    """The image a subsystem runs in: the environment override when set, else the locally built default."""
-    return os.environ.get(IMAGE_ENVIRONMENT_VARIABLES[subsystem], _DEFAULT_IMAGES[subsystem])
+    """The image a subsystem runs in: the environment override when set and not empty, else the locally built default."""
+    return os.environ.get(IMAGE_ENVIRONMENT_VARIABLES[subsystem], "").strip() or _DEFAULT_IMAGES[subsystem]

@@ -1,0 +1,223 @@
+"""The node daemon's configuration, from its environment and its `.env` file.
+
+Variables (deploy/node/.env.example is the template):
+
+    SCENEGEMS_MASTER_URL          https://<host>[:<port>] of the master's cluster API
+    SCENEGEMS_MASTER_ID           the master's id; names the node's compose project and is checked at pairing
+    SCENEGEMS_MASTER_CA_SHA256    SHA-256 of the master's CA certificate (DER), 64 hex digits
+    SCENEGEMS_PAIRING_TOKEN       one-time token, needed only until the node is paired
+    SCENEGEMS_NODE_NAME           this node's name on the master and in Docker names
+    SCENEGEMS_NODE_CAPABILITIES   job types with slots, for example simulation.kinematic:4,scene_generation:1
+    SCENEGEMS_NODE_LABELS         optional key=value pairs, for example gpu=true,site=lab
+    SCENEGEMS_NODE_STATE_DIR      folder on the node's volume for the pairing state
+    SCENEGEMS_NODE_TRUST_DIR      optional, folder the CA file is written to for job containers (<state>/trust)
+    SCENEGEMS_NODE_TRUST_SOURCE   optional, the Docker volume or host folder behind the trust folder
+    SCENEGEMS_DOCKER_NETWORK      optional, the Docker network pooled services join
+    SCENEGEMS_NODE_REFERENCE_GEOFENCE  optional, latitude,longitude,radius of the pools' local frame
+    SCENEGEMS_SOFTWARE_REVISION   optional, the revision the node reports; read from the repository otherwise
+    SCENEGEMS_REPOSITORY_DIR      optional, the checkout the node was built from
+
+Process variables win over the file; an empty process variable counts as unset, since
+Compose passes unset optional variables as empty strings. Every problem is reported at
+once, so a start fails with one message that lists all of them.
+"""
+
+import os
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Dict, List, Mapping, Optional, Tuple
+from urllib.parse import urlsplit
+
+from scenegems_tool.cluster.node.daemon.configuration.env_file import EnvFileError, read_env_file
+from scenegems_tool.cluster.protocol.jobs import JobType
+from scenegems_tool.cluster.security.scope_names import is_scope_name
+
+ENV_FILE_VARIABLE = "SCENEGEMS_ENV_FILE"  # read from the process environment only
+DEFAULT_ENV_FILE = ".env"
+# The workbench's default reference geofence (frontend referenceGeofence.ts).
+DEFAULT_REFERENCE_GEOFENCE = (57.76080082972655, 16.680965995056, 20.0)
+
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_LABEL_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+_JOB_TYPES = {job_type.value: job_type for job_type in JobType}
+
+
+class ConfigurationError(ValueError):
+    def __init__(self, problems: List[str]):
+        self.problems = problems
+        super().__init__("Invalid node configuration:\n" + "\n".join(f"  - {problem}" for problem in problems))
+
+
+@dataclass(frozen=True)
+class NodeConfiguration:
+    master_url: str  # https://host[:port], without a trailing slash
+    master_id: str
+    master_ca_sha256: str  # lowercase hex
+    node_name: str
+    capabilities: Dict[JobType, int]  # job type to slots
+    state_dir: Path
+    trust_dir: Path
+    trust_source: str  # what job containers mount for the CA file
+    pairing_token: Optional[str] = field(default=None, repr=False)
+    labels: Dict[str, str] = field(default_factory=dict)
+    docker_network: Optional[str] = None
+    reference_geofence: Tuple[float, float, float] = DEFAULT_REFERENCE_GEOFENCE
+    software_revision: Optional[str] = None
+    repository_dir: Optional[Path] = None
+
+    @property
+    def docker_name(self) -> str:
+        """The node's compose project and container name on this machine: one per master and node name."""
+        return f"scenegems-node-{self.master_id}-{self.node_name}"
+
+    @classmethod
+    def load(cls, environ: Optional[Mapping[str, str]] = None, env_file: Optional[Path] = None) -> "NodeConfiguration":
+        """The configuration from the process environment over the `.env` file (SCENEGEMS_ENV_FILE, or ./.env when present)."""
+        environ = os.environ if environ is None else environ
+        explicit = env_file is not None or bool(environ.get(ENV_FILE_VARIABLE, "").strip())
+        path = Path(env_file) if env_file is not None else Path(environ.get(ENV_FILE_VARIABLE, "").strip() or DEFAULT_ENV_FILE)
+        values: Dict[str, str] = {}
+        if path.is_file():
+            try:
+                values.update(read_env_file(path))
+            except EnvFileError as error:
+                raise ConfigurationError([str(error)]) from error
+        elif explicit:
+            raise ConfigurationError([f"{ENV_FILE_VARIABLE}: no file at {path}"])
+        values.update({key: value for key, value in environ.items() if value.strip()})
+        return cls.from_values(values)
+
+    @classmethod
+    def from_values(cls, values: Mapping[str, str]) -> "NodeConfiguration":
+        problems: List[str] = []
+
+        def get(name: str) -> str:
+            return values.get(name, "").strip()
+
+        def required(name: str) -> str:
+            value = get(name)
+            if not value:
+                problems.append(f"{name} is not set")
+            return value
+
+        def parsed(name: str, parse, value: str, default=None):
+            try:
+                return parse(value)
+            except ValueError as error:
+                problems.append(f"{name}: {error}")
+                return default
+
+        master_url = required("SCENEGEMS_MASTER_URL")
+        master_url = parsed("SCENEGEMS_MASTER_URL", parse_master_url, master_url) if master_url else ""
+        master_id = required("SCENEGEMS_MASTER_ID")
+        if master_id and not is_scope_name(master_id):
+            problems.append(f"SCENEGEMS_MASTER_ID: {master_id!r} is not a master id (1 to 63 lowercase letters, digits and hyphens)")
+        ca_sha256 = required("SCENEGEMS_MASTER_CA_SHA256")
+        ca_sha256 = parsed("SCENEGEMS_MASTER_CA_SHA256", parse_sha256, ca_sha256) if ca_sha256 else ""
+        node_name = required("SCENEGEMS_NODE_NAME")
+        if node_name and not is_scope_name(node_name):
+            problems.append(f"SCENEGEMS_NODE_NAME: {node_name!r} must be 1 to 63 lowercase letters, digits and hyphens, since it names Docker objects")
+        capabilities_text = required("SCENEGEMS_NODE_CAPABILITIES")
+        capabilities = parsed("SCENEGEMS_NODE_CAPABILITIES", parse_capabilities, capabilities_text, {}) if capabilities_text else {}
+        labels = parsed("SCENEGEMS_NODE_LABELS", parse_labels, get("SCENEGEMS_NODE_LABELS"), {})
+        state_text = required("SCENEGEMS_NODE_STATE_DIR")
+        geofence_text = get("SCENEGEMS_NODE_REFERENCE_GEOFENCE")
+        geofence = parsed("SCENEGEMS_NODE_REFERENCE_GEOFENCE", parse_geofence, geofence_text, DEFAULT_REFERENCE_GEOFENCE) if geofence_text else DEFAULT_REFERENCE_GEOFENCE
+        if problems:
+            raise ConfigurationError(problems)
+
+        state_dir = Path(state_text)
+        trust_dir = Path(get("SCENEGEMS_NODE_TRUST_DIR") or state_dir / "trust")
+        repository = get("SCENEGEMS_REPOSITORY_DIR")
+        return cls(
+            master_url=master_url,
+            master_id=master_id,
+            master_ca_sha256=ca_sha256,
+            node_name=node_name,
+            capabilities=capabilities,
+            state_dir=state_dir,
+            trust_dir=trust_dir,
+            trust_source=get("SCENEGEMS_NODE_TRUST_SOURCE") or trust_dir.resolve().as_posix(),
+            pairing_token=get("SCENEGEMS_PAIRING_TOKEN") or None,
+            labels=labels,
+            docker_network=get("SCENEGEMS_DOCKER_NETWORK") or None,
+            reference_geofence=geofence,
+            software_revision=get("SCENEGEMS_SOFTWARE_REVISION") or None,
+            repository_dir=Path(repository) if repository else None,
+        )
+
+
+def parse_master_url(text: str) -> str:
+    parts = urlsplit(text.strip())
+    if parts.scheme != "https":
+        raise ValueError(f"{text!r} must start with https://; the node talks to its master over TLS only")
+    if not parts.hostname:
+        raise ValueError(f"{text!r} names no host")
+    if parts.username or parts.password or parts.query or parts.fragment or parts.path not in ("", "/"):
+        raise ValueError(f"{text!r} must be https://<host>[:<port>] without a path, query or user")
+    try:
+        port = parts.port
+    except ValueError as error:
+        raise ValueError(f"{text!r} has an invalid port") from error
+    host = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname
+    return f"https://{host}" + (f":{port}" if port is not None else "")
+
+
+def parse_sha256(text: str) -> str:
+    value = text.strip().lower().replace(":", "")
+    if not _SHA256.match(value):
+        raise ValueError(f"{text!r} is not a SHA-256 value (64 hex digits, colons allowed)")
+    return value
+
+
+def parse_capabilities(text: str) -> Dict[JobType, int]:
+    capabilities: Dict[JobType, int] = {}
+    for item in (part.strip() for part in text.split(",")):
+        if not item:
+            continue
+        name, separator, slots_text = item.rpartition(":")
+        name = name.strip()
+        if not separator or not name:
+            raise ValueError(f"{item!r} must read <job type>:<slots>")
+        job_type = _JOB_TYPES.get(name)
+        if job_type is None:
+            raise ValueError(f"unknown job type {name!r}; known: {', '.join(sorted(_JOB_TYPES))}")
+        if job_type in capabilities:
+            raise ValueError(f"{name} is listed twice")
+        try:
+            slots = int(slots_text.strip())
+        except ValueError:
+            raise ValueError(f"{item!r}: slots must be a whole number") from None
+        if slots < 1:
+            raise ValueError(f"{item!r}: slots must be at least 1")
+        capabilities[job_type] = slots
+    if not capabilities:
+        raise ValueError("lists no job type")
+    return capabilities
+
+
+def parse_labels(text: str) -> Dict[str, str]:
+    labels: Dict[str, str] = {}
+    for item in (part.strip() for part in text.split(",")):
+        if not item:
+            continue
+        key, separator, value = item.partition("=")
+        key, value = key.strip(), value.strip()
+        if not separator or not _LABEL_KEY.match(key) or not value:
+            raise ValueError(f"{item!r} must read <key>=<value>, the key of letters, digits, '_', '.' and '-'")
+        if key in labels:
+            raise ValueError(f"label {key!r} is set twice")
+        labels[key] = value
+    return labels
+
+
+def parse_geofence(text: str) -> Tuple[float, float, float]:
+    parts = [part.strip() for part in text.split(",")]
+    try:
+        latitude, longitude, radius = (float(part) for part in parts)
+    except ValueError:
+        raise ValueError(f"{text!r} must read <latitude>,<longitude>,<radius in meters>") from None
+    if not -90.0 <= latitude <= 90.0 or not -180.0 <= longitude <= 180.0 or radius <= 0.0:
+        raise ValueError(f"{text!r} is out of range")
+    return latitude, longitude, radius

@@ -3,6 +3,7 @@
 from typing import Optional
 
 from scenegems_tool.cluster.node.instance_scope import InstanceScope
+from scenegems_tool.cluster.node.launchers.ca_certificate_mount import CaCertificateMount
 from scenegems_tool.cluster.node.launchers.pooled.pooled_service import SERVICE_CPUS, PooledService, PoolNames
 from scenegems_tool.cluster.node.subsystem import Subsystem
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
@@ -32,5 +33,21 @@ class TrajectoryGenerationPool(PooledService):
         return cls(WORKBENCH_NAMES, mqtt_connection, reference_geofence, cpus=MAX_TRAJECTORY_GENERATION_WORKERS + SERVICE_CPUS)
 
     @classmethod
-    def for_scope(cls, scope: InstanceScope, mqtt_connection: MQttConnectionInfo, reference_geofence: Geofence, workers: int, broker_network: Optional[str] = None) -> "TrajectoryGenerationPool":
-        return cls(PoolNames.for_scope(scope, _SERVICE_KEY), mqtt_connection, reference_geofence, cpus=workers + SERVICE_CPUS, workers=workers, broker_network=broker_network)
+    def for_scope(
+        cls,
+        scope: InstanceScope,
+        mqtt_connection: MQttConnectionInfo,
+        reference_geofence: Geofence,
+        workers: int,
+        broker_network: Optional[str] = None,
+        ca_certificate_mount: Optional[CaCertificateMount] = None,
+    ) -> "TrajectoryGenerationPool":
+        return cls(
+            PoolNames.for_scope(scope, _SERVICE_KEY),
+            mqtt_connection,
+            reference_geofence,
+            cpus=workers + SERVICE_CPUS,
+            workers=workers,
+            broker_network=broker_network,
+            ca_certificate_mount=ca_certificate_mount,
+        )
