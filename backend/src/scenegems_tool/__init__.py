@@ -18,6 +18,7 @@ Present now:
         control_layers/         ardupilot/, later custom/
         asv_software/           replay/, usv_navigation/ (in process), mission_planner/ (specs)
     cluster/        distributed integration layer
+        protocol/               typed, versioned master-node messages, jobs and pairing
         node/                   local subsystem launcher teardown, later the node daemon
 
 Planned (added by later phases):

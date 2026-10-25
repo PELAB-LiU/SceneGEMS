@@ -1,0 +1,111 @@
+import json
+
+import pytest
+
+from scenegems_tool.cluster.protocol.codec import MalformedFrame, decode_master_message, decode_node_message, encode
+from scenegems_tool.cluster.protocol.jobs import JobOutcome, JobType
+from scenegems_tool.cluster.protocol.messages import (
+    Cancel,
+    Drain,
+    Heartbeat,
+    Hello,
+    JobResult,
+    JobStatus,
+    LeaseAccept,
+    LeaseOffer,
+    LeaseReject,
+    LeaseRelease,
+    LeaseRenew,
+    LeaseRenewed,
+    LogLine,
+    LogLines,
+    LogStream,
+    ProtocolError,
+    ProtocolErrorCode,
+    Welcome,
+)
+from scenegems_tool.cluster.protocol.node_description import CapabilityOffer
+from scenegems_tool.cluster.protocol.version import PROTOCOL_VERSION, ProtocolVersionMismatch
+
+
+@pytest.fixture
+def node_frames(resources, instant):
+    return [
+        Hello(
+            node_id="n1",
+            node_name="lab-1",
+            software_revision="4ac7ef2",
+            capabilities=[CapabilityOffer(job_type=JobType.SIMULATION_KINEMATIC, slots=4), CapabilityOffer(job_type=JobType.SCENE_GENERATION, slots=1)],
+            labels={"site": "lab"},
+            resources=resources,
+            fingerprints={"scenegems-scenario-execution": "abc123"},
+            running_lease_ids=["l0"],
+        ),
+        Heartbeat(resources=resources, slots_in_use={JobType.SIMULATION_KINEMATIC: 2}, running_lease_ids=["l1", "l2"]),
+        LeaseAccept(lease_id="l1"),
+        LeaseReject(lease_id="l1", reason="no free slot"),
+        LeaseRenew(lease_id="l1"),
+        LeaseRelease(lease_id="l1", reason="draining"),
+        JobStatus(lease_id="l1", job_id="j1", progress=0.5, message="step 150 of 300"),
+        JobResult(lease_id="l1", job_id="j1", idempotency_key="j1/1", outcome=JobOutcome.SUCCEEDED, result={"state_digest": "ff"}),
+        LogLines(lease_id="l1", job_id="j1", lines=[LogLine(timestamp=instant, stream=LogStream.STDOUT, source="scenario_execution.n1.0", text="ready")]),
+    ]
+
+
+@pytest.fixture
+def master_frames(job_spec, instant):
+    return [
+        Welcome(master_id="m1", heartbeat_interval_s=5.0, lease_timeout_s=30.0),
+        LeaseOffer(lease_id="l1", job=job_spec, expires_at=instant),
+        LeaseRenewed(lease_id="l1", expires_at=instant),
+        Drain(reason="maintenance"),
+        Cancel(lease_id="l1", job_id="j1", reason="cancelled by user"),
+        ProtocolError(code=ProtocolErrorCode.UNKNOWN_LEASE, message="lease l9 is not yours"),
+    ]
+
+
+def test_every_node_frame_round_trips(node_frames):
+    for frame in node_frames:
+        assert decode_node_message(encode(frame)) == frame
+
+
+def test_every_master_frame_round_trips(master_frames):
+    for frame in master_frames:
+        assert decode_master_message(encode(frame)) == frame
+
+
+def test_bytes_are_accepted():
+    assert decode_node_message(encode(LeaseAccept(lease_id="l1")).encode()) == LeaseAccept(lease_id="l1")
+
+
+def test_a_master_frame_is_not_a_node_frame():
+    with pytest.raises(MalformedFrame, match="drain"):
+        decode_node_message(encode(Drain(reason="maintenance")))
+
+
+def test_version_is_checked_before_the_body():
+    # a frame from another revision may have any shape: the error must name the version
+    frame = {"protocol_version": PROTOCOL_VERSION + 1, "type": "hello", "renamed_field": 1}
+    with pytest.raises(ProtocolVersionMismatch):
+        decode_node_message(json.dumps(frame))
+
+
+def test_frame_without_version_is_rejected():
+    with pytest.raises(ProtocolVersionMismatch):
+        decode_node_message(json.dumps({"type": "lease_accept", "lease_id": "l1"}))
+
+
+@pytest.mark.parametrize("text", ["not json", "[1, 2]", "null"])
+def test_non_object_frames_are_malformed(text):
+    with pytest.raises(MalformedFrame):
+        decode_node_message(text)
+
+
+def test_unknown_type_is_malformed():
+    with pytest.raises(MalformedFrame, match="unknown"):
+        decode_node_message(json.dumps({"protocol_version": PROTOCOL_VERSION, "type": "unknown"}))
+
+
+def test_missing_field_names_the_frame_type():
+    with pytest.raises(MalformedFrame, match="lease_accept"):
+        decode_node_message(json.dumps({"protocol_version": PROTOCOL_VERSION, "type": "lease_accept"}))
