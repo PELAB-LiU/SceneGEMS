@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RuleEvaluation } from "../../../domain/simulation/types";
-import { sortEvaluations } from "./RuleResultsPanel";
+import { sortEvaluations } from "./ruleEvaluationOrder";
 
 function evaluation(overrides: Partial<RuleEvaluation>): RuleEvaluation {
   return {
