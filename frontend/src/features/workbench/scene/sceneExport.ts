@@ -71,6 +71,30 @@ export function captureCanvasScreenshot(canvas: HTMLCanvasElement, fileNamePrefi
   }, "image/png");
 }
 
+/** Rasterizes the encounter canvas's SVG (it carries its own colors) and downloads it as PNG. */
+export function captureSvgScreenshot(svg: SVGSVGElement, fileNamePrefix: string) {
+  const width = svg.width.baseVal.value;
+  const height = svg.height.baseVal.value;
+  const markup = new XMLSerializer().serializeToString(svg);
+  const url = URL.createObjectURL(new Blob([markup], { type: "image/svg+xml;charset=utf-8" }));
+  const image = new Image();
+  image.onload = () => {
+    const ratio = window.devicePixelRatio || 1;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(width * ratio);
+    canvas.height = Math.round(height * ratio);
+    const context = canvas.getContext("2d");
+    if (context) {
+      context.scale(ratio, ratio);
+      context.drawImage(image, 0, 0, width, height);
+      captureCanvasScreenshot(canvas, fileNamePrefix);
+    }
+    URL.revokeObjectURL(url);
+  };
+  image.onerror = () => URL.revokeObjectURL(url);
+  image.src = url;
+}
+
 function stamp() {
   return new Date().toISOString().replace(/[:.]/g, "-");
 }

@@ -26,6 +26,7 @@ import { TrajectoryMonitorSidebar } from "../features/workbench/controls/Traject
 import { useTrajectoryGenerationStore } from "../domain/trajectoryGeneration/trajectoryGenerationStore";
 import { WarapsConnectionPanel } from "../features/workbench/connection/WarapsConnectionPanel";
 import { SceneCanvas } from "../features/workbench/scene/SceneCanvas";
+import { WorkbenchEncounterStrip } from "../features/workbench/monitor/WorkbenchEncounterPanels";
 import { waitForSceneGeneration } from "../domain/playback/waitForSceneGeneration";
 import { useBatchGenerationStore } from "../domain/sceneGeneration/batchGenerationStore";
 import {
@@ -298,10 +299,12 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
     return Math.min(maxHeight, Math.max(BOTTOM_PANEL_MIN_HEIGHT, heightFromBottom));
   }, []);
 
+  // The simulation view gives the encounter canvas and its timeline two thirds by default.
+  const defaultTopFraction = activeView === "simulation" ? 2 : 1;
   const simulationBottomPanelGridRows =
     bottomPanelHeight !== null
       ? `minmax(0, 1fr) ${BOTTOM_PANEL_RESIZER_HEIGHT}px ${bottomPanelHeight}px`
-      : `minmax(0, 1fr) ${BOTTOM_PANEL_RESIZER_HEIGHT}px minmax(0, 1fr)`;
+      : `minmax(0, ${defaultTopFraction}fr) ${BOTTOM_PANEL_RESIZER_HEIGHT}px minmax(0, 1fr)`;
 
   const onBottomPaneResizeStart = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -890,6 +893,7 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
                 <div className="scene-host">
                   <SceneCanvas />
                 </div>
+                <WorkbenchEncounterStrip streamControls={streamControls} />
               </div>
               <div
                 className="bottom-pane-resizer"
