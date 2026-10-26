@@ -1,0 +1,373 @@
+/* Constraints editor: a form generated from YAML, beside the raw YAML. Colours come from the app tokens. */
+
+.ce-editor {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.ce-tabs {
+  display: flex;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.ce-tab {
+  flex: 0 0 auto;
+  min-height: 26px;
+  padding: var(--space-2) var(--space-5);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.ce-tab:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text);
+}
+
+.ce-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.ce-tab-flag {
+  display: inline-block;
+  margin-left: var(--space-3);
+  padding: 0 5px;
+  border-radius: 8px;
+  background: #b45309;
+  color: #fff7ed;
+  font-size: var(--font-size-xs);
+}
+
+.ce-body {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  padding: var(--space-4) var(--space-2);
+}
+
+.ce-body-yaml {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  overflow: hidden;
+  padding: var(--space-4) 0 0;
+}
+
+.ce-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.ce-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-bottom: var(--space-4);
+}
+
+.ce-section + .ce-section {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-4);
+}
+
+.ce-section-title {
+  margin: 0;
+  font-size: var(--font-size);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.ce-field {
+  display: grid;
+  grid-template-columns: minmax(180px, 280px) minmax(0, 1fr);
+  column-gap: var(--space-5);
+  row-gap: 1px;
+  align-items: center;
+}
+
+.ce-field > .ce-description,
+.ce-field > .ce-issues {
+  grid-column: 2;
+}
+
+.ce-label {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ce-label-text {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.ce-key {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+
+.ce-control,
+.ce-number-control {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.ce-input {
+  font-family: var(--font-mono);
+}
+
+.ce-number {
+  width: 14em;
+  text-align: right;
+}
+
+.ce-text {
+  min-width: 14em;
+}
+
+.ce-flagged {
+  border-color: #f87171;
+}
+
+.ce-unit {
+  min-width: 1.6em;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+}
+
+.ce-equals {
+  color: var(--text-faint);
+}
+
+.ce-description {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.ce-hint {
+  color: var(--text-faint);
+}
+
+.ce-issues {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ce-issue {
+  margin: 0;
+  font-size: var(--font-size-xs);
+}
+
+.ce-issue-warning {
+  color: #fbbf24;
+}
+
+.ce-issue-error {
+  color: #f87171;
+}
+
+.ce-summary {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid #854d0e;
+  border-radius: var(--radius);
+  background: rgba(251, 191, 36, 0.08);
+}
+
+.ce-group {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4);
+  margin-top: var(--space-3);
+}
+
+.ce-group > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.ce-list-item {
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+}
+
+.ce-list-item-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.ce-header {
+  color: var(--text-muted);
+}
+
+.ce-header pre,
+.ce-raw pre {
+  margin: var(--space-3) 0 0;
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.ce-empty,
+.ce-raw {
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.ce-parse-error {
+  color: #fca5a5;
+  align-items: flex-start;
+}
+
+.ce-parse-error p {
+  margin: 0;
+}
+
+.ce-yaml-error {
+  flex-shrink: 0;
+}
+
+/* Table */
+
+.ce-table-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.ce-table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.ce-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.ce-table th,
+.ce-table td {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.ce-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-panel);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.ce-column-label,
+.ce-column-unit,
+.ce-column-description {
+  display: block;
+}
+
+.ce-column-description {
+  max-width: 14em;
+  font-weight: 400;
+  color: var(--text-faint);
+  white-space: normal;
+}
+
+.ce-table .ce-number {
+  width: 6.5em;
+}
+
+.ce-table .ce-number-control {
+  flex-wrap: nowrap;
+}
+
+.ce-table-name {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ce-row-name {
+  font-family: var(--font-mono);
+}
+
+.ce-row-note {
+  display: block;
+  font-weight: 400;
+  font-size: var(--font-size-xs);
+  color: var(--text-faint);
+  white-space: normal;
+  max-width: 14em;
+}
+
+.ce-badge {
+  margin-left: var(--space-3);
+  padding: 0 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  font-size: var(--font-size-xs);
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.ce-missing {
+  color: #fbbf24;
+  font-size: var(--font-size-xs);
+}
+
+.ce-row-actions {
+  white-space: nowrap;
+}
+
+.ce-row-actions button {
+  min-height: 22px;
+  padding: 1px 6px;
+  margin-right: var(--space-2);
+}
+
+.ce-pending {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.ce-add-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.ce-add-row label {
+  color: var(--text-muted);
+}
+
+.ce-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
