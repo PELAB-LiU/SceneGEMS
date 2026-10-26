@@ -1,16 +1,17 @@
-"""ReplayFollower: reference interpolation, tracking on the reference and pure pursuit when off it."""
+"""ReplayFollower: reference interpolation, and a correction that grows continuously with the position error."""
 
 import math
 
 import pytest
 
 from concrete_level.models.actor_state import ActorState
+from scenegems_tool.vessel_stack.asv_software.replay.line_of_sight import MAX_BIAS_CORRECTION
 from scenegems_tool.vessel_stack.asv_software.replay.replay_follower import ReplayFollower
 from scenegems_tool.vessel_stack.contracts.clock import StepRequest
 from scenegems_tool.vessel_stack.contracts.ports import VesselStateObservation
 from tests.scenegems_tool.vessel_stack.scenarios import make_vessel
 
-VESSEL = make_vessel(0, True, length=30.0)
+VESSEL = make_vessel(0, True, length=30.0, max_angular_speed=0.5)
 
 
 def reference_line(count: int = 100, speed: float = 5.0):
@@ -39,15 +40,12 @@ class TestConstruction:
     def test_participant_id_names_the_vessel(self):
         assert ReplayFollower(VESSEL, reference_line(), 1.0).participant_id == "replay/0"
 
-    def test_default_tolerance_is_a_tenth_of_the_length_but_at_least_one_meter(self):
-        assert ReplayFollower(make_vessel(0, True, length=30.0), reference_line(), 1.0).position_tolerance_m == 3.0
-        assert ReplayFollower(make_vessel(0, True, length=5.0), reference_line(), 1.0).position_tolerance_m == 1.0
-
-    def test_tolerance_can_be_set(self):
-        assert ReplayFollower(VESSEL, reference_line(), 1.0, position_tolerance_m=7.0).position_tolerance_m == 7.0
-
-    def test_start_accepts_a_seed(self):
-        ReplayFollower(VESSEL, reference_line(), 1.0).start(123)
+    def test_start_accepts_a_seed_and_clears_the_integral(self):
+        follower = ReplayFollower(VESSEL, reference_line(), 1.0)
+        follower.on_step(request(time=10.0), observation(ActorState(50.0, 5.0, 5.0, 0.0), 10.0))
+        assert follower.cross_track_integral != 0.0
+        follower.start(123)
+        assert follower.cross_track_integral == 0.0
 
 
 class TestReferenceState:
@@ -77,53 +75,107 @@ class TestReferenceState:
         assert abs(abs(heading) - math.pi) < 1e-9
 
 
-class TestOnStep:
-    def test_on_the_reference_it_commands_the_reference_at_the_target_time(self):
+class TestOnTheReference:
+    def test_it_commands_the_reference_at_the_target_time_exactly(self):
         reference = [ActorState(x=float(t), y=0.0, speed=1.0 + t, heading=0.1 * t) for t in range(10)]
         follower = ReplayFollower(VESSEL, reference, 1.0)
         command = follower.on_step(request(time=3.0), observation(reference[3], 3.0))
-        assert command.heading == pytest.approx(0.4)
-        assert command.speed == pytest.approx(5.0)
+        assert command.heading == reference[4].heading
+        assert command.speed == reference[4].speed
 
-    def test_within_the_tolerance_counts_as_on_the_reference(self):
-        follower = ReplayFollower(VESSEL, reference_line(), 1.0, position_tolerance_m=3.0)
-        command = follower.on_step(request(time=10.0), observation(ActorState(50.0, 2.9, 5.0, 0.0), 10.0))
-        assert command.heading == 0.0
-        assert command.speed == 5.0
+    def test_a_reference_speed_above_the_vessel_maximum_is_passed_on_unchanged(self):
+        fast = [ActorState(x=50.0 * t, y=0.0, speed=50.0, heading=0.0) for t in range(10)]
+        command = ReplayFollower(VESSEL, fast, 1.0).on_step(request(time=2.0), observation(fast[2], 2.0))
+        assert command.speed == 50.0
 
-    def test_off_the_reference_it_steers_at_the_point_ten_seconds_ahead(self):
-        follower = ReplayFollower(VESSEL, reference_line(), 1.0, position_tolerance_m=3.0)
-        own = ActorState(50.0, -40.0, 5.0, 0.0)
-        command = follower.on_step(request(time=10.0), observation(own, 10.0))
-        carrot = follower.reference_state(20.0)
-        assert command.heading == pytest.approx(math.atan2(carrot.y - own.y, carrot.x - own.x))
-        assert command.heading > 0.0, "the reference is north of the vessel, so the heading turns toward north"
-        gap = math.hypot(carrot.x - own.x, carrot.y - own.y)
-        assert command.speed == pytest.approx(min(gap / 10.0, VESSEL.max_speed))
 
-    def test_pursuit_speed_is_limited_to_the_vessel_maximum(self):
+class TestCrossTrack:
+    def test_the_correction_grows_continuously_from_zero(self):
+        """No switch: a tiny offset gets a tiny correction (the old follower changed mode at 1 m)."""
+        corrections = []
+        for offset in (0.0, 0.01, 0.5, 0.99, 1.01, 3.0, 10.0):
+            follower = ReplayFollower(VESSEL, reference_line(), 1.0, integral_factor=None)
+            command = follower.on_step(request(time=10.0), observation(ActorState(50.0, offset, 5.0, 0.0), 10.0))
+            corrections.append(-command.heading)
+        assert corrections[0] == 0.0
+        assert corrections == sorted(corrections)
+        assert corrections[1] < 1e-3
+        assert corrections[4] - corrections[3] < 1e-3, "nothing jumps at 1 m"
+
+    def test_left_of_the_path_it_turns_right_toward_it(self):
+        follower = ReplayFollower(VESSEL, reference_line(), 1.0, integral_factor=None)
+        assert follower.on_step(request(time=10.0), observation(ActorState(50.0, 4.0, 5.0, 0.0), 10.0)).heading < 0.0
+        assert follower.on_step(request(time=10.0), observation(ActorState(50.0, -4.0, 5.0, 0.0), 10.0)).heading > 0.0
+
+    def test_line_of_sight_aims_at_the_path_one_lookahead_ahead(self):
+        follower = ReplayFollower(VESSEL, reference_line(speed=5.0), 1.0, lookahead_s=10.0, integral_factor=None)
+        command = follower.on_step(request(time=10.0), observation(ActorState(50.0, 10.0, 5.0, 0.0), 10.0))
+        assert command.heading == pytest.approx(-math.atan2(10.0, 50.0))
+
+    def test_the_lookahead_is_at_least_one_vessel_length(self):
+        slow = reference_line(speed=0.5)
+        follower = ReplayFollower(VESSEL, slow, 1.0, lookahead_s=10.0, integral_factor=None)
+        command = follower.on_step(request(time=10.0), observation(ActorState(5.0, 3.0, 0.5, 0.0), 10.0))
+        assert command.heading == pytest.approx(-math.atan2(3.0, VESSEL.length))
+
+    def test_the_integral_removes_a_standing_offset(self):
+        """A vessel that keeps the same offset gets a growing correction, up to the bias limit."""
+        follower = ReplayFollower(VESSEL, reference_line(), 1.0, integral_factor=2.0)
+        headings = [follower.on_step(request(time=float(t)), observation(ActorState(5.0 * t, 2.0, 5.0, 0.0), float(t))).heading for t in range(1, 300)]
+        assert headings[1] < headings[0] < 0.0
+        lookahead = VESSEL.length  # 5 s at 5 m/s is shorter than the 30 m vessel
+        assert follower.cross_track_integral == pytest.approx(lookahead * math.tan(MAX_BIAS_CORRECTION))
+
+    def test_the_integral_holds_while_the_reference_turns_within_the_lookahead(self):
+        """East for 20 s, then a turn to port at 0.1 rad/s: from 15 s on the reference turns within lookahead_s."""
+        reference = reference_line(count=20) + [ActorState(x=100.0, y=0.0, speed=5.0, heading=0.1 * t) for t in range(1, 30)]
+        follower = ReplayFollower(VESSEL, reference, 1.0, lookahead_s=5.0, integral_factor=2.0)
+        follower.on_step(request(time=10.0), observation(ActorState(50.0, 2.0, 5.0, 0.0), 10.0))
+        integral = follower.cross_track_integral
+        assert integral > 0.0
+        follower.on_step(request(time=16.0), observation(ActorState(80.0, 2.0, 5.0, 0.0), 16.0))
+        assert follower.cross_track_integral == integral
+
+    def test_without_the_integral_a_standing_offset_keeps_one_correction(self):
+        follower = ReplayFollower(VESSEL, reference_line(), 1.0, integral_factor=None)
+        headings = {follower.on_step(request(time=float(t)), observation(ActorState(5.0 * t, 2.0, 5.0, 0.0), float(t))).heading for t in range(1, 20)}
+        assert len(headings) == 1
+
+
+class TestAlongTrack:
+    def test_behind_the_reference_point_it_speeds_up(self):
+        follower = ReplayFollower(VESSEL, reference_line(speed=5.0), 1.0, catch_up_s=10.0)
+        command = follower.on_step(request(time=10.0), observation(ActorState(40.0, 0.0, 5.0, 0.0), 10.0))
+        assert command.speed == pytest.approx(5.0 + 10.0 / 10.0)
+
+    def test_ahead_of_it_it_slows_down_but_never_reverses(self):
+        follower = ReplayFollower(VESSEL, reference_line(speed=5.0), 1.0, catch_up_s=10.0)
+        assert follower.on_step(request(time=10.0), observation(ActorState(60.0, 0.0, 5.0, 0.0), 10.0)).speed == pytest.approx(4.0)
+        assert follower.on_step(request(time=10.0), observation(ActorState(500.0, 0.0, 5.0, 0.0), 10.0)).speed == 0.0
+
+    def test_catch_up_is_limited_to_the_vessel_maximum(self):
         slow_vessel = make_vessel(0, True, max_speed=6.0)
-        follower = ReplayFollower(slow_vessel, reference_line(), 1.0, position_tolerance_m=3.0)
+        follower = ReplayFollower(slow_vessel, reference_line(), 1.0)
         command = follower.on_step(request(time=10.0), observation(ActorState(-500.0, 0.0, 5.0, 0.0), 10.0))
         assert command.speed == 6.0
 
-    def test_lookahead_is_configurable(self):
-        follower = ReplayFollower(VESSEL, reference_line(), 1.0, lookahead_s=2.0, position_tolerance_m=3.0)
-        command = follower.on_step(request(time=10.0), observation(ActorState(50.0, -40.0, 5.0, 0.0), 10.0))
-        carrot = follower.reference_state(12.0)
-        assert command.heading == pytest.approx(math.atan2(-(-40.0), carrot.x - 50.0))
+    def test_after_the_end_of_the_reference_it_stops_on_the_path_instead_of_turning_back(self):
+        follower = ReplayFollower(VESSEL, reference_line(count=10), 1.0)
+        command = follower.on_step(request(time=20.0), observation(ActorState(200.0, 0.0, 5.0, 0.0), 20.0))
+        assert command.heading == 0.0
+        assert command.speed == 0.0
 
-    def test_exactly_at_the_carrot_it_takes_the_carrot_heading_and_speed(self):
-        # A vessel at the held end of the reference is off it by more than the tolerance only if it
-        # is displaced; a zero gap to the carrot happens when the reference stands still ahead of it.
-        reference = [ActorState(0.0, 0.0, 0.0, 1.0), ActorState(0.0, 0.0, 0.0, 1.0)]
-        follower = ReplayFollower(VESSEL, reference, 1.0, position_tolerance_m=-1.0)
-        command = follower.on_step(request(time=0.0), observation(ActorState(0.0, 0.0, 0.0, 0.0)))
-        assert (command.heading, command.speed) == (1.0, 0.0)
+    def test_a_large_gap_closes_no_faster_than_the_vessel_can_brake(self):
+        """100 m behind at 0.4 m/s^2: sqrt(0.4 * 100) = 6.3 m/s extra, not the 10 m/s of closing it in catch_up_s."""
+        follower = ReplayFollower(VESSEL, reference_line(speed=5.0), 1.0, catch_up_s=10.0)
+        command = follower.on_step(request(time=30.0), observation(ActorState(50.0, 0.0, 5.0, 0.0), 30.0))
+        assert command.speed == pytest.approx(5.0 + math.sqrt(VESSEL.max_acceleration * 100.0))
 
-    def test_a_follower_is_a_pure_function_of_time_and_observation(self):
-        follower = ReplayFollower(VESSEL, reference_line(), 1.0, position_tolerance_m=3.0)
-        own = ActorState(50.0, -40.0, 5.0, 0.0)
-        first = follower.on_step(request(time=10.0), observation(own, 10.0))
-        second = follower.on_step(request(time=10.0), observation(own, 10.0))
-        assert first == second
+
+def test_repeating_the_same_steps_after_start_repeats_the_commands():
+    follower = ReplayFollower(VESSEL, reference_line(), 1.0)
+    steps = [(float(t), ActorState(5.0 * t - 3.0, 1.5, 5.0, 0.1)) for t in range(1, 30)]
+    first = [follower.on_step(request(time=t), observation(state, t)) for t, state in steps]
+    follower.start(0)
+    second = [follower.on_step(request(time=t), observation(state, t)) for t, state in steps]
+    assert first == second

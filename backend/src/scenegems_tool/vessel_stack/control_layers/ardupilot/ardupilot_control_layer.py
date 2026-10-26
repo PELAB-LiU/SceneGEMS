@@ -33,7 +33,16 @@ class ArduPilotControlLayer:
         )
 
         environment = request.simulation.environment
-        ardu_params = generate_ardu_params(vessel, request.trajectories.get_max_speed(vessel), environment.wind_vector, environment.wave)
+        asv_adapter = default_resolver().resolve(vessel_config.stack, vessel_config.adapter_ids).asv_adapter
+        arduagent = asv_adapter is not None and asv_adapter.id in ARDUAGENT_ADAPTER_IDS
+        ardu_params = generate_ardu_params(
+            vessel,
+            request.trajectories.get_max_speed(vessel),
+            environment.wind_vector,
+            environment.wave,
+            vessel_config.stack.simulation_layer,
+            guided_targets=not arduagent,
+        )
         params_file = f"{request.gen_folder}/params-{connection.agent_name}.params"
         lines = []
         for key, value in ardu_params.items():
@@ -44,8 +53,7 @@ class ArduPilotControlLayer:
         # sitl_internal_physics homes SITL at the start pose; ardupilot_gazebo_plugin runs SITL's JSON backend against Gazebo.
         sitl_internal_physics = vessel_config.stack.simulation_layer == SimulationLayerId.ARDUPILOT_SIM
         services = generate_vessel_service(agent_stub, connection.port, params_file, request.simulation.speedup, sitl_internal_physics)
-        asv_adapter = default_resolver().resolve(vessel_config.stack, vessel_config.adapter_ids).asv_adapter
-        if asv_adapter is None or asv_adapter.id not in ARDUAGENT_ADAPTER_IDS:
+        if not arduagent:
             # The ASV software talks MAVLink to SITL's SERIAL0 itself (mavlink_link.py), so the
             # vessel gets SITL only: no MAVProxy, no ArduAgent and no ground control station port.
             services = {connection.agent_name: services[connection.agent_name]}

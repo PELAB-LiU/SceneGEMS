@@ -79,11 +79,13 @@ def encounter_trajectories(name: str, timespan: int = 300, time_step: int = 1) -
     return TrajectoryBuilder.default_trajectory_from_scene(encounter_scene(name), time_step, timespan)
 
 
-def straight_run(scale: str = "5m", duration_s: int = 90, time_step: int = 1) -> Trajectories:
-    """One vessel heading east at its cruise speed."""
+def straight_run(scale: str = "5m", duration_s: int = 90, time_step: int = 1, from_rest: bool = False) -> Trajectories:
+    """One vessel heading east at its cruise speed; from_rest: starting at rest and speeding up at its max acceleration."""
     vessel = scaled_vessel(scale)
-    state = ActorState(0.0, 0.0, VESSEL_SCALES[scale].cruise_speed, 0.0)
-    return TrajectoryBuilder.default_trajectory_from_scene(ConcreteScene({vessel: state}), time_step, duration_s)
+    speed = VESSEL_SCALES[scale].cruise_speed
+    if from_rest:
+        return _scheduled_run(vessel, [(0.0, 0.0)], speed, duration_s, time_step, initial_speed=0.0)
+    return TrajectoryBuilder.default_trajectory_from_scene(ConcreteScene({vessel: ActorState(0.0, 0.0, speed, 0.0)}), time_step, duration_s)
 
 
 class _HeadingSchedule:
@@ -102,27 +104,45 @@ class _HeadingSchedule:
         return HeadingSpeedCommand(heading=heading, speed=self._speed)
 
 
-def turning_run(scale: str = "5m", duration_s: int = 120, time_step: int = 1) -> Trajectories:
-    """One vessel that turns 90 degrees to port and back to east, a third of the run each.
-
-    Straight runs give the smallest repeat envelope, so a calibration also needs turns (design doc 10.6).
-    """
-    spec = VESSEL_SCALES[scale]
-    vessel = scaled_vessel(scale)
-    third = duration_s / 3.0
-    legs = [(0.0, 0.0), (third, math.pi / 2), (2 * third, 0.0)]
-    participant = _HeadingSchedule(vessel, legs, spec.cruise_speed)
-    simulation = KinematicSimulation(ConcreteScene({vessel: ActorState(0.0, 0.0, spec.cruise_speed, 0.0)}), float(time_step), [participant.participant_id])
+def _scheduled_run(vessel: ConcreteVessel, legs: List[Tuple[float, float]], speed: float, duration_s: int, time_step: int, initial_speed: float) -> Trajectories:
+    participant = _HeadingSchedule(vessel, legs, speed)
+    simulation = KinematicSimulation(ConcreteScene({vessel: ActorState(0.0, 0.0, initial_speed, 0.0)}), float(time_step), [participant.participant_id])
     result = run_lockstep(simulation, {vessel.id: participant}, int(duration_s / time_step), run_seed=0)
     return result.to_trajectories()
 
 
+def turning_run(scale: str = "5m", duration_s: int = 120, time_step: int = 1, from_rest: bool = False) -> Trajectories:
+    """One vessel that turns 90 degrees to port and back to east, a third of the run each.
+
+    Straight runs give the smallest repeat envelope, so a calibration also needs turns (design doc 10.6).
+    from_rest: the vessel starts at rest and speeds up at its max acceleration.
+    """
+    spec = VESSEL_SCALES[scale]
+    third = duration_s / 3.0
+    legs = [(0.0, 0.0), (third, math.pi / 2), (2 * third, 0.0)]
+    return _scheduled_run(scaled_vessel(scale), legs, spec.cruise_speed, duration_s, time_step, initial_speed=0.0 if from_rest else spec.cruise_speed)
+
+
 REFERENCE_RUNS = ("straight", "turning")
+STRAIGHT_DURATION_S = 90
+TURN_LEG_SETTLE_S = 30.0  # straight travel after each 90 degree turn of a turning run, at least
 
 
-def reference_run(kind: str, scale: str = "5m", duration_s: int = 90) -> Trajectories:
+def default_duration(kind: str, scale: str) -> int:
+    """Seconds of a reference run at a scale: a straight run is 90 s; each third of a turning run fits a
+    90 degree turn at the vessel's max yaw rate twice over plus TURN_LEG_SETTLE_S, rounded up to 30 s."""
     if kind == "straight":
-        return straight_run(scale, duration_s)
+        return STRAIGHT_DURATION_S
     if kind == "turning":
-        return turning_run(scale, duration_s)
+        quarter_turn_s = (math.pi / 2) / VESSEL_SCALES[scale].max_angular_speed
+        return max(120, int(math.ceil(3 * (2 * quarter_turn_s + TURN_LEG_SETTLE_S) / 30.0)) * 30)
+    raise ValueError(f"Unknown reference run '{kind}'; expected one of {', '.join(REFERENCE_RUNS)}")
+
+
+def reference_run(kind: str, scale: str = "5m", duration_s: int = 90, from_rest: bool = False) -> Trajectories:
+    """A reference run; from_rest: the vessel starts at rest like a simulator's vessel, instead of at its cruise speed."""
+    if kind == "straight":
+        return straight_run(scale, duration_s, from_rest=from_rest)
+    if kind == "turning":
+        return turning_run(scale, duration_s, from_rest=from_rest)
     raise ValueError(f"Unknown reference run '{kind}'; expected one of {', '.join(REFERENCE_RUNS)}")
