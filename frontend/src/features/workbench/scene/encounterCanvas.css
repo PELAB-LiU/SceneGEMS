@@ -1,0 +1,195 @@
+.enc-canvas {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: #0a1628;
+  border-radius: var(--radius);
+}
+
+.enc-canvas-svg {
+  position: absolute;
+  inset: 0;
+  display: block;
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+}
+
+.enc-canvas-svg:active {
+  cursor: grabbing;
+}
+
+.enc-canvas-empty {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  pointer-events: none;
+}
+
+.enc-canvas-toolbar {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 64px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  pointer-events: none;
+}
+
+.enc-canvas-toolbar > * {
+  pointer-events: auto;
+}
+
+.enc-canvas-toolbar button,
+.enc-canvas-toolbar select {
+  height: 22px;
+  padding: 0 7px;
+  font-size: var(--font-size-xs);
+  background: rgba(15, 23, 42, 0.86);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+}
+
+.enc-canvas-toolbar button:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.enc-canvas-toolbar button.is-active {
+  color: var(--text);
+  border-color: var(--accent);
+  background: rgba(56, 189, 248, 0.16);
+}
+
+.enc-canvas-toolbar button:disabled {
+  opacity: 0.45;
+}
+
+.enc-seg {
+  display: inline-flex;
+}
+
+.enc-seg button:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.enc-seg button:last-child {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  margin-left: -1px;
+}
+
+.enc-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 6px;
+  height: 22px;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  background: rgba(15, 23, 42, 0.86);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.enc-select select {
+  border: none;
+  height: 20px;
+  background: transparent;
+}
+
+.enc-canvas-actions {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.enc-canvas-readout {
+  position: absolute;
+  left: 10px;
+  bottom: 44px;
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  pointer-events: none;
+  text-shadow: 0 0 3px #020617;
+}
+
+.enc-layer-menu {
+  position: relative;
+  font-size: var(--font-size-xs);
+}
+
+.enc-layer-menu summary {
+  list-style: none;
+  height: 22px;
+  line-height: 20px;
+  padding: 0 8px;
+  cursor: pointer;
+  color: var(--text-muted);
+  background: rgba(15, 23, 42, 0.86);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.enc-layer-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.enc-layer-menu[open] summary {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.enc-layer-menu-body {
+  position: absolute;
+  right: 0;
+  top: 26px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: max-content;
+  padding: 6px 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+
+.enc-layer-menu-body label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+}
+
+.enc-canvas-actions .scene-view-toggle-btn,
+.enc-canvas-actions .scene-export-toolbar {
+  position: static;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  gap: 4px;
+}
+
+.enc-canvas-toolbar .enc-canvas-actions .scene-view-toggle-btn {
+  border: 1px solid var(--accent);
+  color: var(--text);
+  padding: 0 8px;
+}

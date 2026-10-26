@@ -12,6 +12,7 @@ import type { SimulationFrame } from "../../../domain/simulation/types";
 import { MetricsView } from "../metrics/MetricsView";
 import { pickDefaultRelationId } from "../metrics/metricsRelations";
 import { BasicActorInfoPanel } from "../monitor/BasicActorInfoPanel";
+import { WorkbenchPairCards } from "../monitor/WorkbenchEncounterPanels";
 import { ActorVisibilityPanel } from "./ActorVisibilityPanel";
 
 function TrajectoryColumnChrome({
@@ -100,10 +101,13 @@ function exportTrajectoryFrames(
 function MonitorStreamCluster({
   previewColumn,
   simulationColumn,
+  simulationEmpty = false,
 }: {
   previewColumn: ReactNode;
   /** `null` drops the simulation column entirely (preview-only pages). */
   simulationColumn: ReactNode | null;
+  /** No simulation frames yet: the column shrinks to a strip so the preview gets the width. */
+  simulationEmpty?: boolean;
 }) {
   const previewVisible = useUiStore((s) => s.rightTrajectoryPreviewVisible);
   const simulationVisible = useUiStore((s) => s.rightTrajectorySimulationVisible);
@@ -148,7 +152,7 @@ function MonitorStreamCluster({
   );
 
   const hasSimulation = simulationColumn !== null;
-  const bothVisible = previewVisible && hasSimulation && simulationVisible;
+  const bothVisible = previewVisible && hasSimulation && simulationVisible && !simulationEmpty;
 
   return (
     <div
@@ -180,7 +184,11 @@ function MonitorStreamCluster({
         />
       )}
 
-      {!hasSimulation ? null : simulationVisible ? (
+      {!hasSimulation ? null : simulationEmpty && previewVisible ? (
+        <div className="right-trajectory-empty-strip" aria-label="No simulation frames yet">
+          Simulation: no frames yet
+        </div>
+      ) : simulationVisible ? (
         <div
           className="right-trajectory-column"
           style={
@@ -260,15 +268,17 @@ export function TrajectoryMonitorSidebar({ previewOnly = false }: { previewOnly?
 
       {monitorPanelView === "runtime_data" ? (
         <MonitorStreamCluster
+          simulationEmpty={simulationFrames.length === 0}
           previewColumn={
             <TrajectoryColumnChrome
               title="Preview trajectory"
-              subtitle="Monitor and layer controls"
+              subtitle="Vessel pairs, layers and frame data"
               onExport={() =>
                 exportTrajectoryFrames("preview", activeScenarioId, sortedPreviewFrames)
               }
               onHide={() => setPreviewVisible(false)}
             >
+              <WorkbenchPairCards stream="animation" />
               <ActorVisibilityPanel stream="animation" />
               <BasicActorInfoPanel stream="animation" />
             </TrajectoryColumnChrome>
@@ -277,12 +287,13 @@ export function TrajectoryMonitorSidebar({ previewOnly = false }: { previewOnly?
             previewOnly ? null : (
               <TrajectoryColumnChrome
                 title="Simulation trajectory"
-                subtitle="Monitor and layer controls"
+                subtitle="Vessel pairs, layers and frame data"
                 onExport={() =>
                   exportTrajectoryFrames("simulation", activeScenarioId, sortedSimulationFrames)
                 }
                 onHide={() => setSimulationVisible(false)}
               >
+                <WorkbenchPairCards stream="simulation" />
                 <ActorVisibilityPanel stream="simulation" />
                 <BasicActorInfoPanel stream="simulation" />
               </TrajectoryColumnChrome>

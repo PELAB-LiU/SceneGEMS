@@ -10,7 +10,7 @@ import { localMetersToLatLon } from "./geoTransform";
 import {
   collectManeuveringDomainDrawings,
   MANEUVERING_DOMAIN_KITE_COLOR,
-} from "./layers/ManeuveringDomainsLayer";
+} from "./domainShapes";
 
 interface TrajectoryPoint {
   x: number;
