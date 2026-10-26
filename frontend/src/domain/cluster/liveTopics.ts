@@ -76,9 +76,16 @@ export const campaignUpdateSchema = z.union([
   z.object({ classes: z.array(classViewSchema) }),
 ]);
 
+export const campaignSnapshotSchema = campaignDetailSchema.extend({
+  /** The newest event when the snapshot was taken; pushed events up to it may repeat the history. */
+  last_event_id: z.number().int().nullable().optional(),
+});
+
 export interface CampaignTopicState {
   detail: CampaignDetail;
-  /** Events pushed since the snapshot, oldest first (the history comes from the events route). */
+  /** Read the history up to this id from the events route; pushed events at or below it are skipped. */
+  lastEventId: number | null;
+  /** Events pushed since the snapshot, oldest first. */
   events: CampaignEvent[];
 }
 
@@ -109,11 +116,15 @@ export function campaignTotals(classes: readonly ClassView[]): CampaignTotals {
 }
 
 export const campaignReducer: LiveTopicReducer<CampaignTopicState> = {
-  snapshot: (raw) => ({ detail: campaignDetailSchema.parse(raw), events: [] }),
+  snapshot: (raw) => {
+    const { last_event_id, ...detail } = campaignSnapshotSchema.parse(raw);
+    return { detail, lastEventId: last_event_id ?? null, events: [] };
+  },
   update: (state, data) => {
     const update = campaignUpdateSchema.parse(data);
     if ("event" in update) {
-      if (state.events.some((event) => event.event_id === update.event.event_id)) {
+      const id = update.event.event_id;
+      if ((state.lastEventId !== null && id <= state.lastEventId) || state.events.some((event) => event.event_id === id)) {
         return state;
       }
       return { ...state, events: [...state.events, update.event].slice(-CAMPAIGN_EVENTS_KEPT) };
@@ -188,13 +199,20 @@ export const instanceSnapshotSchema = z.object({
   node_id: z.string(),
   instance: z.string(),
   kind: z.string(),
-  state: z.unknown(),
+  /** The job's state for a job instance, the node's status for a pool. */
+  state: z.string(),
+  job_id: z.string().nullable().optional(),
+  attempt: z.number().int().nullable().optional(),
 });
 
 export const sceneSampleSchema = z.object({
   kind: z.literal("scene_sample"),
   request_id: z.string(),
   valid: z.boolean(),
+  /** The worker's last scene for the request; earlier ones are search progress. */
+  final: z.boolean().optional(),
+  /** The scene as one frame of the workbench's wire format. */
+  scene: z.unknown().optional(),
   evaluation_data: z.unknown(),
 });
 
@@ -202,6 +220,10 @@ export const trajectoryPreviewSchema = z.object({
   kind: z.literal("trajectory_preview"),
   request_id: z.string(),
   trajectories: z.unknown(),
+  final: z.boolean().optional(),
+  valid: z.boolean().nullable().optional(),
+  complete: z.boolean().nullable().optional(),
+  error_message: z.string().nullable().optional(),
 });
 
 export const simulationFramesSchema = z.object({
@@ -215,6 +237,7 @@ export const instanceStatusSchema = z.object({
   kind: z.literal("status"),
   state: z.string(),
   message: z.string().nullable().optional(),
+  progress: z.number().nullable().optional(),
 });
 
 export const instanceUpdateSchema = z.discriminatedUnion("kind", [
@@ -230,9 +253,10 @@ export type TrajectoryPreview = z.infer<typeof trajectoryPreviewSchema>;
 
 export interface InstanceTopicState {
   info: InstanceSnapshot;
-  /** The latest state and message from status updates (the snapshot's state until one arrives). */
-  state: unknown;
+  /** The latest state, message and progress from status updates (the snapshot's state until one arrives). */
+  state: string;
   message: string | null;
+  progress: number | null;
   sceneSample: SceneSample | null;
   trajectoryPreview: TrajectoryPreview | null;
   /** Simulation frames since the snapshot, oldest first, bounded. */
@@ -246,7 +270,7 @@ export const INSTANCE_FRAMES_KEPT = 5000;
 export const instanceReducer: LiveTopicReducer<InstanceTopicState> = {
   snapshot: (raw) => {
     const info = instanceSnapshotSchema.parse(raw);
-    return { info, state: info.state, message: null, sceneSample: null, trajectoryPreview: null, frames: [], frameCount: 0 };
+    return { info, state: info.state, message: null, progress: null, sceneSample: null, trajectoryPreview: null, frames: [], frameCount: 0 };
   },
   update: (state, data) => {
     const update = instanceUpdateSchema.parse(data);
@@ -262,7 +286,7 @@ export const instanceReducer: LiveTopicReducer<InstanceTopicState> = {
           frameCount: state.frameCount + update.frames.length,
         };
       case "status":
-        return { ...state, state: update.state, message: update.message ?? null };
+        return { ...state, state: update.state, message: update.message ?? null, progress: update.progress ?? null };
     }
   },
 };

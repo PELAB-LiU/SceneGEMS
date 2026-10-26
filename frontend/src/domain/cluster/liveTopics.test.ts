@@ -27,6 +27,12 @@ describe("live topic reducers", () => {
     state = campaignReducer.update(state, { event: sampleEvent }, 1);
     state = campaignReducer.update(state, { event: sampleEvent }, 2);
     expect(state.events).toHaveLength(1);
+    expect(state.lastEventId).toBeNull();
+
+    const withHistory = campaignReducer.snapshot({ ...sampleCampaignDetail(), last_event_id: 7 });
+    expect(withHistory.lastEventId).toBe(7);
+    expect(campaignReducer.update(withHistory, { event: sampleEvent }, 1).events).toEqual([]);
+    expect(campaignReducer.update(withHistory, { event: { ...sampleEvent, event_id: 8 } }, 1).events).toHaveLength(1);
 
     state = campaignReducer.update(state, { campaign: { ...sampleCampaignSummary, actual_state: "paused", desired_state: "paused" } }, 3);
     expect(state.detail.actual_state).toBe("paused");
@@ -87,8 +93,9 @@ describe("live topic reducers", () => {
     expect(state.sceneSample?.valid).toBe(true);
     state = instanceReducer.update(state, { kind: "trajectory_preview", request_id: "r", trajectories: [] }, 4);
     expect(state.trajectoryPreview?.request_id).toBe("r");
-    state = instanceReducer.update(state, { kind: "status", state: "finished", message: "done" }, 5);
-    expect([state.state, state.message]).toEqual(["finished", "done"]);
+    state = instanceReducer.update(state, { kind: "status", state: "finished", message: "done", progress: 1 }, 5);
+    expect([state.state, state.message, state.progress]).toEqual(["finished", "done", 1]);
+    expect(instanceReducer.snapshot({ node_id: "n", instance: "job-j-2", kind: "simulation", state: "running", job_id: "j", attempt: 2 }).info.attempt).toBe(2);
     expect(() => instanceReducer.update(state, { kind: "weather" }, 6)).toThrow();
   });
 
