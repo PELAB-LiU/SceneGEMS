@@ -6,7 +6,7 @@ from concrete_level.colregs_monitoring.colregs_rules.conditions.rule_condition i
 from concrete_level.colregs_monitoring.colregs_rules.default_rules import make_default_maneuver_context_rules, make_default_situation_context_rules
 from concrete_level.colregs_monitoring.maneuver_context import ManeuverContextSet
 from concrete_level.colregs_monitoring.situation_context import SituationContextSet
-from concrete_level.models.relation import Relation
+from concrete_level.models.relation import Relation, relation_order
 
 
 class RuleStateMachine:
@@ -43,7 +43,9 @@ class RuleStateMachine:
         all_relations = set(current_monitor_result_map_set.keys()) | set(current_rules.keys()) | set(next_rules.keys())
         next_monitor_result_map_set = COLREGSRuleResultMapSet()
 
-        for relation in all_relations:
+        # Relations and rules in a fixed order, not a set's: the order of the result maps is the
+        # order the monitor reports, and set order changes with the process's hash seed.
+        for relation in sorted(all_relations, key=relation_order):
             current_active_rules = RuleStateMachine._active_rules(current_rules, relation)
             next_active_rules = RuleStateMachine._active_rules(next_rules, relation)
             current_result_map = current_monitor_result_map_set.get_result(relation)
@@ -52,7 +54,7 @@ class RuleStateMachine:
             for rule, result in current_result_map.items():
                 next_result_map[rule] = RuleStateMachine._transition_rule_result(rule, result, current_active_rules, next_active_rules)
 
-            for rule in next_active_rules:
+            for rule in next_rules.get(relation, {}):
                 if rule not in next_result_map:
                     next_result_map[rule] = COLREGSRuleResult.UNKNOWN
 

@@ -2,6 +2,8 @@
 
 import json
 import os
+import subprocess
+import sys
 
 import numpy as np
 import pytest
@@ -107,3 +109,35 @@ class TestMonitoredFrame:
         first = json.dumps(serialize_monitored_frame("s1", monitored[300], 300, 1), sort_keys=True)
         second = json.dumps(serialize_monitored_frame("s1", monitored[300], 300, 1), sort_keys=True)
         assert first == second
+
+
+class TestEncounterRules:
+    @pytest.fixture(scope="class")
+    def frame(self):
+        from tests.concrete_level.colregs_monitoring.monitor_runs import monitored_run
+
+        return serialize_monitored_frame("s1", monitored_run((3600.0, -3600.0), 60)[40], 40, 1)
+
+    def test_the_stand_on_vessel_has_its_rule_17_in_the_encounter(self, frame):
+        """Per-vessel rules live under the vessel related to itself, which the frames left out."""
+        (encounter,) = frame["ruleResults"]
+        assert ("17", "1") in {(rule["ruleNumber"], rule["subjectActorId"]) for rule in encounter["rules"]}
+        assert {"Rule 8: Readily Apparent Course Change"} <= {rule["name"] for rule in encounter["rules"]}
+
+    def test_rules_are_listed_by_kind_number_and_vessel(self, frame):
+        (encounter,) = frame["ruleResults"]
+        keys = [(rule["kind"] != "rule", int(rule["ruleNumber"] or 10**6), rule["subjectActorName"]) for rule in encounter["rules"]]
+        assert keys == sorted(keys)
+
+    def test_the_order_does_not_depend_on_the_hash_seed(self):
+        script = (
+            "from tests.concrete_level.colregs_monitoring.monitor_runs import monitored_run\n"
+            "from scenegems_tool.gateway.serialization import serialize_monitored_frame\n"
+            "frame = serialize_monitored_frame('s', monitored_run((3600.0, -3600.0), 60)[40], 40, 1)\n"
+            "print([rule['name'] + '/' + str(rule['subjectActorId']) for row in frame['ruleResults'] for rule in row['rules']])\n"
+        )
+        outputs = set()
+        for seed in ("0", "1", "4242"):
+            environment = dict(os.environ, PYTHONHASHSEED=seed)
+            outputs.add(subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True, env=environment).stdout)
+        assert len(outputs) == 1

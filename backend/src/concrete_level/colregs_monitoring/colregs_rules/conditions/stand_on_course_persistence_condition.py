@@ -13,7 +13,7 @@ class StandOnCoursePersistenceCondition(RuleCondition):
         super().__init__(relation, actor, colregs_constants)
 
     def condition(self, current_monitored_scene: MonitoredScene, next_monitored_scene: MonitoredScene) -> COLREGSRuleResult:
-        if self.actor_has_to_give_way(current_monitored_scene):
+        if not self.is_standing_on(current_monitored_scene) or self.actor_has_to_give_way(current_monitored_scene):
             return COLREGSRuleResult.UNKNOWN
 
         next_maneuver_state = next_monitored_scene.maneuver_state_set[self.relation]
@@ -26,9 +26,25 @@ class StandOnCoursePersistenceCondition(RuleCondition):
         return COLREGSRuleResult.UNKNOWN
 
     def maneuver_suggestions(self, current_monitored_scene: MonitoredScene, time_step: int) -> ManeuverSuggestions:
-        if self.actor_has_to_give_way(current_monitored_scene):
+        if not self.is_standing_on(current_monitored_scene) or self.actor_has_to_give_way(current_monitored_scene):
             return ManeuverSuggestions()
         return ManeuverSuggestions({self.actor: {ManeuverType.PERSISTING_COURSE}}, {self.actor: f"{self.__class__.__name__} : ({ManeuverType.PERSISTING_COURSE})"})
+
+    def is_standing_on(self, current_monitored_scene: MonitoredScene) -> bool:
+        """Rule 17 binds the stand-on vessel of an encounter, and only until the vessels have passed.
+
+        The rule is kept per vessel (keyed by the vessel with itself), so without this it judged
+        every course change of a vessel that was not standing on in any encounter: a vessel whose
+        encounter had ended, or was never more than OTHER, failed Rule 17 when it turned back to
+        its route.
+        """
+        for relation, situation_context in current_monitored_scene.situation_context_set.items():
+            if self.actor not in relation or not situation_context.is_stand_on_actor(self.actor):
+                continue
+            colregs_state = current_monitored_scene.colregs_state_set.get(relation)
+            if colregs_state is None or not colregs_state.actors_passed_each_other:
+                return True
+        return False
 
     def actor_has_to_give_way(self, current_monitored_scene: MonitoredScene) -> bool:
         return (

@@ -31,7 +31,8 @@ const RESULT_META: Record<RuleResult, { label: string; className: string; title:
   },
 };
 
-function sortEvaluations(evaluations: RuleEvaluation[]): RuleEvaluation[] {
+/** Failures first, then rules before suggestions, by number, vessel and title: one fixed order per frame. */
+export function sortEvaluations(evaluations: RuleEvaluation[]): RuleEvaluation[] {
   return [...evaluations].sort((a, b) => {
     if (RESULT_RANK[a.result] !== RESULT_RANK[b.result]) {
       return RESULT_RANK[a.result] - RESULT_RANK[b.result];
@@ -42,7 +43,8 @@ function sortEvaluations(evaluations: RuleEvaluation[]): RuleEvaluation[] {
     if (a.ruleNumber !== b.ruleNumber) {
       return a.ruleNumber.localeCompare(b.ruleNumber, undefined, { numeric: true });
     }
-    return a.title.localeCompare(b.title);
+    const bySubject = a.subjectActorName.localeCompare(b.subjectActorName);
+    return bySubject !== 0 ? bySubject : a.title.localeCompare(b.title);
   });
 }
 

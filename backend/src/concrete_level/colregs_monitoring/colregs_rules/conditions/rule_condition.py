@@ -7,7 +7,7 @@ from concrete_level.colregs_monitoring.colregs_rules.maneuver_suggestions import
 from concrete_level.colregs_monitoring.maneuver import ManeuverType
 from concrete_level.colregs_monitoring.monitored_trajectory import MonitoredScene
 from concrete_level.models.concrete_actors import ConcreteActor
-from concrete_level.models.relation import Relation
+from concrete_level.models.relation import Relation, relation_order
 from utils.colregs_approximations import COLREGSConstraints
 from utils.math_utils import Direction
 
@@ -120,7 +120,7 @@ class COLREGSRuleConditionMapSet(Dict[Relation, COLREGSRuleConditionMap]):
         all_relations = set(baseline_monitor_result_map_set.keys()) | set(self.keys())
         next_monitor_result_map_set = COLREGSRuleResultMapSet()
 
-        for relation in all_relations:
+        for relation in sorted(all_relations, key=relation_order):
             baseline_result_map = baseline_monitor_result_map_set.get_result(relation)
             if relation not in self:
                 next_monitor_result_map_set[relation] = COLREGSRuleResultMap(dict(baseline_result_map))
