@@ -49,12 +49,12 @@ class ResultStore:
             campaign_id, class_id = self._case_of(scope, record.case_id)
             row_id = self._insert_once(scope, RunRecordRow, ["case_id", "run_index", "repeat_index"], dict(values, campaign_id=campaign_id, class_id=class_id, created_at=self._clock()))
             row = scope.get(RunRecordRow, row_id) if row_id is not None else self._run_record_row(scope, record.case_id, record.run_index, record.repeat_index)
-            return RunRecord.from_row(row)
+            return RunRecord.from_row(row, self._case_index(scope, row.case_id))
 
     def get_run_record(self, run_record_id: int, *, session: Optional[Session] = None) -> Optional[RunRecord]:
         with session_scope(self._sessions, session) as scope:
             row = scope.get(RunRecordRow, run_record_id)
-            return None if row is None else RunRecord.from_row(row)
+            return None if row is None else RunRecord.from_row(row, self._case_index(scope, row.case_id))
 
     def list_run_records(
         self,
@@ -67,11 +67,18 @@ class ResultStore:
         *,
         session: Optional[Session] = None,
     ) -> List[RunRecord]:
-        """Run records of the campaign ordered by class, case, run and repeat."""
+        """Run records of the campaign ordered by class, case, run and repeat, each with its case index."""
         with session_scope(self._sessions, session) as scope:
-            query = self._filtered(select(RunRecordRow).join(ScenarioCaseRow, ScenarioCaseRow.id == RunRecordRow.case_id), RunRecordRow, campaign_id, class_id, case_id, run_index)
+            query = self._filtered(
+                select(RunRecordRow, ScenarioCaseRow.case_index).join(ScenarioCaseRow, ScenarioCaseRow.id == RunRecordRow.case_id), RunRecordRow, campaign_id, class_id, case_id, run_index
+            )
             query = query.order_by(RunRecordRow.class_id, ScenarioCaseRow.case_index, RunRecordRow.run_index, RunRecordRow.repeat_index).offset(offset).limit(limit)
-            return [RunRecord.from_row(row) for row in scope.execute(query).scalars()]
+            return [RunRecord.from_row(row, case_index) for row, case_index in scope.execute(query)]
+
+    def count_run_records(self, campaign_id: str, class_id: Optional[str] = None, case_id: Optional[int] = None, run_index: Optional[int] = None, *, session: Optional[Session] = None) -> int:
+        """How many run records list_run_records would return for the same filters without a page."""
+        with session_scope(self._sessions, session) as scope:
+            return scope.execute(self._filtered(select(func.count()).select_from(RunRecordRow), RunRecordRow, campaign_id, class_id, case_id, run_index)).scalar_one()
 
     # Verdicts
 
@@ -85,7 +92,7 @@ class ResultStore:
                 row = scope.execute(select(VerdictRow).where(VerdictRow.case_id == verdict.case_id, VerdictRow.run_index == verdict.run_index)).scalar_one()
             else:
                 row = scope.get(VerdictRow, row_id)
-            return VerdictRecord.from_row(row)
+            return VerdictRecord.from_row(row, self._case_index(scope, row.case_id))
 
     def list_verdicts(
         self,
@@ -100,21 +107,27 @@ class ResultStore:
         *,
         session: Optional[Session] = None,
     ) -> List[VerdictRecord]:
-        """Verdicts of the campaign ordered by class, case and run; filter on class, case, state (passed or failed), run, sensitivity."""
+        """Verdicts of the campaign ordered by class, case and run, each with its case index; filter on class, case, state (passed or failed), run, sensitivity."""
         with session_scope(self._sessions, session) as scope:
-            query = self._filtered(select(VerdictRow).join(ScenarioCaseRow, ScenarioCaseRow.id == VerdictRow.case_id), VerdictRow, campaign_id, class_id, case_id, run_index)
-            if state is not None:
-                query = query.where(VerdictRow.state == state)
-            if sensitive is not None:
-                query = query.where(VerdictRow.sensitive.is_(sensitive))
+            query = select(VerdictRow, ScenarioCaseRow.case_index).join(ScenarioCaseRow, ScenarioCaseRow.id == VerdictRow.case_id)
+            query = self._verdict_filtered(query, campaign_id, class_id, case_id, state, run_index, sensitive)
             query = query.order_by(VerdictRow.class_id, ScenarioCaseRow.case_index, VerdictRow.run_index).offset(offset).limit(limit)
-            return [VerdictRecord.from_row(row) for row in scope.execute(query).scalars()]
+            return [VerdictRecord.from_row(row, case_index) for row, case_index in scope.execute(query)]
 
-    def count_verdicts(self, campaign_id: str, state: Optional[VerdictState] = None, *, session: Optional[Session] = None) -> int:
+    def count_verdicts(
+        self,
+        campaign_id: str,
+        state: Optional[VerdictState] = None,
+        *,
+        class_id: Optional[str] = None,
+        case_id: Optional[int] = None,
+        run_index: Optional[int] = None,
+        sensitive: Optional[bool] = None,
+        session: Optional[Session] = None,
+    ) -> int:
+        """How many verdicts list_verdicts would return for the same filters without a page."""
         with session_scope(self._sessions, session) as scope:
-            query = select(func.count()).select_from(VerdictRow).where(VerdictRow.campaign_id == campaign_id)
-            if state is not None:
-                query = query.where(VerdictRow.state == state)
+            query = self._verdict_filtered(select(func.count()).select_from(VerdictRow), campaign_id, class_id, case_id, state, run_index, sensitive)
             return scope.execute(query).scalar_one()
 
     # Coverage
@@ -155,6 +168,19 @@ class ResultStore:
         if found is None:
             raise UnknownCase(case_id)
         return found[0], found[1]
+
+    @staticmethod
+    def _case_index(session: Session, case_id: int) -> Optional[int]:
+        return session.execute(select(ScenarioCaseRow.case_index).where(ScenarioCaseRow.id == case_id)).scalar_one_or_none()
+
+    @classmethod
+    def _verdict_filtered(cls, query, campaign_id: str, class_id: Optional[str], case_id: Optional[int], state: Optional[VerdictState], run_index: Optional[int], sensitive: Optional[bool]):
+        query = cls._filtered(query, VerdictRow, campaign_id, class_id, case_id, run_index)
+        if state is not None:
+            query = query.where(VerdictRow.state == state)
+        if sensitive is not None:
+            query = query.where(VerdictRow.sensitive.is_(sensitive))
+        return query
 
     @staticmethod
     def _insert_once(session: Session, table: Type[Any], key: List[str], values: dict) -> Optional[int]:

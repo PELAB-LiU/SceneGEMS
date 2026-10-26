@@ -37,12 +37,14 @@ def make_hello(
     fingerprints: Optional[Dict[str, str]] = None,
     resources: Optional[NodeResources] = None,
     name: Optional[str] = None,
+    machine: Optional[str] = None,
 ) -> Hello:
     slots = {JobType.SCENE_GENERATION: 2} if slots is None else slots
     return Hello(
         node_id=node_id,
         node_name=name or f"{node_id}-host",
         software_revision="755cbec",
+        machine=machine,
         capabilities=[CapabilityOffer(job_type=job_type, slots=count) for job_type, count in slots.items()],
         labels=labels or {},
         resources=resources or make_resources(),

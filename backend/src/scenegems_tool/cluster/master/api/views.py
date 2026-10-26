@@ -60,6 +60,7 @@ def node_view(node: NodeRecord, session: Optional[NodeSession]) -> Dict[str, Any
         "out_of_date": bool(session and session.out_of_date),
         "fingerprint_mismatches": [asdict(mismatch) for mismatch in session.out_of_date] if session else [],
         "software_revision": node.software_revision,
+        "machine": node.machine,
         "labels": node.labels,
         "resources": node.resources.model_dump(),
         "capabilities": {job_type.value: {"slots": usage.slots, "slots_in_use": usage.slots_in_use} for job_type, usage in node.capabilities.items()},

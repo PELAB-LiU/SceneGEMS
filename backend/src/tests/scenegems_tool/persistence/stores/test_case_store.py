@@ -152,6 +152,29 @@ def test_list_cases_by_class_and_state(stores, campaign):
     assert stores.cases.count_cases(campaign.campaign_id, [CaseState.COMPLETE]) == 1
 
 
+def test_count_cases_takes_the_filters_of_list_cases(stores, campaign):
+    a0, a1, a2 = _create(stores, campaign, indexes=(0, 1, 2))
+    (b0,) = _create(stores, campaign, class_id=CLASS_B, indexes=(0,))
+    stores.cases.move_case(a1.case_id, a1.version, state=CaseState.COMPLETE)
+    stores.cases.move_case(b0.case_id, b0.version, stage=PipelineStage.SIMULATE)
+    filters = [
+        {},
+        {"class_id": CLASS_A},
+        {"class_id": CLASS_A, "states": [CaseState.ACTIVE]},
+        {"states": [CaseState.COMPLETE, CaseState.DROPPED]},
+        {"stages": [PipelineStage.SIMULATE]},
+        {"class_id": CLASS_B, "stages": [PipelineStage.GENERATE_SCENE]},
+        {"states": [CaseState.FAILED]},
+    ]
+    for keywords in filters:
+        counted = stores.cases.count_cases(campaign.campaign_id, keywords.get("states"), class_id=keywords.get("class_id"), stages=keywords.get("stages"))
+        assert counted == len(stores.cases.list_cases(campaign.campaign_id, **keywords)), keywords
+    assert stores.cases.count_cases(campaign.campaign_id, class_id=CLASS_A) == 3
+    assert stores.cases.count_cases(campaign.campaign_id, stages=[PipelineStage.SIMULATE]) == 1
+    # a page does not change the count
+    assert len(stores.cases.list_cases(campaign.campaign_id, limit=1)) == 1 and stores.cases.count_cases(campaign.campaign_id) == 4
+
+
 def test_class_states(stores, campaign, clock):
     clock.advance(9)
     closed = stores.cases.set_class_state(campaign.campaign_id, CLASS_A, CampaignClassState.COMPLETE, expected=CampaignClassState.OPEN)

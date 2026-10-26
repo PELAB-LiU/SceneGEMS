@@ -49,6 +49,7 @@ class _Node:
     fingerprints: Dict[str, str]
     registered_at: datetime
     last_seen_at: datetime
+    machine: Optional[str] = None
 
     def record(self) -> NodeRecord:
         return NodeRecord(
@@ -62,6 +63,7 @@ class _Node:
             fingerprints=dict(self.fingerprints),
             registered_at=self.registered_at,
             last_seen_at=self.last_seen_at,
+            machine=self.machine,
         )
 
 
@@ -88,6 +90,7 @@ class InMemoryNodeStore:
                 fingerprints=dict(hello.fingerprints),
                 registered_at=existing.registered_at if existing else now,
                 last_seen_at=now,
+                machine=hello.machine,
             )
             return self.nodes[hello.node_id].record()
 

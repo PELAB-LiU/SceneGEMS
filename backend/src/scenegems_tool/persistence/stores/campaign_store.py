@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any, Collection, Dict, List, Mapping, Optional, Sequence
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from scenegems_tool.persistence.clock import Clock, utc_now
@@ -126,6 +126,14 @@ class CampaignStore:
                 query = query.where(CampaignRow.actual_state.in_(list(actual_states)))
             return [CampaignRecord.from_row(row) for row in scope.execute(query).scalars()]
 
+    def count_campaigns(self, actual_states: Optional[Collection[CampaignActualState]] = None, *, session: Optional[Session] = None) -> int:
+        """How many campaigns list_campaigns would return for the same filter without a page."""
+        with session_scope(self._sessions, session) as scope:
+            query = select(func.count()).select_from(CampaignRow)
+            if actual_states is not None:
+                query = query.where(CampaignRow.actual_state.in_(list(actual_states)))
+            return scope.execute(query).scalar_one()
+
     def unfinished_campaigns(self, *, session: Optional[Session] = None) -> List[CampaignRecord]:
         """Campaigns the engine still works on (actual state not final), oldest first."""
         with session_scope(self._sessions, session) as scope:
@@ -234,6 +242,14 @@ class CampaignStore:
             if kinds is not None:
                 query = query.where(CampaignEventRow.kind.in_(list(kinds)))
             return [CampaignEventRecord.from_row(row) for row in scope.execute(query).scalars()]
+
+    def count_events(self, campaign_id: str, after_event_id: int = 0, kinds: Optional[Collection[CampaignEventKind]] = None, *, session: Optional[Session] = None) -> int:
+        """How many events list_events would return for the same filters without a limit."""
+        with session_scope(self._sessions, session) as scope:
+            query = select(func.count()).select_from(CampaignEventRow).where(CampaignEventRow.campaign_id == campaign_id, CampaignEventRow.id > after_event_id)
+            if kinds is not None:
+                query = query.where(CampaignEventRow.kind.in_(list(kinds)))
+            return scope.execute(query).scalar_one()
 
     # Helpers
 

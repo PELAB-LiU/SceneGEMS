@@ -120,6 +120,19 @@ def test_the_master_keeps_artifacts_on_their_own_volume():
         assert service["environment"][key] == f"${{{key}:-{scenegems_roles()['master']['parameters'][key]['default']}}}"
 
 
+def test_the_master_passes_the_allowed_origins_to_master_api_with_the_roles_default():
+    service = _compose("master")["services"]["master-api"]
+    default = scenegems_roles()["master"]["parameters"]["SCENEGEMS_OPERATOR_ALLOWED_ORIGINS"]["default"]
+    assert service["environment"]["SCENEGEMS_OPERATOR_ALLOWED_ORIGINS"] == f"${{SCENEGEMS_OPERATOR_ALLOWED_ORIGINS:-{default}}}"
+    assert f"SCENEGEMS_OPERATOR_ALLOWED_ORIGINS={default}" in (REPO_ROOT / ENV_TEMPLATES["master"]).read_text(encoding="utf-8").splitlines()
+
+
+def test_the_node_passes_its_machine_on_and_lists_it_in_its_env_template():
+    service = _compose("node")["services"]["node"]
+    assert service["environment"]["SCENEGEMS_NODE_MACHINE"] == "${SCENEGEMS_NODE_MACHINE:-}"  # optional for a hand-written .env
+    assert "SCENEGEMS_NODE_MACHINE" in _template_keys("node") and "SCENEGEMS_NODE_MACHINE" in scenegems_roles()["node"]["env"]
+
+
 def test_the_node_caches_artifacts_in_its_state_volume():
     service = _compose("node")["services"]["node"]
     state = service["environment"]["SCENEGEMS_NODE_STATE_DIR"]

@@ -119,6 +119,7 @@ class NodeDaemon:
             node_id=response.node_id,
             node_name=self.configuration.node_name,
             software_revision=software_revision(self.configuration.software_revision),
+            machine=self.configuration.machine,
             capabilities=self.configuration.capabilities,
             labels=self.configuration.labels,
             resources=self._probe.read,

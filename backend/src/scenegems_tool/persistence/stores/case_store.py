@@ -216,22 +216,22 @@ class CaseStore:
     ) -> List[CaseRecord]:
         """Cases of the campaign ordered by class and index, optionally of one class, in some states or stages."""
         with session_scope(self._sessions, session) as scope:
-            query = select(ScenarioCaseRow).where(ScenarioCaseRow.campaign_id == campaign_id)
-            if class_id is not None:
-                query = query.where(ScenarioCaseRow.class_id == class_id)
-            if states is not None:
-                query = query.where(ScenarioCaseRow.state.in_(list(states)))
-            if stages is not None:
-                query = query.where(ScenarioCaseRow.stage.in_(list(stages)))
+            query = self._case_filtered(select(ScenarioCaseRow), campaign_id, class_id, states, stages)
             query = query.order_by(ScenarioCaseRow.class_id, ScenarioCaseRow.case_index).offset(offset).limit(limit).execution_options(populate_existing=True)
             return [CaseRecord.from_row(row) for row in scope.execute(query).scalars()]
 
-    def count_cases(self, campaign_id: str, states: Optional[Collection[CaseState]] = None, *, session: Optional[Session] = None) -> int:
+    def count_cases(
+        self,
+        campaign_id: str,
+        states: Optional[Collection[CaseState]] = None,
+        *,
+        class_id: Optional[str] = None,
+        stages: Optional[Collection[PipelineStage]] = None,
+        session: Optional[Session] = None,
+    ) -> int:
+        """How many cases list_cases would return for the same filters without a page."""
         with session_scope(self._sessions, session) as scope:
-            query = select(func.count()).select_from(ScenarioCaseRow).where(ScenarioCaseRow.campaign_id == campaign_id)
-            if states is not None:
-                query = query.where(ScenarioCaseRow.state.in_(list(states)))
-            return scope.execute(query).scalar_one()
+            return scope.execute(self._case_filtered(select(func.count()).select_from(ScenarioCaseRow), campaign_id, class_id, states, stages)).scalar_one()
 
     def next_case_index(self, campaign_id: str, class_id: str, *, session: Optional[Session] = None) -> int:
         """One past the highest case index of the class, 0 for a class without cases."""
@@ -289,6 +289,17 @@ class CaseStore:
             return CaseRecord.from_row(row)
 
     # Helpers
+
+    @staticmethod
+    def _case_filtered(query, campaign_id: str, class_id: Optional[str], states: Optional[Collection[CaseState]], stages: Optional[Collection[PipelineStage]]):
+        query = query.where(ScenarioCaseRow.campaign_id == campaign_id)
+        if class_id is not None:
+            query = query.where(ScenarioCaseRow.class_id == class_id)
+        if states is not None:
+            query = query.where(ScenarioCaseRow.state.in_(list(states)))
+        if stages is not None:
+            query = query.where(ScenarioCaseRow.stage.in_(list(stages)))
+        return query
 
     @staticmethod
     def _count(session: Session, campaign_id: str, class_id: str, state: CaseState, delta: int, now) -> None:

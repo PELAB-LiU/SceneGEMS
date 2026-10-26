@@ -71,8 +71,14 @@ def test_first_start_pairs_and_says_hello(fake_master, node_configuration, start
     assert hello.fingerprints == FINGERPRINTS
     assert hello.resources.cpus >= 1 and hello.resources.free_disk_mb > 0
     assert hello.running_lease_ids == []
+    assert hello.machine is None
     # The CA the job containers mount is the paired one.
     assert (configuration.trust_dir / "ca_certificate.pem").read_text() == fake_master.security.ca_certificate_pem
+
+
+def test_hello_names_the_machine_from_the_configuration(fake_master, node_configuration, start_daemon):
+    _, _, hello = connect(fake_master, start_daemon, node_configuration(SCENEGEMS_NODE_MACHINE="lab-pc-3"))
+    assert hello.machine == "lab-pc-3"
 
 
 def test_heartbeats_follow_the_welcome_interval(fake_master, node_configuration, start_daemon):

@@ -44,6 +44,13 @@ def test_hello_lists_capabilities_with_slots(resources):
     assert hello.running_lease_ids == []
 
 
+def test_hello_names_the_machine_optionally(resources):
+    base = dict(node_id="n1", node_name="lab-1", software_revision="4ac7ef2", capabilities=[CapabilityOffer(job_type=JobType.SCENE_GENERATION, slots=1)], resources=resources)
+    assert Hello(**base).machine is None
+    hello = Hello(**base, machine="lab-pc-3")
+    assert Hello.model_validate_json(hello.model_dump_json()).machine == "lab-pc-3"
+
+
 def test_progress_is_a_fraction():
     with pytest.raises(ValidationError):
         JobStatus(lease_id="l1", job_id="j1", progress=1.5)

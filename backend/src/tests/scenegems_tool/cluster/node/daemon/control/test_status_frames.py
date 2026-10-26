@@ -13,7 +13,7 @@ class Leases:
         return {JobType.SIMULATION_KINEMATIC: 2}
 
 
-def frames(fingerprints=lambda: {"image:latest": "abc"}) -> StatusFrames:
+def frames(fingerprints=lambda: {"image:latest": "abc"}, machine=None) -> StatusFrames:
     return StatusFrames(
         node_id="worker-1-abc123",
         node_name="worker-1",
@@ -23,6 +23,7 @@ def frames(fingerprints=lambda: {"image:latest": "abc"}) -> StatusFrames:
         resources=lambda: RESOURCES,
         fingerprints=fingerprints,
         leases=Leases(),
+        machine=machine,
     )
 
 
@@ -33,6 +34,11 @@ def test_hello_names_the_node_its_slots_images_and_running_leases():
     assert hello.labels == {"site": "lab"} and hello.resources == RESOURCES
     assert hello.fingerprints == {"image:latest": "abc"}
     assert hello.running_lease_ids == ["lease-2", "lease-7"]
+
+
+def test_hello_names_the_machine_when_there_is_one():
+    assert frames(machine="lab-pc-3").hello().machine == "lab-pc-3"
+    assert frames().hello().machine is None
 
 
 def test_hello_without_docker_reports_no_fingerprints():

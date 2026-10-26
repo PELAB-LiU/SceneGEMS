@@ -24,6 +24,7 @@ VERDICT_COLUMNS = (
     "verdict_id",
     "class_id",
     "case_id",
+    "case_index",
     "run_index",
     "state",
     "monitor",
@@ -163,6 +164,7 @@ def run_record_view(record: RunRecord) -> Dict[str, Any]:
     return {
         "run_record_id": record.run_record_id,
         "case_id": record.case_id,
+        "case_index": record.case_index,
         "campaign_id": record.campaign_id,
         "class_id": record.class_id,
         "run_index": record.run_index,
@@ -189,6 +191,7 @@ def verdict_view(verdict: VerdictRecord) -> Dict[str, Any]:
     return {
         "verdict_id": verdict.verdict_id,
         "case_id": verdict.case_id,
+        "case_index": verdict.case_index,
         "campaign_id": verdict.campaign_id,
         "class_id": verdict.class_id,
         "run_index": verdict.run_index,
@@ -214,6 +217,31 @@ def verdict_row(verdict: VerdictRecord) -> List[Any]:
 
 def event_view(event: CampaignEventRecord) -> Dict[str, Any]:
     return {"event_id": event.event_id, "at": iso(event.at), "kind": event.kind.value, "class_id": event.class_id, "detail": event.detail}
+
+
+def validated_campaign_view(validated: Any) -> Dict[str, Any]:
+    """What validating a config found: its hash, the classes it selects and the runs it plans (a ValidatedCampaign; nothing is stored)."""
+    return {
+        "valid": True,
+        "name": validated.config.name,
+        "config_hash": validated.config_hash,
+        "classes": [
+            {
+                "class_id": spec.class_id,
+                "content_hash": spec.content_hash,
+                "vessel_count": spec.vessel_count,
+                "obstacle_count": spec.obstacle_count,
+                "quota": spec.quota,
+                "failure_budget": spec.failure_budget,
+            }
+            for spec in validated.classes
+        ],
+        "cases_planned": validated.total_quota,
+        "runs": [
+            {"run_index": stacks.run_index, "name": validated.config.execution.runs[stacks.run_index].name, "repeatability_tier": stacks.repeatability_tier, "warnings": list(stacks.warnings)}
+            for stacks in validated.runs
+        ],
+    }
 
 
 def config_version_view(version: ConfigVersionRecord) -> Dict[str, Any]:

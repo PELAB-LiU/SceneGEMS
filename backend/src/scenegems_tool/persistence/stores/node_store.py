@@ -36,6 +36,7 @@ class NodeStore:
             name=hello.node_name,
             labels=hello.labels,
             software_revision=hello.software_revision,
+            machine=hello.machine,
             cpus=resources.cpus,
             memory_mb=resources.memory_mb,
             free_memory_mb=resources.free_memory_mb,

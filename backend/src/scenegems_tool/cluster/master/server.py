@@ -63,7 +63,15 @@ def build_master(settings: MasterSettings, with_gateway: bool = True) -> MasterA
     if with_gateway:
         from scenegems_tool.gateway.websocket_app import app as gateway
 
-    return create_master_apps(plane, security, settings.broker_hook_secret, gateway=gateway, artifacts=build_artifacts(settings, sessions), assurance=assurance)
+    return create_master_apps(
+        plane,
+        security,
+        settings.broker_hook_secret,
+        gateway=gateway,
+        artifacts=build_artifacts(settings, sessions),
+        assurance=assurance,
+        allowed_origins=settings.operator_allowed_origins,
+    )
 
 
 def build_artifacts(settings: MasterSettings, sessions) -> MasterArtifacts:
