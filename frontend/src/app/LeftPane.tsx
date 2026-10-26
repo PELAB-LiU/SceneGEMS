@@ -1,12 +1,6 @@
 import type { ReactElement, SVGProps } from "react";
-
-export type AppView =
-  | "simulation"
-  | "waraps"
-  | "domainConfig"
-  | "sceneGeneration"
-  | "trajectoryGeneration";
-export type MenuActive = AppView;
+import { useClusterStore } from "../domain/cluster/clusterStore";
+import type { AppSection, WorkbenchView } from "./uiStore";
 
 const APP_TITLE = "SceneGEMS";
 
@@ -78,6 +72,55 @@ function WarapsIcon(props: IconProps) {
   );
 }
 
+function WorkbenchIcon(props: IconProps) {
+  return (
+    <svg {...iconBaseProps(props)}>
+      <rect x="3" y="4" width="18" height="13" rx="1.5" />
+      <path d="M8 21h8M12 17v4" />
+    </svg>
+  );
+}
+
+function ClusterIcon(props: IconProps) {
+  return (
+    <svg {...iconBaseProps(props)}>
+      <rect x="4" y="3" width="16" height="5" rx="1" />
+      <rect x="4" y="10" width="16" height="5" rx="1" />
+      <rect x="4" y="17" width="16" height="4" rx="1" />
+      <path d="M8 5.5h.01M8 12.5h.01M8 19h.01" />
+    </svg>
+  );
+}
+
+function CampaignsIcon(props: IconProps) {
+  return (
+    <svg {...iconBaseProps(props)}>
+      <path d="M5 21V4" />
+      <path d="M5 4h11l-2 4 2 4H5" />
+    </svg>
+  );
+}
+
+function ObserveIcon(props: IconProps) {
+  return (
+    <svg {...iconBaseProps(props)}>
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function ResultsIcon(props: IconProps) {
+  return (
+    <svg {...iconBaseProps(props)}>
+      <path d="M4 20h16" />
+      <rect x="6" y="11" width="3" height="7" />
+      <rect x="11" y="6" width="3" height="12" />
+      <rect x="16" y="13" width="3" height="5" />
+    </svg>
+  );
+}
+
 function DocumentationIcon(props: IconProps) {
   return (
     <svg {...iconBaseProps(props)}>
@@ -89,7 +132,7 @@ function DocumentationIcon(props: IconProps) {
   );
 }
 
-const MENU_ITEMS: { view: AppView; label: string; Icon: (props: IconProps) => ReactElement }[] = [
+const WORKBENCH_ITEMS: { view: WorkbenchView; label: string; Icon: (props: IconProps) => ReactElement }[] = [
   { view: "domainConfig", label: "Domain Configuration", Icon: DomainConfigIcon },
   { view: "sceneGeneration", label: "Scene Generation", Icon: SceneGenerationIcon },
   { view: "trajectoryGeneration", label: "Trajectory Generation", Icon: TrajectoryGenerationIcon },
@@ -97,19 +140,55 @@ const MENU_ITEMS: { view: AppView; label: string; Icon: (props: IconProps) => Re
   { view: "waraps", label: "Connections", Icon: WarapsIcon },
 ];
 
+const CLUSTER_SECTIONS: { section: AppSection; label: string; Icon: (props: IconProps) => ReactElement }[] = [
+  { section: "cluster", label: "Cluster", Icon: ClusterIcon },
+  { section: "campaigns", label: "Campaigns", Icon: CampaignsIcon },
+  { section: "observe", label: "Observe", Icon: ObserveIcon },
+  { section: "results", label: "Results", Icon: ResultsIcon },
+];
+
+function ClusterSelect() {
+  const clusters = useClusterStore((s) => s.clusters);
+  const selectedClusterId = useClusterStore((s) => s.selectedClusterId);
+  const selectCluster = useClusterStore((s) => s.selectCluster);
+  return (
+    <label className="left-pane-cluster">
+      <span className="left-pane-cluster-label">Cluster</span>
+      <select
+        value={selectedClusterId ?? ""}
+        onChange={(e) => selectCluster(e.target.value === "" ? null : e.target.value)}
+        aria-label="Selected cluster"
+      >
+        <option value="">{clusters.length === 0 ? "no clusters" : "none"}</option>
+        {clusters.map((cluster) => (
+          <option key={cluster.id} value={cluster.id}>
+            {cluster.name}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 interface LeftPaneProps {
   isCollapsed: boolean;
   onToggleCollapse: () => void;
-  activeMenu: MenuActive;
-  onAppViewSelect: (view: AppView) => void;
+  activeSection: AppSection;
+  onSectionSelect: (section: AppSection) => void;
+  workbenchView: WorkbenchView;
+  /** Selecting a workbench view also shows the workbench section. */
+  onWorkbenchViewSelect: (view: WorkbenchView) => void;
 }
 
 export function LeftPane({
   isCollapsed,
   onToggleCollapse,
-  activeMenu,
-  onAppViewSelect,
+  activeSection,
+  onSectionSelect,
+  workbenchView,
+  onWorkbenchViewSelect,
 }: LeftPaneProps) {
+  const workbenchActive = activeSection === "workbench";
   return (
     <aside className={`left-pane${isCollapsed ? " collapsed" : ""}`}>
       <div className="left-pane-brand">
@@ -138,23 +217,47 @@ export function LeftPane({
         </button>
       </div>
       {!isCollapsed && (
-        <details open className="left-menu-group">
-          <summary>Menu</summary>
-          {MENU_ITEMS.map(({ view, label, Icon }) => (
+        <>
+          <details open className="left-menu-group">
+            <summary>Menu</summary>
             <button
-              key={view}
-              className={`left-menu-item${activeMenu === view ? " active" : ""}`}
-              onClick={() => onAppViewSelect(view)}
+              className={`left-menu-item left-menu-section${workbenchActive ? " active-section" : ""}`}
+              onClick={() => onSectionSelect("workbench")}
+              aria-current={workbenchActive ? "page" : undefined}
             >
-              <Icon />
-              {label}
+              <WorkbenchIcon />
+              Workbench
             </button>
-          ))}
-          <a href="/docs/" className="left-menu-item">
-            <DocumentationIcon />
-            Documentation
-          </a>
-        </details>
+            <div className="left-menu-subitems" role="group" aria-label="Workbench views">
+              {WORKBENCH_ITEMS.map(({ view, label, Icon }) => (
+                <button
+                  key={view}
+                  className={`left-menu-item left-menu-subitem${workbenchActive && workbenchView === view ? " active" : ""}`}
+                  onClick={() => onWorkbenchViewSelect(view)}
+                >
+                  <Icon />
+                  {label}
+                </button>
+              ))}
+            </div>
+            {CLUSTER_SECTIONS.map(({ section, label, Icon }) => (
+              <button
+                key={section}
+                className={`left-menu-item left-menu-section${activeSection === section ? " active" : ""}`}
+                onClick={() => onSectionSelect(section)}
+                aria-current={activeSection === section ? "page" : undefined}
+              >
+                <Icon />
+                {label}
+              </button>
+            ))}
+            <a href="/docs/" className="left-menu-item">
+              <DocumentationIcon />
+              Documentation
+            </a>
+          </details>
+          <ClusterSelect />
+        </>
       )}
     </aside>
   );
