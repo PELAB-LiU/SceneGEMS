@@ -75,16 +75,16 @@ def test_unavailable_stack_is_rejected_before_anything_is_generated():
         build_simulation_docker_stack_artifacts(instance, encounter_trajectories("head_on", 10), mqtt_connection(), GEOFENCE)
 
 
-def test_waves_on_gazebo_are_rejected_before_anything_is_generated():
+def test_an_unsupported_environment_is_rejected_before_anything_is_generated():
     import numpy as np
 
     from scenegems_tool.vessel_stack.contracts.roles import SimulationLayerId
-    from scenegems_tool.vessel_stack.contracts.vessel_stack_config import EnvironmentConfig, WaveConfig
+    from scenegems_tool.vessel_stack.contracts.vessel_stack_config import EnvironmentConfig
     from scenegems_tool.vessel_stack.registry.resolver import StackUnavailableError
     from scenegems_tool.vessel_stack.simulation_docker_stack import build_simulation_docker_stack_artifacts
     from tests.scenegems_tool.vessel_stack.scenarios import GEOFENCE, encounter_trajectories, mqtt_connection, stack_instance
 
     environment = EnvironmentConfig.calm()
-    environment.wave = WaveConfig(amplitude=0.5, period=5.0, steepness=0.1, direction=np.array([1.0, 0.0]))
-    with pytest.raises(StackUnavailableError, match="does not support waves"):
-        build_simulation_docker_stack_artifacts(stack_instance(SimulationLayerId.GAZEBO, [0], environment=environment), encounter_trajectories("head_on", 10), mqtt_connection(), GEOFENCE)
+    environment.wind_vector = np.array([0.0, 5.0, 0.0])  # SITL's boat measured no effect of wind
+    with pytest.raises(StackUnavailableError, match="does not support wind"):
+        build_simulation_docker_stack_artifacts(stack_instance(SimulationLayerId.ARDUPILOT_SIM, [0], environment=environment), encounter_trajectories("head_on", 10), mqtt_connection(), GEOFENCE)

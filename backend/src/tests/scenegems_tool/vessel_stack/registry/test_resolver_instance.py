@@ -16,6 +16,7 @@ GAZEBO = SimulationLayerId.GAZEBO
 ARDUPILOT_SIM = SimulationLayerId.ARDUPILOT_SIM
 NONE = ControlLayerId.NONE
 ARDUPILOT = ControlLayerId.ARDUPILOT
+CUSTOM = ControlLayerId.CUSTOM
 
 
 def waves_environment() -> EnvironmentConfig:
@@ -154,10 +155,11 @@ class TestEnvironment:
         resolution = resolver.resolve_instance(stack_instance(GAZEBO, [0], environment=wind_environment()))
         assert resolution.accepted
 
-    def test_waves_are_rejected_on_gazebo_with_the_measured_reason(self, resolver):
-        resolution = resolver.resolve_instance(stack_instance(GAZEBO, [0], environment=waves_environment()))
-        assert not resolution.accepted
-        assert "waves requested, but simulation_layer/gazebo does not support waves: Gazebo Harmonic has no wave force system" in resolution.reason
+    def test_waves_are_accepted_on_gazebo_without_a_warning_now_that_asv_wave_sim_is_measured(self, resolver):
+        for control in (ARDUPILOT, CUSTOM):
+            resolution = resolver.resolve_instance(stack_instance(GAZEBO, [0], control_layer=control, environment=waves_environment()))
+            assert resolution.accepted
+            assert resolution.warnings == ()
 
     def test_wind_and_waves_together_give_both_errors(self, resolver):
         environment = waves_environment()

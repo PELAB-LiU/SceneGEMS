@@ -79,9 +79,7 @@ sitl_internal_physics:
 
 simulation_layer/gazebo:
   wind: supported
-  waves: unsupported
-  notes:
-    waves: Gazebo Harmonic has no wave force system; asv_wave_sim applies wave forces in the WP2 spike image but is not in the Gazebo image yet (design doc 12.7)
+  waves: supported
   evidence: >-
     WP2, 2026-10-24: generated parametric hulls of 5, 30 and 100 m with a windage link under the
     WindEffects system, driven open loop over gz-transport without ArduPilot. A 5 m/s cross wind
@@ -92,7 +90,17 @@ simulation_layer/gazebo:
     system at all (the commented-out gz-sim-waves-system does not exist); asv_wave_sim (gz-waves1)
     moved the 5 m hull 0.94 m in heave and 8.5 degrees in pitch peak to peak in 0.5 m, 5 s waves,
     but needs a renamed build to load next to the gz-sim Hydrodynamics system and finer buoyancy
-    cells for waves shorter than a cell.
+    cells for waves shorter than a cell. Phase 2 WP2, 2026-10-26: the Gazebo image builds asv_wave_sim
+    at ASV_WAVE_SIM_COMMIT with the Hydrodynamics system renamed WavesHydrodynamics, and hulls under
+    waves get buoyancy cells of at most an eighth of the deep-water wavelength (up to 24 per side).
+    Custom controller, straight replay from rest, 2 repeats, in 0.5 m, 5 s waves travelling east
+    against calm water: heave 0.95 m (calm 0.004 m), pitch 9.0 degrees (0.10) and roll 1.1 degrees
+    (0.10) peak to peak on the 5 m hull; 0.60 m (0.021 m) and 5.8 degrees (0.09) on the 30 m hull;
+    1.01 m (0.016 m) and 0.15 degrees (0.06) on the 100 m hull, whose heave was not separated from its
+    settling from rest. Cross-track error 1.18 m (calm 0.000 m) on the 5 m hull, 0.57 m (0.002 m) on
+    the 30 m hull. Repeats stayed bit-identical; the finer cells slow the world (achieved 5.2x, 4.5x
+    and 2.4x against 6.9x in calm water). Measured on the conda-forge Gazebo 8 stand-in image of a
+    4-core Linux VM with the same asv_wave_sim commit and rename; wave realism is not validated.
 
 ardupilot_gazebo_plugin:
   repeatability_tier: bounded

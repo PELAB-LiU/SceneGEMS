@@ -9,10 +9,11 @@ from scenegems_tool.vessel_stack.contracts.roles import ControlLayerId, LayerRef
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import EnvironmentConfig
 from utils.file_system_utils import GAZEBO_ENTRYPOINT_CONTAINER_PATH
 
-# True once the Gazebo image includes asv_wave_sim (gz-waves1). Then a world with waves replaces
-# the flat Buoyancy system by a wave field, and each vessel model carries the wave-aware
-# buoyancy system. Until then the waves capability stays unsupported and this stays False.
-GAZEBO_WAVE_FORCES_AVAILABLE = False
+# The Gazebo image builds asv_wave_sim (gz-waves1, ASV_WAVE_SIM_COMMIT in upstream_pins.env), so a
+# world with waves replaces the flat Buoyancy system by a wave field and each vessel model carries
+# the wave-aware buoyancy system on finer cells. Set it False for an image without asv_wave_sim:
+# waves then leave the world flat, and the waves capability must say unsupported.
+GAZEBO_WAVE_FORCES_AVAILABLE = True
 
 
 def wave_forces_enabled(environment: Optional[EnvironmentConfig]) -> bool:
@@ -33,8 +34,8 @@ GAZEBO_CONTAINER = ContainerSpec(
 GAZEBO_LAYER = LayerSpec(
     layer=LayerRef.of(SimulationLayerId.GAZEBO),
     description="Gazebo Harmonic with a generated ocean world and one parametric twin-thrust SDF model per vessel (buoyancy, hydrodynamics, thrusters, WindEffects wind on a windage link).",
-    capabilities=Capabilities(wind=EnvironmentSupport.SUPPORTED, waves=EnvironmentSupport.UNSUPPORTED),
-    restriction_notes=(("waves", "Gazebo Harmonic has no wave force system; waves need asv_wave_sim in the Gazebo image (WP2 spike)"),),
+    # Waves come from asv_wave_sim (GAZEBO_WAVE_FORCES_AVAILABLE); whether they are supported is a measurement.
+    capabilities=Capabilities(wind=EnvironmentSupport.SUPPORTED, waves=EnvironmentSupport.UNMEASURED),
     provides_ports=frozenset({Port.VESSEL_STATE, Port.CLOCK}),
     requires_ports=frozenset({Port.ACTUATOR_CMD, Port.ENVIRONMENT}),
     containers=(GAZEBO_CONTAINER,),

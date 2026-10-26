@@ -11,9 +11,11 @@ from scenegems_tool.vessel_stack.calibration.reference_scenarios import straight
 from scenegems_tool.vessel_stack.calibration.repeat_analysis import DeviationSummary, TrackSamples
 from scenegems_tool.vessel_stack.calibration.sitl_stack_runs import (
     CONTAINER_ASSETS,
+    HullMotion,
     RepeatResult,
     StackMeasurement,
     StackRunSpec,
+    compose_project_name,
     host_assets_replacements,
     measure_stack,
     prepare_run_folder,
@@ -251,6 +253,38 @@ class TestCustomController:
     def test_differing_digests_make_the_tier_bounded(self):
         (entry,) = self.custom(digests=("a", "b"), dev=0.01).entries()
         assert entry.fields["repeatability_tier"] == "bounded"
+
+    def test_waves_reach_the_world_and_the_hull(self, tmp_path):
+        spec = StackRunSpec(GAZEBO, "straight", "5m", 20, 1, 1, control_layer=CUSTOM, waves=(0.5, 5.0))
+        with uncapped_generation():
+            _, _, instance = prepare_run_folder(spec, straight_run("5m", 20), str(tmp_path), 16430)
+        assert instance.environment.wave.amplitude == 0.5 and instance.environment.wave.period == 5.0
+        assets = os.path.join(str(tmp_path), "runtime_assets")
+        texts = [open(os.path.join(root, name), encoding="utf-8").read() for root, _, names in os.walk(assets) for name in names if name.endswith(".sdf")]
+        assert any("gz-waves1-waves-model-system" in text for text in texts)
+        assert any("gz-waves1-hydrodynamics-system" in text for text in texts)
+        assert spec.label() == "gazebo-custom-replay-straight-waves-0.5m-5s-5m-1x"
+
+    def test_the_compose_project_of_a_waves_run_has_only_the_characters_compose_allows(self):
+        spec = StackRunSpec(GAZEBO, "straight", "5m", 20, 1, 1, "usv_navigation", control_layer=CUSTOM, waves=(0.5, 5.0))
+        assert compose_project_name(spec, 1) == "calib-gazebo-custom-usv-navigation-straight-waves-0-5m-5s-5m-1x-1"
+
+    def test_hull_motion_is_peak_to_peak_heave_roll_and_pitch(self):
+        def hull(z, pitch_deg):
+            half = np.radians(pitch_deg) / 2
+            return type("Hull", (), {"z": z, "qx": 0.0, "qy": float(np.sin(half)), "qz": 0.0, "qw": float(np.cos(half))})()
+
+        motion = HullMotion.from_odometry([hull(-0.1, -2.0), hull(0.3, 3.0), hull(0.0, 0.0)])
+        assert motion.heave_m == pytest.approx(0.4)
+        assert motion.pitch_deg == pytest.approx(5.0)
+        assert motion.roll_deg == pytest.approx(0.0)
+
+    def test_the_evidence_names_the_hull_motion(self):
+        run = self.custom()
+        for repeat in run.repeats:
+            repeat.motion = HullMotion(heave_m=0.9, roll_deg=0.5, pitch_deg=8.5)
+        (entry,) = run.entries()
+        assert "heave m 0.900, pitch deg 8.50, roll deg 0.50" in entry.fields["evidence"]
 
     def test_the_evidence_names_the_drive(self):
         (entry,) = self.custom(drive="usv_navigation").entries()

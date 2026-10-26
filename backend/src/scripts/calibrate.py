@@ -64,6 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
     stack.add_argument("--speedups", type=int, nargs="+", default=[1])
     stack.add_argument("--repeats", type=int, default=3)
     stack.add_argument("--wind", type=float, nargs=2, metavar=("EAST", "NORTH"), help="wind in m/s")
+    stack.add_argument("--waves", type=float, nargs=2, metavar=("AMPLITUDE", "PERIOD"), help="regular waves travelling east, amplitude in m and period in s")
     stack.add_argument("--from-rest", action="store_true", help="the reference starts at rest like the simulated vessel, for the tracking error")
     stack.add_argument("--control", choices=sorted(CONTROL_LAYERS), default="ardupilot", help="control layer; custom runs on gazebo only")
     stack.add_argument("--work-folder", help="where the generated stacks go (default: a temporary folder)")
@@ -98,6 +99,9 @@ def _print_stack(measurement: StackMeasurement) -> None:
     if spec.custom:
         late = [repeat.late_commands for repeat in measurement.ok_repeats]
         print(f"  digests {'identical' if measurement.bit_identical else 'differ'}, late thrust commands per repeat {late}")
+        motions = [repeat.motion for repeat in measurement.ok_repeats if repeat.motion is not None]
+        if motions:
+            print("  hull motion peak to peak per repeat: " + "; ".join(f"heave {m.heave_m:.3f} m, pitch {m.pitch_deg:.2f} deg, roll {m.roll_deg:.2f} deg" for m in motions))
     tracking = measurement.worst_tracking
     if tracking is not None:
         print(
@@ -115,7 +119,19 @@ def _stack(args: argparse.Namespace):
     reports = []
     for reference, scale, speedup in itertools.product(args.reference, args.scale, args.speedups):
         duration = args.duration or default_duration(reference, scale)
-        spec = StackRunSpec(LAYERS[args.layer], reference, scale, duration, speedup, args.repeats, args.drive, tuple(args.wind) if args.wind else None, args.from_rest, CONTROL_LAYERS[args.control])
+        spec = StackRunSpec(
+            LAYERS[args.layer],
+            reference,
+            scale,
+            duration,
+            speedup,
+            args.repeats,
+            args.drive,
+            tuple(args.wind) if args.wind else None,
+            args.from_rest,
+            CONTROL_LAYERS[args.control],
+            tuple(args.waves) if args.waves else None,
+        )
         measurement = measure_stack(spec, work_folder, args.base_port, args.repo_entrypoints, args.keep_stacks)
         _print_stack(measurement)
         entries.extend(measurement.entries())
@@ -131,6 +147,7 @@ def _stack(args: argparse.Namespace):
                         "achieved_speedup": repeat.achieved_speedup,
                         "state_digest": repeat.state_digest,
                         "late_commands": repeat.late_commands,
+                        "motion": vars(repeat.motion) if repeat.motion else None,
                         "tracking": vars(repeat.tracking) if repeat.tracking else None,
                     }
                     for repeat in measurement.repeats

@@ -4,8 +4,15 @@ import numpy as np
 import pytest
 
 from scenegems_tool.vessel_stack.contracts.roles import ControlLayerId
-from scenegems_tool.vessel_stack.contracts.vessel_stack_config import EnvironmentConfig
-from scenegems_tool.vessel_stack.simulation_layers.gazebo.generators.vessel_model_generator import generate_vessel_model
+from scenegems_tool.vessel_stack.contracts.vessel_stack_config import EnvironmentConfig, WaveConfig
+from scenegems_tool.vessel_stack.simulation_layers.gazebo import gazebo_specs
+from scenegems_tool.vessel_stack.simulation_layers.gazebo.generators.vessel_dynamics import derive_vessel_dynamics
+from scenegems_tool.vessel_stack.simulation_layers.gazebo.generators.vessel_model_generator import (
+    MAX_WAVE_CELLS,
+    buoyancy_cells,
+    deep_water_wavelength,
+    generate_vessel_model,
+)
 from tests.scenegems_tool.vessel_stack.scenarios import make_vessel, wind_environment
 from tests.scenegems_tool.vessel_stack.sdf import child_float, parse_sdf, plugins
 
@@ -65,13 +72,49 @@ class TestEnvironment:
     def test_without_an_environment_the_windage_uses_the_reference_speed(self, vessel):
         assert windage_mass(generate_vessel_model(vessel, "boat")) == windage_mass(generate_vessel_model(vessel, "boat", environment=EnvironmentConfig.calm()))
 
-    def test_waves_do_not_change_the_model_while_wave_forces_are_unavailable(self, vessel):
-        from scenegems_tool.vessel_stack.contracts.vessel_stack_config import WaveConfig
-
-        environment = EnvironmentConfig.calm()
-        environment.wave = WaveConfig(amplitude=0.5, period=5.0, steepness=0.1, direction=np.array([1.0, 0.0]))
+    def test_waves_do_not_change_the_model_while_wave_forces_are_unavailable(self, vessel, monkeypatch):
+        monkeypatch.setattr(gazebo_specs, "GAZEBO_WAVE_FORCES_AVAILABLE", False)
+        environment = waves_environment()
         assert generate_vessel_model(vessel, "boat", environment=environment) == generate_vessel_model(vessel, "boat")
         assert "gz-waves1" not in generate_vessel_model(vessel, "boat", environment=environment)
+
+    def test_waves_give_the_hull_the_wave_aware_buoyancy_on_finer_cells(self, vessel):
+        root = parse_sdf(generate_vessel_model(vessel, "boat", environment=waves_environment()))
+        assert len(plugins(root, "gz-waves1-hydrodynamics-system")) == 1
+        dynamics = derive_vessel_dynamics(vessel, 0.0, {})
+        along, across = buoyancy_cells(dynamics, waves_environment().wave)
+        assert len([collision for collision in root.iter("collision") if collision.get("name", "").startswith("collision_hull_")]) == along * across
+        assert along > 3, "a 30 m hull in 5 s (39 m) waves needs more than three cells along"
+
+
+def waves_environment(period: float = 5.0) -> EnvironmentConfig:
+    environment = EnvironmentConfig.calm()
+    environment.wave = WaveConfig(amplitude=0.5, period=period, steepness=0.1, direction=np.array([1.0, 0.0]))
+    return environment
+
+
+class TestBuoyancyCells:
+    def test_flat_water_keeps_three_by_three_cells(self, vessel):
+        assert buoyancy_cells(derive_vessel_dynamics(vessel, 0.0, {})) == (3, 3)
+
+    def test_under_waves_a_cell_is_at_most_an_eighth_of_the_wavelength(self, vessel):
+        dynamics = derive_vessel_dynamics(vessel, 0.0, {})
+        along, across = buoyancy_cells(dynamics, waves_environment(5.0).wave)
+        cell = deep_water_wavelength(5.0) / 8
+        assert dynamics.collision_length / along <= cell < dynamics.collision_length / (along - 1)
+        assert across == max(3, int(np.ceil(dynamics.collision_breadth / cell)))
+
+    def test_the_cells_are_capped(self):
+        ship = make_vessel(0, True, length=100.0, max_speed=12.9, max_angular_speed=0.008, max_acceleration=0.05)
+        along, _ = buoyancy_cells(derive_vessel_dynamics(ship, 0.0, {}), waves_environment(3.0).wave)
+        assert along == MAX_WAVE_CELLS
+
+    def test_long_waves_keep_at_least_three_cells(self):
+        small = make_vessel(0, True, length=5.0, max_speed=4.0, max_angular_speed=0.5, max_acceleration=1.0)
+        assert buoyancy_cells(derive_vessel_dynamics(small, 0.0, {}), waves_environment(8.0).wave) == (3, 3)
+
+    def test_the_wavelength_follows_the_period_in_deep_water(self):
+        assert deep_water_wavelength(5.0) == pytest.approx(39.03, abs=0.01)
 
 
 class TestOverrides:

@@ -33,6 +33,7 @@ before it is measured.
 import copy
 import math
 import os
+import re
 import subprocess
 import threading
 import time
@@ -93,6 +94,7 @@ class StackRunSpec:
     wind: Optional[Tuple[float, float]] = None  # east, north in m/s
     from_rest: bool = False  # the reference starts at rest like the simulated vessel (tracking measurements)
     control_layer: ControlLayerId = ControlLayerId.ARDUPILOT
+    waves: Optional[Tuple[float, float]] = None  # amplitude in m and period in s of regular waves travelling east
 
     @property
     def custom(self) -> bool:
@@ -100,7 +102,25 @@ class StackRunSpec:
 
     def label(self) -> str:
         control = "-custom" if self.custom else ""
-        return f"{self.simulation_layer.value}{control}-{self.drive}-{self.reference}{'-from-rest' if self.from_rest else ''}-{self.scale}-{self.speedup}x"
+        waves = f"-waves-{self.waves[0]:g}m-{self.waves[1]:g}s" if self.waves else ""
+        return f"{self.simulation_layer.value}{control}-{self.drive}-{self.reference}{'-from-rest' if self.from_rest else ''}{waves}-{self.scale}-{self.speedup}x"
+
+
+@dataclass(frozen=True)
+class HullMotion:
+    """Peak-to-peak hull motion over a run, from the odometry of every control step (what waves move)."""
+
+    heave_m: float
+    roll_deg: float
+    pitch_deg: float
+
+    @classmethod
+    def from_odometry(cls, hulls: Sequence[Any]) -> "HullMotion":
+        z = np.array([hull.z for hull in hulls])
+        qx, qy, qz, qw = (np.array([getattr(hull, name) for hull in hulls]) for name in ("qx", "qy", "qz", "qw"))
+        roll = np.degrees(np.arctan2(2.0 * (qw * qx + qy * qz), 1.0 - 2.0 * (qx * qx + qy * qy)))
+        pitch = np.degrees(np.arcsin(np.clip(2.0 * (qw * qy - qz * qx), -1.0, 1.0)))
+        return cls(heave_m=float(np.ptp(z)), roll_deg=float(np.ptp(roll)), pitch_deg=float(np.ptp(pitch)))
 
 
 @dataclass
@@ -114,6 +134,7 @@ class RepeatResult:
     logs: str = ""
     tracking: Optional[TrackingSummary] = None  # replay and usv_navigation drives: how closely the vessel followed its reference
     late_commands: Optional[int] = None  # custom controller only: thrusts that missed their control step's first iteration
+    motion: Optional[HullMotion] = None  # custom controller only: heave, roll and pitch from the odometry
 
     @property
     def ok(self) -> bool:
@@ -195,12 +216,13 @@ class StackMeasurement:
         spec = self.spec
         late = sum(repeat.late_commands or 0 for repeat in self.ok_repeats)
         note = evidence(
-            f"{spec.drive} drive of a {spec.reference} {spec.scale} run ({spec.duration_s} s) on gazebo with the custom control layer",
+            f"{spec.drive} drive of a {spec.reference} {spec.scale} run ({spec.duration_s} s){_waves_text(spec)} on gazebo with the custom control layer",
             achieved=f"{self.achieved:.2f}x" if self.achieved else "unknown",
             repeats=len(self.ok_repeats),
             digests="identical" if self.bit_identical else "differ",
             late_commands=late,
             max_deviation_m=f"{self.deviation.max_m:.6f}" if self.deviation else "n/a",
+            **self._motion_fields(),
         )
         fields: Dict[str, Any] = {"evidence": note}
         if len(self.ok_repeats) >= 2:
@@ -210,6 +232,20 @@ class StackMeasurement:
         if self.achieved:
             fields["host_max_speedup"] = {host_label(): float(self.achieved)}
         return MeasuredEntry(GZ_TRANSPORT_ACTUATOR.id, fields)
+
+    def _motion_fields(self) -> Dict[str, str]:
+        motions = [repeat.motion for repeat in self.ok_repeats if repeat.motion is not None]
+        if not motions:
+            return {}
+        return {
+            "heave_m": f"{max(motion.heave_m for motion in motions):.3f}",
+            "pitch_deg": f"{max(motion.pitch_deg for motion in motions):.2f}",
+            "roll_deg": f"{max(motion.roll_deg for motion in motions):.2f}",
+        }
+
+
+def _waves_text(spec: StackRunSpec) -> str:
+    return f" in {spec.waves[0]:g} m, {spec.waves[1]:g} s waves" if spec.waves else ""
 
 
 @contextmanager
@@ -238,6 +274,20 @@ def host_assets_replacements() -> List[Tuple[str, str]]:
     return [(old, CONTAINER_ASSETS) for old in sorted(set(spellings), key=len, reverse=True)]
 
 
+def run_environment(spec: StackRunSpec):
+    """The environment of a run: calm, with the spec's wind and its waves (travelling east, deep water)."""
+    from scenegems_tool.vessel_stack.contracts.vessel_stack_config import EnvironmentConfig, WaveConfig
+
+    environment = EnvironmentConfig.calm()
+    if spec.wind is not None:
+        environment.wind_vector = np.array([spec.wind[0], spec.wind[1], 0.0])
+    if spec.waves is not None:
+        amplitude, period = spec.waves
+        phase_speed = 9.81 * period / (2.0 * math.pi)  # deep water; the direction's length is the wave speed
+        environment.wave = WaveConfig(amplitude=amplitude, period=period, steepness=0.0, direction=np.array([phase_speed, 0.0]))
+    return environment
+
+
 def prepare_run_folder(
     spec: StackRunSpec,
     trajectories: Trajectories,
@@ -246,11 +296,7 @@ def prepare_run_folder(
     repo_entrypoints: bool = False,
 ) -> Tuple[str, Dict[str, str], Any]:
     """Generate the stack of one repeat under `folder`. Returns the compose file, the endpoint by agent id and the instance."""
-    from scenegems_tool.vessel_stack.contracts.vessel_stack_config import EnvironmentConfig
-
-    environment = EnvironmentConfig.calm()
-    if spec.wind is not None:
-        environment.wind_vector = np.array([spec.wind[0], spec.wind[1], 0.0])
+    environment = run_environment(spec)
     asv_software = {vessel.id: AsvSoftwareId.USV_NAVIGATION for vessel in trajectories.initial_scene.vessels} if spec.drive == "usv_navigation" else None
     if spec.custom:
         instance = gz_custom_instance(trajectories, asv_software, environment=environment, speedup=spec.speedup)
@@ -361,6 +407,7 @@ def _drive_gz_custom(trajectories: Trajectories, instance, endpoints: Dict[str, 
         wall_s=result.wall_s,
         tracking=tracking,
         late_commands=result.late_commands,
+        motion=HullMotion.from_odometry(hulls),
     )
 
 
@@ -412,10 +459,15 @@ def _validate(spec: StackRunSpec) -> None:
         raise ValueError("the custom controller runs on gazebo with the replay or usv_navigation drive")
 
 
+def compose_project_name(spec: StackRunSpec, index: int) -> str:
+    """The Compose project of one repeat: its label in the characters Compose allows (a wave amplitude of 0.5 m has a dot)."""
+    return re.sub(r"[^a-z0-9-]", "-", f"calib-{spec.label()}-{index}".lower())
+
+
 def _run_repeat(spec: StackRunSpec, trajectories: Trajectories, prepared: Tuple[str, Dict[str, str], Any], index: int, resolver: StackResolver, keep_stacks: bool) -> RepeatResult:
     """Start one copy of the stack, drive it, and remove it. A failure is returned as data with the container logs."""
     compose_file, endpoints, instance = prepared
-    compose = _Compose(compose_file, f"calib-{spec.label()}-{index}".lower().replace("_", "-"))
+    compose = _Compose(compose_file, compose_project_name(spec, index))
     try:
         compose.up()
         if spec.custom:

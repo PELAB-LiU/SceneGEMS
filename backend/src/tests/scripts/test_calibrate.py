@@ -26,6 +26,11 @@ def test_stack_arguments():
     assert args.duration is None, "each reference run and scale has its own duration (reference_scenarios.default_duration)"
 
 
+def test_stack_arguments_of_the_phase_2_measurements():
+    args = calibrate.build_parser().parse_args(["stack", "--layer", "gazebo", "--control", "custom", "--drive", "usv_navigation", "--scale", "5m", "100m", "--from-rest", "--waves", "0.5", "5"])
+    assert (args.control, args.drive, args.scale, args.from_rest, args.waves) == ("custom", "usv_navigation", ["5m", "100m"], True, [0.5, 5.0])
+
+
 def test_unknown_layer_is_rejected():
     with pytest.raises(SystemExit):
         calibrate.build_parser().parse_args(["stack", "--layer", "kinematic"])
