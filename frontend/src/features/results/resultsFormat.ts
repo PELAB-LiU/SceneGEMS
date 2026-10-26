@@ -1,0 +1,98 @@
+/** Formatting helpers of the Results section. */
+
+/** Seconds as `12.5 s`, or `1 min 05 s` from a minute on; a dash for no value. */
+export function formatSeconds(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return "-";
+  }
+  if (Math.abs(value) < 60) {
+    return `${Number(value.toFixed(2))} s`;
+  }
+  const minutes = Math.floor(value / 60);
+  const seconds = Math.round(value - minutes * 60);
+  return `${minutes} min ${String(seconds).padStart(2, "0")} s`;
+}
+
+export function formatBytes(value: number | null | undefined): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (value < 1024) {
+    return `${value} B`;
+  }
+  const units = ["KiB", "MiB", "GiB"];
+  let scaled = value / 1024;
+  let unit = 0;
+  while (scaled >= 1024 && unit < units.length - 1) {
+    scaled /= 1024;
+    unit += 1;
+  }
+  return `${scaled.toFixed(scaled < 10 ? 1 : 0)} ${units[unit]}`;
+}
+
+export function shortHash(value: string | null | undefined, length = 10): string {
+  if (!value) {
+    return "-";
+  }
+  return value.length <= length ? value : value.slice(0, length);
+}
+
+/** An ISO time as `2026-10-26 09:00:05` in the browser's zone. */
+export function formatTime(iso: string | null | undefined): string {
+  if (!iso) {
+    return "-";
+  }
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return iso;
+  }
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+/** The last part of a class id (`folder/name`) with the folder kept short. */
+export function shortClassId(classId: string, maxLength = 42): string {
+  return classId.length <= maxLength ? classId : `...${classId.slice(classId.length - maxLength + 3)}`;
+}
+
+/** `repeat 2 of run 1` style label of a run and its repeat. */
+export function runLabel(runIndex: number | null, repeatIndex?: number | null): string {
+  if (runIndex === null) {
+    return "-";
+  }
+  return repeatIndex === null || repeatIndex === undefined ? `run ${runIndex}` : `run ${runIndex}, repeat ${repeatIndex}`;
+}
+
+/** A compact text of a record's stack (`kinematic usv_navigation`) from its JSON. */
+export function describeStack(stack: Record<string, unknown>): string {
+  const layer = typeof stack.simulation_layer === "string" ? stack.simulation_layer : null;
+  const mode = typeof stack.mode === "string" ? stack.mode : null;
+  const parts = [layer, mode].filter((part): part is string => part !== null);
+  return parts.length > 0 ? parts.join(" ") : JSON.stringify(stack);
+}
+
+/** Compass course in degrees (0 = north, clockwise) from a heading in radians counterclockwise from east. */
+export function compassCourse(headingRad: number): number {
+  const degrees = 90 - (headingRad * 180) / Math.PI;
+  return ((degrees % 360) + 360) % 360;
+}
+
+const KNOTS_PER_MS = 1.9438444924;
+
+export function metersPerSecondToKnots(value: number): number {
+  return value * KNOTS_PER_MS;
+}
+
+/** The roles of an artifact in a run record, the ones people look for first. */
+const ARTIFACT_ORDER = ["state_log", "frames", "trajectory_data"];
+
+export function sortedArtifacts(artifacts: Record<string, string>): [string, string][] {
+  return Object.entries(artifacts).sort(([a], [b]) => {
+    const ia = ARTIFACT_ORDER.indexOf(a);
+    const ib = ARTIFACT_ORDER.indexOf(b);
+    if (ia !== ib) {
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    }
+    return a.localeCompare(b);
+  });
+}
