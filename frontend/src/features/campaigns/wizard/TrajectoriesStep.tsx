@@ -1,0 +1,106 @@
+import { describeOperatorError } from "../../../domain/cluster/operatorApi";
+import { Field, FieldIssues, ParameterInput } from "./fields";
+import { reasonsOfEntry, splitByField } from "./reasons";
+import type { CatalogState, StepProps } from "./stepTypes";
+
+/** Trajectories: the generator and its parameters, built from the generators the master offers. */
+export function TrajectoriesStep({ draft, update, reasons, catalog }: StepProps & { catalog: CatalogState }) {
+  const generators = catalog.stacks?.trajectory_generators ?? [];
+  const generator = generators.find((entry) => entry.id === draft.trajectories.generator);
+  const own = reasonsOfEntry(reasons, null);
+  const paramKeys = generator?.parameters.map((parameter) => parameter.key) ?? [];
+  const { byField, rest } = splitByField(own, ["generator", "timeout_s", "params", ...paramKeys]);
+
+  const issuesOfParameter = (key: string) => [...(byField.get(key) ?? []), ...(byField.get("params")?.filter((reason) => reason.field === `params.${key}`) ?? [])];
+
+  if (catalog.stacksLoading) {
+    return <p className="meta" role="status">Loading the generators the master offers...</p>;
+  }
+  if (catalog.stacksError || !catalog.stacks) {
+    return (
+      <div className="wiz-error" role="alert">
+        <p>The master's generators did not load: {describeOperatorError(catalog.stacksError)}</p>
+        <button type="button" onClick={catalog.retry}>
+          Try again
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="wiz-step">
+      <fieldset className="wiz-choice">
+        <legend>Trajectory generator</legend>
+        {generators.map((entry) => (
+          <label key={entry.id} className={`wiz-option${draft.trajectories.generator === entry.id ? " wiz-option--on" : ""}`}>
+            <input
+              type="radio"
+              name="wiz-generator"
+              checked={draft.trajectories.generator === entry.id}
+              onChange={() =>
+                update((next) => {
+                  if (next.trajectories.generator !== entry.id) {
+                    next.trajectories.generator = entry.id;
+                    next.trajectories.parameters = {};
+                  }
+                })
+              }
+            />
+            <span>
+              <strong>{entry.label}</strong>
+              <span className="wiz-hint">{entry.description}</span>
+            </span>
+          </label>
+        ))}
+        {!generator && <p className="error">The master offers no generator {draft.trajectories.generator}. Choose one of the above.</p>}
+        <FieldIssues reasons={byField.get("generator")} />
+      </fieldset>
+
+      {generator && (
+        <section className="wiz-card" aria-label={`${generator.label} parameters`}>
+          <h4>{generator.label} parameters</h4>
+          <p className="meta">
+            {generator.params_field
+              ? "Only the values you enter are written to the config; the others keep the search's own defaults."
+              : "These values go into the trajectories section of the config."}
+          </p>
+          <div className="wiz-params">
+            {generator.parameters.map((parameter) => (
+              <ParameterInput
+                key={parameter.key}
+                parameter={parameter}
+                value={draft.trajectories.parameters[parameter.key]}
+                issues={issuesOfParameter(parameter.key)}
+                onChange={(value) =>
+                  update((next) => {
+                    if (value === undefined) {
+                      delete next.trajectories.parameters[parameter.key];
+                    } else {
+                      next.trajectories.parameters[parameter.key] = value;
+                    }
+                  })
+                }
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {generator?.common_parameters.map((parameter) => (
+        <ParameterInput
+          key={parameter.key}
+          parameter={parameter}
+          value={draft.trajectories.timeoutS}
+          issues={byField.get(parameter.key)}
+          onChange={(value) => update((next) => void (next.trajectories.timeoutS = typeof value === "number" ? value : null))}
+        />
+      ))}
+      {!generator && (
+        <Field label="timeout_s" hint="How long a trajectory generation job may take.">
+          <span className="meta">Choose a generator first.</span>
+        </Field>
+      )}
+      <FieldIssues reasons={rest} showField />
+    </div>
+  );
+}

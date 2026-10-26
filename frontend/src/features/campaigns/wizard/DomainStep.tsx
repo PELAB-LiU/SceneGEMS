@@ -1,0 +1,145 @@
+import { useState } from "react";
+import { ConstraintsEditor } from "../../workbench/controls/constraintsEditor";
+import { startingDomainTexts, type DomainTexts } from "./domainTexts";
+import { Field, FieldIssues, NumberField } from "./fields";
+import { reasonsOfEntry, splitByField } from "./reasons";
+import type { StepProps } from "./stepTypes";
+
+type TextKey = keyof DomainTexts;
+
+const TEXT_TABS: { key: TextKey; field: string; label: string; protectedRows?: string[] }[] = [
+  { key: "colregsConstants", field: "colregs_constants", label: "COLREGS constants" },
+  { key: "vesselTypes", field: "vessel_types", label: "Vessel types", protectedRows: ["UnspecifiedVesselType"] },
+  { key: "obstacleTypes", field: "obstacle_types", label: "Obstacle types", protectedRows: ["UnspecifiedObstacleType"] },
+];
+
+const SOURCE_LABELS: Record<TextKey, string> = {
+  colregsConstants: "COLREGS constants",
+  vesselTypes: "vessel types",
+  obstacleTypes: "obstacle types",
+};
+
+/** Domain: the master's defaults, or customized COLREGS constants, vessel types and obstacle types stored in the campaign. */
+export function DomainStep({ draft, update, reasons }: StepProps) {
+  const [tab, setTab] = useState<TextKey>("colregsConstants");
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [source, setSource] = useState<string | null>(null);
+  const { domain } = draft;
+  const own = splitByField(reasonsOfEntry(reasons, null), ["colregs_constants", "vessel_types", "obstacle_types", "scene_generation_timeout_s", "enforce_low_tcpa"]);
+
+  const loadStart = async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const { texts, fromWorkbench } = await startingDomainTexts();
+      update((next) => {
+        next.domain.colregsConstants = texts.colregsConstants;
+        next.domain.vesselTypes = texts.vesselTypes;
+        next.domain.obstacleTypes = texts.obstacleTypes;
+      });
+      setSource(
+        fromWorkbench.length === 0
+          ? "the app's presets (the workbench has no texts of its own)"
+          : fromWorkbench.length === 3
+            ? "the workbench's current texts"
+            : `the workbench's ${fromWorkbench.map((key) => SOURCE_LABELS[key]).join(" and ")}, and the presets for the rest`
+      );
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const chooseCustom = (custom: boolean) => {
+    update((next) => void (next.domain.custom = custom));
+    if (custom && domain.colregsConstants.trim() === "" && domain.vesselTypes.trim() === "" && domain.obstacleTypes.trim() === "") {
+      void loadStart();
+    }
+  };
+
+  const active = TEXT_TABS.find((entry) => entry.key === tab) ?? TEXT_TABS[0];
+
+  return (
+    <div className="wiz-step">
+      <fieldset className="wiz-choice">
+        <legend>Domain content</legend>
+        <label className={`wiz-option${domain.custom ? "" : " wiz-option--on"}`}>
+          <input type="radio" name="wiz-domain" checked={!domain.custom} onChange={() => chooseCustom(false)} />
+          <span>
+            <strong>Use the master's defaults</strong>
+            <span className="wiz-hint">The three texts are left out of the config. The master fills them from its own domain files when the campaign is created, and the campaign keeps what it filled in.</span>
+          </span>
+        </label>
+        <label className={`wiz-option${domain.custom ? " wiz-option--on" : ""}`}>
+          <input type="radio" name="wiz-domain" checked={domain.custom} onChange={() => chooseCustom(true)} />
+          <span>
+            <strong>Customize</strong>
+            <span className="wiz-hint">Edit the COLREGS constants, vessel types and obstacle types here, starting from the workbench's current texts.</span>
+          </span>
+        </label>
+      </fieldset>
+
+      {domain.custom && (
+        <section className="wiz-card" aria-label="Customized domain content">
+          <p className="wiz-notice" role="note">
+            Customized content is stored in the campaign: it becomes part of the campaign's config and its hash, so every case of this campaign uses exactly these texts, whatever the master's files say later or the workbench holds.
+          </p>
+          <div className="wiz-domain-bar">
+            <div className="ce-tabs" role="tablist" aria-label="Domain files">
+              {TEXT_TABS.map((entry) => {
+                const issues = own.byField.get(entry.field);
+                return (
+                  <button key={entry.key} type="button" role="tab" aria-selected={tab === entry.key} className={`ce-tab${tab === entry.key ? " active" : ""}`} onClick={() => setTab(entry.key)}>
+                    {entry.label}
+                    {issues && issues.length > 0 && <span className="ce-tab-flag" title="This text has a problem">!</span>}
+                  </button>
+                );
+              })}
+            </div>
+            <span className="wiz-domain-actions">
+              {source && <span className="meta">Started from {source}.</span>}
+              <button type="button" onClick={() => void loadStart()} disabled={loading} title="Replace the three texts with the workbench's current ones">
+                {loading ? "Loading..." : "Start again from the workbench"}
+              </button>
+            </span>
+          </div>
+          {loadError && <p className="error" role="alert">{loadError}</p>}
+          <FieldIssues reasons={own.byField.get(active.field)} />
+          <div className="wiz-editor" role="tabpanel" aria-label={active.label}>
+            <ConstraintsEditor
+              key={active.key}
+              text={domain[active.key]}
+              onTextChange={(text) => update((next) => void (next.domain[active.key] = text))}
+              label={active.label}
+              protectedRows={active.protectedRows}
+              tableMinRows={active.protectedRows ? 1 : undefined}
+            />
+          </div>
+        </section>
+      )}
+
+      <div className="wiz-row">
+        <Field label="Scene generation timeout" htmlFor="wiz-scene-timeout" hint="The generation's own time limit for one scene." issues={own.byField.get("scene_generation_timeout_s")}>
+          <NumberField
+            id="wiz-scene-timeout"
+            integer
+            min={1}
+            suffix="s"
+            value={domain.sceneGenerationTimeoutS}
+            invalid={own.byField.has("scene_generation_timeout_s")}
+            onChange={(value) => update((next) => void (next.domain.sceneGenerationTimeoutS = value))}
+          />
+        </Field>
+        <Field label="Enforce low TCPA" htmlFor="wiz-low-tcpa" hint="Scenes are generated with the low time to the closest point of approach enforced." issues={own.byField.get("enforce_low_tcpa")}>
+          <label className="wiz-check">
+            <input id="wiz-low-tcpa" type="checkbox" checked={domain.enforceLowTcpa} onChange={(event) => update((next) => void (next.domain.enforceLowTcpa = event.target.checked))} />
+            enforce_low_tcpa
+          </label>
+        </Field>
+      </div>
+      <FieldIssues reasons={own.rest} showField />
+    </div>
+  );
+}
