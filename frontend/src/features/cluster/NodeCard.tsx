@@ -1,0 +1,200 @@
+import { useState } from "react";
+import { createOperatorClient, describeOperatorError } from "../../domain/cluster/operatorApi";
+import { useNodesStore } from "../../domain/cluster/nodesStore";
+import type { NodeView } from "../../domain/cluster/schemas";
+import {
+  formatAge,
+  formatMegabytes,
+  jobTypeLabel,
+  memoryUseFraction,
+  nodeSlotTotals,
+  shortHash,
+} from "./clusterFormat";
+
+interface MeterProps {
+  value: number;
+  max: number;
+  label: string;
+}
+
+function Meter({ value, max, label }: MeterProps) {
+  const fraction = max > 0 ? Math.min(1, value / max) : 0;
+  const level = fraction >= 1 ? "full" : fraction >= 0.75 ? "high" : fraction > 0 ? "used" : "empty";
+  return (
+    <span className={`node-meter node-meter--${level}`} role="meter" aria-label={label} aria-valuenow={value} aria-valuemin={0} aria-valuemax={max}>
+      <span className="node-meter-fill" style={{ width: `${Math.round(fraction * 100)}%` }} />
+    </span>
+  );
+}
+
+interface NodeCardProps {
+  node: NodeView;
+  operatorUrl: string;
+  nowMs: number;
+}
+
+/** One node of the cluster as a machine resource: state, slots, resources, leases and release. */
+export function NodeCard({ node, operatorUrl, nowMs }: NodeCardProps) {
+  const applyNode = useNodesStore((s) => s.applyNode);
+  const [pending, setPending] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const totals = nodeSlotTotals(node);
+  const capabilities = Object.entries(node.capabilities).sort(([a], [b]) => a.localeCompare(b));
+  const labels = Object.entries(node.labels).sort(([a], [b]) => a.localeCompare(b));
+  const { resources } = node;
+  const memoryUsed = resources.memory_mb - resources.free_memory_mb;
+  const draining = node.status === "draining";
+
+  const toggleDrain = async () => {
+    setPending(true);
+    setActionError(null);
+    try {
+      const client = createOperatorClient(operatorUrl);
+      applyNode(draining ? await client.resumeNode(node.node_id) : await client.drainNode(node.node_id));
+    } catch (error) {
+      setActionError(describeOperatorError(error));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <article className={`node-card node-card--${node.status}${node.out_of_date ? " node-card--stale" : ""}`}>
+      <header className="node-card-head">
+        <span
+          className={`node-dot${node.connected ? " node-dot--connected" : ""}`}
+          title={node.connected ? "Connected to the master" : "Not connected"}
+          aria-label={node.connected ? "connected" : "not connected"}
+        />
+        <div className="node-card-title">
+          <span className="node-card-name" title={node.node_id}>
+            {node.name}
+          </span>
+          <span className="node-card-machine">
+            {node.machine ? `on ${node.machine}` : "machine not reported"}
+          </span>
+        </div>
+        <span className={`node-status node-status--${node.status}`}>{node.status}</span>
+        <button
+          type="button"
+          className="node-card-action"
+          disabled={pending || node.status === "offline"}
+          onClick={() => void toggleDrain()}
+          title={draining ? "Let the node receive jobs again" : "No new jobs for this node; running ones finish"}
+        >
+          {pending ? "..." : draining ? "Resume" : "Drain"}
+        </button>
+      </header>
+
+      {actionError && <p className="meta warning node-card-error">{actionError}</p>}
+
+      {node.out_of_date && (
+        <div className="node-stale" role="status">
+          <strong>Out of date:</strong> its images differ from the master's release.
+          <ul className="node-stale-list">
+            {node.fingerprint_mismatches.map((mismatch) => (
+              <li key={mismatch.image}>
+                <code>{mismatch.image}</code> needs <code title={mismatch.required}>{shortHash(mismatch.required)}</code>
+                {mismatch.actual === null ? (
+                  ", missing on the node"
+                ) : (
+                  <>
+                    , has <code title={mismatch.actual}>{shortHash(mismatch.actual)}</code>
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="node-card-block">
+        <div className="node-card-block-head">
+          <span>Capabilities</span>
+          <span className="node-card-block-total">
+            {totals.inUse} / {totals.slots} slots in use
+          </span>
+        </div>
+        {capabilities.length === 0 ? (
+          <p className="meta">No capabilities reported.</p>
+        ) : (
+          <ul className="node-capabilities">
+            {capabilities.map(([jobType, usage]) => (
+              <li key={jobType} className="node-capability">
+                <span className="node-capability-name" title={jobType}>
+                  {jobTypeLabel(jobType)}
+                </span>
+                <Meter value={usage.slots_in_use} max={usage.slots} label={`${jobTypeLabel(jobType)} slots in use`} />
+                <span className="node-capability-count">
+                  {usage.slots_in_use}/{usage.slots}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <dl className="node-facts">
+        <div>
+          <dt>CPUs</dt>
+          <dd>
+            {resources.cpus} <span className="node-fact-sub">load {resources.load_average.toFixed(2)}</span>
+          </dd>
+        </div>
+        <div>
+          <dt>Memory</dt>
+          <dd>
+            <Meter value={memoryUsed} max={resources.memory_mb} label="Memory in use" />
+            <span className="node-fact-sub">
+              {formatMegabytes(memoryUsed)} of {formatMegabytes(resources.memory_mb)} used
+              {memoryUseFraction(resources.memory_mb, resources.free_memory_mb) >= 0.9 ? " (low)" : ""}
+            </span>
+          </dd>
+        </div>
+        <div>
+          <dt>Disk free</dt>
+          <dd>{formatMegabytes(resources.free_disk_mb)}</dd>
+        </div>
+        <div>
+          <dt>Leases</dt>
+          <dd title={node.leases.join("\n") || undefined}>
+            {node.leases.length === 0 ? "none" : node.leases.length}
+          </dd>
+        </div>
+        <div>
+          <dt>Revision</dt>
+          <dd>
+            <code title={node.software_revision}>{shortHash(node.software_revision, 10)}</code>
+          </dd>
+        </div>
+        <div>
+          <dt>Last seen</dt>
+          <dd title={node.last_seen_at}>{formatAge(node.last_seen_at, nowMs)}</dd>
+        </div>
+      </dl>
+
+      {labels.length > 0 && (
+        <ul className="node-labels" aria-label="Labels">
+          {labels.map(([key, value]) => (
+            <li key={key} className="node-label">
+              {key}={value}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {node.leases.length > 0 && (
+        <details className="node-leases">
+          <summary>Leases ({node.leases.length})</summary>
+          <ul>
+            {node.leases.map((lease) => (
+              <li key={lease}>
+                <code>{lease}</code>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </article>
+  );
+}

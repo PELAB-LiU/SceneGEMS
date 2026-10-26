@@ -28,6 +28,45 @@ export type SceneViewMode = "cartesian" | "nautical";
 export type SceneGenerationTab = "single" | "batch";
 /** Scene generation right pane: the specification editor or the monitor preview of the displayed scene. */
 export type SceneGenerationPaneView = "specification" | "monitor";
+/** Top-level sections of the left pane. */
+export type AppSection = "workbench" | "cluster" | "campaigns" | "observe" | "results";
+/** Views inside the workbench section (its sub-navigation). */
+export type WorkbenchView =
+  | "simulation"
+  | "waraps"
+  | "domainConfig"
+  | "sceneGeneration"
+  | "trajectoryGeneration";
+
+export const APP_SECTIONS: readonly AppSection[] = ["workbench", "cluster", "campaigns", "observe", "results"];
+export const WORKBENCH_VIEWS: readonly WorkbenchView[] = [
+  "domainConfig",
+  "sceneGeneration",
+  "trajectoryGeneration",
+  "simulation",
+  "waraps",
+];
+
+/** Where the workbench kept its view before v4 (`usePersistedState("active-view")`). */
+export const LEGACY_ACTIVE_VIEW_KEY = "scenegems:active-view";
+
+function isWorkbenchView(value: unknown): value is WorkbenchView {
+  return typeof value === "string" && (WORKBENCH_VIEWS as readonly string[]).includes(value);
+}
+
+/** The view the workbench persisted under its old key, or null when there is none. */
+export function readLegacyWorkbenchView(): WorkbenchView | null {
+  try {
+    const raw = globalThis.localStorage?.getItem(LEGACY_ACTIVE_VIEW_KEY);
+    if (raw == null) {
+      return null;
+    }
+    const value: unknown = JSON.parse(raw);
+    return isWorkbenchView(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
 
 const defaultOverlays: OverlayVisibility = {
   dot: true,
@@ -40,6 +79,12 @@ const defaultOverlays: OverlayVisibility = {
 };
 
 interface UiState {
+  /** Left pane section shown in the main area. */
+  section: AppSection;
+  setSection: (section: AppSection) => void;
+  /** Workbench view; selecting one also shows the workbench section. */
+  workbenchView: WorkbenchView;
+  setWorkbenchView: (view: WorkbenchView) => void;
   controlPanelMode: ControlPanelMode;
   setControlPanelMode: (mode: ControlPanelMode) => void;
   /** Whether the entire right-hand monitoring panel is shown (vs fully hidden, occupying no space). */
@@ -95,6 +140,10 @@ interface UiState {
 export const useUiStore = create<UiState>()(
   persist(
     (set) => ({
+  section: "workbench",
+  setSection: (section) => set({ section }),
+  workbenchView: readLegacyWorkbenchView() ?? "simulation",
+  setWorkbenchView: (workbenchView) => set({ workbenchView }),
   controlPanelMode: "animation",
   setControlPanelMode: (mode) => set({ controlPanelMode: mode }),
   rightPaneVisible: true,
@@ -145,17 +194,28 @@ export const useUiStore = create<UiState>()(
     }),
     {
       name: "scenegems:ui",
-      version: 3,
+      version: 4,
       // v2: the monitor tab moved to the Connections page.
       // v3: persist monitor section collapse and preview/simulation column visibility.
+      // v4: sections; the workbench view moved here from its own "active-view" key.
       migrate: (persisted, version) => {
-        const state = (persisted ?? {}) as { controlPanelMode?: string };
+        const state = (persisted ?? {}) as {
+          controlPanelMode?: string;
+          section?: AppSection;
+          workbenchView?: WorkbenchView;
+        };
         if (version < 2 && state.controlPanelMode === "monitor") {
           state.controlPanelMode = "animation";
+        }
+        if (version < 4) {
+          state.section = "workbench";
+          state.workbenchView = readLegacyWorkbenchView() ?? "simulation";
         }
         return state as UiState;
       },
       partialize: (state) => ({
+        section: state.section,
+        workbenchView: state.workbenchView,
         controlPanelMode: state.controlPanelMode,
         sceneViewMode: state.sceneViewMode,
         sceneGenerationTab: state.sceneGenerationTab,
