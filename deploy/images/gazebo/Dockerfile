@@ -53,6 +53,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgz-msgs10-dev \
     libgz-plugin2-dev \
     libgz-transport13-dev \
+    # Python bindings of the gz-transport actuator (custom control layer)
+    python3-gz-transport13 \
+    python3-gz-msgs10 \
     && rm -rf /var/lib/apt/lists/*
 
 # 4. Build ArduPilot Gazebo Plugin at the pinned commit: the head of
@@ -107,6 +110,9 @@ ENV LC_NUMERIC=C
 
 COPY deploy/images/gazebo/gazebo_entrypoint_prod.sh /scripts/entrypoint.sh
 RUN chmod +x /scripts/entrypoint.sh
+# The gz-transport actuator of the custom control layer runs next to gz sim (the entrypoint starts
+# it when GZ_ACTUATOR_PORT is set). It imports only the standard library and the gz bindings.
+COPY backend/src/scenegems_tool/vessel_stack/simulation_layers/gazebo/gz_transport_actuator.py /scripts/gz_transport_actuator.py
 
 # 7. apt and Python packages are not pinned: record the installed versions so a node can report them.
 RUN mkdir -p /etc/scenegems/package_versions && \

@@ -28,6 +28,11 @@ def _f(value: float) -> str:
     return np.format_float_positional(float(value), precision=6, unique=False, fractional=False, trim="-")
 
 
+def sdf_value(value: float) -> float:
+    """The value Gazebo reads back from the SDF: rounded as _f writes it."""
+    return float(_f(value))
+
+
 def _inertia(ixx: float, iyy: float, izz: float) -> str:
     return f"<ixx>{_f(ixx)}</ixx><iyy>{_f(iyy)}</iyy><izz>{_f(izz)}</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>"
 
@@ -104,7 +109,10 @@ def render_vessel_model(d: VesselDynamics, agent_name: str, vessel_id: int, cont
       <thrust_coefficient>{_f(d.thrust_coefficient)}</thrust_coefficient>
       <fluid_density>1025</fluid_density>
       <propeller_diameter>{_f(d.propeller_diameter)}</propeller_diameter>
-      <velocity_control>0</velocity_control>
+      <!-- The propeller turns at the speed of the thrust (no propeller PID torque on the hull), and the
+           system publishes that speed on .../ang_vel every iteration: the gz-transport actuator checks
+           with it that a thrust command was in effect from the step's first iteration. -->
+      <velocity_control>1</velocity_control>
       <use_angvel_cmd>0</use_angvel_cmd>
       <max_thrust_cmd>{_f(d.max_thrust)}</max_thrust_cmd>
       <min_thrust_cmd>{_f(-d.max_thrust)}</min_thrust_cmd>

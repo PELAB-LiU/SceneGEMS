@@ -140,7 +140,10 @@
       <thrust_coefficient>0.00759909</thrust_coefficient>
       <fluid_density>1025</fluid_density>
       <propeller_diameter>1.08</propeller_diameter>
-      <velocity_control>0</velocity_control>
+      <!-- The propeller turns at the speed of the thrust (no propeller PID torque on the hull), and the
+           system publishes that speed on .../ang_vel every iteration: the gz-transport actuator checks
+           with it that a thrust command was in effect from the step's first iteration. -->
+      <velocity_control>1</velocity_control>
       <use_angvel_cmd>0</use_angvel_cmd>
       <max_thrust_cmd>308127</max_thrust_cmd>
       <min_thrust_cmd>-308127</min_thrust_cmd>
@@ -165,7 +168,10 @@
       <thrust_coefficient>0.00759909</thrust_coefficient>
       <fluid_density>1025</fluid_density>
       <propeller_diameter>1.08</propeller_diameter>
-      <velocity_control>0</velocity_control>
+      <!-- The propeller turns at the speed of the thrust (no propeller PID torque on the hull), and the
+           system publishes that speed on .../ang_vel every iteration: the gz-transport actuator checks
+           with it that a thrust command was in effect from the step's first iteration. -->
+      <velocity_control>1</velocity_control>
       <use_angvel_cmd>0</use_angvel_cmd>
       <max_thrust_cmd>308127</max_thrust_cmd>
       <min_thrust_cmd>-308127</min_thrust_cmd>

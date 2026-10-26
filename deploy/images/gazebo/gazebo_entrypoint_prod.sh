@@ -6,6 +6,15 @@ GZ_HEADLESS="${GZ_HEADLESS:-1}"
 GZ_VERBOSE="${GZ_VERBOSE:-4}"
 DISPLAY_VALUE="${DISPLAY:-}"
 MODELS_DIR="${MODELS_DIR:-/models}"
+# GZ_START_PAUSED=1: the world waits for a runner to step it (custom control layer), so gz sim
+# starts without -r. GZ_ACTUATOR_PORT: start the gz-transport actuator on that port once the
+# world is ready (vessel_stack/simulation_layers/gazebo/gz_transport_actuator.py).
+GZ_START_PAUSED="${GZ_START_PAUSED:-0}"
+GZ_ACTUATOR_PORT="${GZ_ACTUATOR_PORT:-}"
+run_args=(-r)
+if [[ "${GZ_START_PAUSED}" == "1" ]]; then
+    run_args=()
+fi
 
 # Qt dark mode (Fusion + qt5ct)
 export QT_STYLE_OVERRIDE=Fusion
@@ -15,16 +24,16 @@ export QT_QPA_PLATFORMTHEME=qt5ct
 
 if [[ "${GZ_HEADLESS}" == "1" || "${GZ_HEADLESS}" == "true" || "${GZ_HEADLESS}" == "TRUE" ]]; then
     echo "Starting Gazebo Harmonic in headless server mode..."
-    gz sim -s -r -v"${GZ_VERBOSE}" "${WORLD_SDF:-/worlds/ocean.sdf}" &
+    gz sim -s "${run_args[@]}" -v"${GZ_VERBOSE}" "${WORLD_SDF:-/worlds/ocean.sdf}" &
 else
     # Git Bash on Windows can set DISPLAY to placeholders like "needs-to-be-defined".
     # In that case GUI fails hard, so keep runtime alive by falling back to headless.
     if [[ -z "${DISPLAY_VALUE}" || "${DISPLAY_VALUE}" == "needs-to-be-defined" ]]; then
         echo "GUI requested but DISPLAY is invalid ('${DISPLAY_VALUE:-<empty>}'); falling back to headless."
-        gz sim -s -r -v"${GZ_VERBOSE}" "${WORLD_SDF:-/worlds/ocean.sdf}" &
+        gz sim -s "${run_args[@]}" -v"${GZ_VERBOSE}" "${WORLD_SDF:-/worlds/ocean.sdf}" &
     else
         echo "Starting Gazebo Harmonic with GUI (DISPLAY=${DISPLAY_VALUE})..."
-        gz sim -r -v"${GZ_VERBOSE}" "${WORLD_SDF:-/worlds/ocean.sdf}" &
+        gz sim "${run_args[@]}" -v"${GZ_VERBOSE}" "${WORLD_SDF:-/worlds/ocean.sdf}" &
     fi
 fi
 
@@ -54,6 +63,11 @@ if [[ "${spawn_ready}" -ne 1 ]]; then
     exit 1
 fi
 echo "Gazebo world is ready; ${SPAWN_SERVICE} is advertised."
+
+if [[ -n "${GZ_ACTUATOR_PORT}" ]]; then
+    echo "Starting the gz-transport actuator on port ${GZ_ACTUATOR_PORT}..."
+    python3 /scripts/gz_transport_actuator.py --port "${GZ_ACTUATOR_PORT}" &
+fi
 
 wait "${GZ_PID}"
 

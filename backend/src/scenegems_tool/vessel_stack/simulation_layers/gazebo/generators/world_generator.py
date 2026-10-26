@@ -8,6 +8,8 @@ from scenegems_tool.vessel_stack.contracts.vessel_stack_config import WaveConfig
 from scenegems_tool.vessel_stack.simulation_layers.gazebo.generators.vessel_dynamics import WIND_FORCE_SCALING
 from utils.global_constants import MAX_COORD
 
+PHYSICS_STEP_S = 0.005  # max_step_size of the world; a runner that steps the world counts iterations of it
+
 
 def _vessel_include(uri: str, state: ActorState) -> str:
     """Include a generated vessel model by URI and place it via the world (model stays pose-free)."""
@@ -42,8 +44,22 @@ def _waves_block(wave: WaveConfig) -> str:
     </model>"""
 
 
-def generate_world(center: np.ndarray, vessel_includes: List[Tuple[str, ActorState]], wind_vector: np.ndarray, wave: WaveConfig, speed_factor: int, headless: bool, wave_forces: bool = False) -> str:
-    """The ocean world; wave_forces (gazebo_specs.wave_forces_enabled) swaps flat buoyancy for the asv_wave_sim wave field."""
+def generate_world(
+    center: np.ndarray,
+    vessel_includes: List[Tuple[str, ActorState]],
+    wind_vector: np.ndarray,
+    wave: WaveConfig,
+    speed_factor: int,
+    headless: bool,
+    wave_forces: bool = False,
+    externally_stepped: bool = False,
+) -> str:
+    """The ocean world; wave_forces (gazebo_specs.wave_forces_enabled) swaps flat buoyancy for the asv_wave_sim wave field.
+
+    externally_stepped: a runner steps the paused world (gz_transport_actuator.py), so the real
+    time factor is 0 and gz-sim runs each requested iteration as fast as it can.
+    """
+    real_time_factor = 0 if externally_stepped else speed_factor
     vessel_block = "\n".join(_vessel_include(uri, state) for uri, state in vessel_includes)
 
     scene_broadcaster_block = (
@@ -81,8 +97,8 @@ def generate_world(center: np.ndarray, vessel_includes: List[Tuple[str, ActorSta
          multi-link / buoyancy-heavy setups. Use Bullet broadphase for collision detection. -->
     <physics name="1ms" type="ignored">
     <!-- Slightly smaller step helps constraint-heavy marine models (thrusters + buoyancy + hydro). -->
-    <max_step_size>0.005</max_step_size>
-    <real_time_factor>{speed_factor}</real_time_factor>
+    <max_step_size>{PHYSICS_STEP_S}</max_step_size>
+    <real_time_factor>{real_time_factor}</real_time_factor>
     <!-- <dart> 
       <collision_detector>bullet</collision_detector>
       <solver>

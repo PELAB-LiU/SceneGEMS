@@ -1,15 +1,35 @@
-"""Gazebo simulation layer adapter: the generated ocean world, one SDF model per vessel and the Gazebo service."""
+"""Gazebo simulation layer adapter: the generated ocean world, one SDF model per vessel and the Gazebo service.
+
+The vessels of one world are all driven by ArduPilot (SITL in lockstep with each model's
+ArduPilotPlugin, the world running on its own) or all by the custom controller (the world paused
+and stepped by the gz-transport actuator, gz_transport_actuator.py). One world cannot do both, so
+an instance that mixes the two control layers is rejected.
+"""
 
 from typing import List, Tuple
 
 from concrete_level.models.actor_state import ActorState
 from concrete_level.models.concrete_actors import ConcreteVessel
 from scenegems_tool.vessel_stack.contracts.docker_stack import DockerStackArtifacts, DockerStackRequest
-from scenegems_tool.vessel_stack.contracts.vessel_stack_config import VesselConfig
+from scenegems_tool.vessel_stack.contracts.roles import ControlLayerId
+from scenegems_tool.vessel_stack.contracts.vessel_stack_config import SimulationInstanceConfig, VesselConfig
+from scenegems_tool.vessel_stack.registry.resolver import StackUnavailableError
 from scenegems_tool.vessel_stack.simulation_layers.gazebo.gazebo_specs import GAZEBO_LAYER, wave_forces_enabled
 from scenegems_tool.vessel_stack.simulation_layers.gazebo.generators.gazebo_service_generator import generate_gazebo_service
 from scenegems_tool.vessel_stack.simulation_layers.gazebo.generators.vessel_model_generator import generate_vessel_model
 from scenegems_tool.vessel_stack.simulation_layers.gazebo.generators.world_generator import generate_world
+from scenegems_tool.vessel_stack.simulation_layers.gazebo.gz_transport_actuator import DEFAULT_PORT as ACTUATOR_PORT
+
+
+def externally_stepped(simulation: SimulationInstanceConfig) -> bool:
+    """Whether the world is stepped by the gz-transport actuator: its vessels are on the custom control layer.
+
+    Raises StackUnavailableError for an instance that mixes the custom and the ardupilot control layer.
+    """
+    layers = {vessel.stack.control_layer for vessel in simulation.simulated_vessels.values()}
+    if ControlLayerId.CUSTOM in layers and len(layers) > 1:
+        raise StackUnavailableError([f"a Gazebo world steps either with ArduPilot or with the custom controller, but this instance mixes {', '.join(sorted(layer.value for layer in layers))}"])
+    return layers == {ControlLayerId.CUSTOM}
 
 
 class GazeboWorldFiles:
@@ -33,7 +53,14 @@ class GazeboWorldFiles:
         lat_long = request.reference_geofence.to_lat_long(os_state.p)
         environment = request.simulation.environment
         world_model = generate_world(
-            lat_long, self._vessel_includes, environment.wind_vector, environment.wave, request.simulation.speedup, headless=request.headless, wave_forces=wave_forces_enabled(environment)
+            lat_long,
+            self._vessel_includes,
+            environment.wind_vector,
+            environment.wave,
+            request.simulation.speedup,
+            headless=request.headless,
+            wave_forces=wave_forces_enabled(environment),
+            externally_stepped=externally_stepped(request.simulation),
         )
         world_file = f"{request.gen_folder}/ocean_world.sdf"
         artifacts.pending_writes.append((world_file, world_model))
@@ -54,4 +81,9 @@ class GazeboSimulationLayer:
         # Gazebo waits for every agent name, real vessels included, exactly as before the
         # adapter framework, although a real vessel has no service (see the Phase 1 notes).
         agent_names = [vessel_config.require_connection().agent_name for vessel_config in request.simulation.vessels.values()]
-        artifacts.services.update(generate_gazebo_service(world_file, agent_names, headless=request.headless, display="host.docker.internal:0.0", verbose=4))
+        if externally_stepped(request.simulation):
+            # The custom controller runs in the runner, so no vessel has a service of its own.
+            services = generate_gazebo_service(world_file, [], headless=request.headless, display="host.docker.internal:0.0", verbose=4, actuator_port=ACTUATOR_PORT)
+        else:
+            services = generate_gazebo_service(world_file, agent_names, headless=request.headless, display="host.docker.internal:0.0", verbose=4)
+        artifacts.services.update(services)

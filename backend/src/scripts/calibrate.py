@@ -14,6 +14,7 @@ The library is scenegems_tool/vessel_stack/calibration/, which explains each mea
 """
 
 import argparse
+import itertools
 import json
 import sys
 import tempfile
@@ -22,8 +23,8 @@ from typing import List, Optional, Sequence
 from scenegems_tool.vessel_stack.calibration.kinematic_measurement import DEFAULT_HASH_SEEDS, measure_kinematic
 from scenegems_tool.vessel_stack.calibration.measured_entry import MeasuredEntry, render_yaml, write_yaml
 from scenegems_tool.vessel_stack.calibration.monitor_measurement import DEFAULT_CONSTANTS_FILE, measure_monitor
-from scenegems_tool.vessel_stack.calibration.reference_scenarios import ENCOUNTER_TARGETS, REFERENCE_RUNS, VESSEL_SCALES
-from scenegems_tool.vessel_stack.calibration.sitl_stack_runs import BASE_HOST_PORT, LAYERS, StackMeasurement, StackRunSpec, measure_stack
+from scenegems_tool.vessel_stack.calibration.reference_scenarios import ENCOUNTER_TARGETS, REFERENCE_RUNS, VESSEL_SCALES, default_duration
+from scenegems_tool.vessel_stack.calibration.sitl_stack_runs import BASE_HOST_PORT, CONTROL_LAYERS, LAYERS, StackMeasurement, StackRunSpec, measure_stack
 
 HEADER = "Measured by scripts/calibrate.py. Review the entries and merge them into registry/measured_capabilities.yaml."
 
@@ -57,11 +58,13 @@ def build_parser() -> argparse.ArgumentParser:
     stack.add_argument("--layer", choices=sorted(LAYERS), required=True)
     stack.add_argument("--drive", choices=["replay", "target"], default="replay")
     stack.add_argument("--reference", choices=list(REFERENCE_RUNS), nargs="+", default=["straight"])
-    stack.add_argument("--scale", choices=sorted(VESSEL_SCALES), default="5m")
-    stack.add_argument("--duration", type=int, default=90, help="simulated seconds")
+    stack.add_argument("--scale", choices=sorted(VESSEL_SCALES), nargs="+", default=["5m"], help="vessel scales, measured one after the other")
+    stack.add_argument("--duration", type=int, help="simulated seconds (default: per reference run and scale, reference_scenarios.default_duration)")
     stack.add_argument("--speedups", type=int, nargs="+", default=[1])
     stack.add_argument("--repeats", type=int, default=3)
     stack.add_argument("--wind", type=float, nargs=2, metavar=("EAST", "NORTH"), help="wind in m/s")
+    stack.add_argument("--from-rest", action="store_true", help="the reference starts at rest like the simulated vessel, for the tracking error")
+    stack.add_argument("--control", choices=sorted(CONTROL_LAYERS), default="ardupilot", help="control layer; custom runs on gazebo only")
     stack.add_argument("--work-folder", help="where the generated stacks go (default: a temporary folder)")
     stack.add_argument("--base-port", type=int, default=BASE_HOST_PORT, help="first host port for the SITL serial ports")
     stack.add_argument("--repo-entrypoints", action="store_true", help="mount the repo's entrypoint scripts over the image copies")
@@ -91,6 +94,16 @@ def _print_stack(measurement: StackMeasurement) -> None:
     achieved = f"{measurement.achieved:.2f}x" if measurement.achieved else "n/a"
     failed = [repeat for repeat in measurement.repeats if not repeat.ok]
     print(f"{spec.label()}: {len(measurement.ok_repeats)}/{len(measurement.repeats)} repeats, achieved {achieved}, repeat deviation {deviation}")
+    if spec.custom:
+        late = [repeat.late_commands for repeat in measurement.ok_repeats]
+        print(f"  digests {'identical' if measurement.bit_identical else 'differ'}, late thrust commands per repeat {late}")
+    tracking = measurement.worst_tracking
+    if tracking is not None:
+        print(
+            f"  tracking (worst repeat): cross-track {tracking.max_cross_track_m:.3f} m on straight legs ({tracking.max_cross_track_anywhere_m:.2f} m anywhere), "
+            f"along-track lag {tracking.max_along_track_lag_m:.2f} m (end {tracking.final_along_track_m:+.2f} m), excess turn {tracking.excess_turn_deg:+.1f} deg"
+            + (", ORBITED" if tracking.orbited else "")
+        )
     for repeat in failed:
         print(f"  repeat {repeat.index} failed: {repeat.error}\n{repeat.logs}")
 
@@ -99,20 +112,30 @@ def _stack(args: argparse.Namespace):
     work_folder = args.work_folder or tempfile.mkdtemp(prefix="scenegems-calibration-")
     entries: List[MeasuredEntry] = []
     reports = []
-    for reference in args.reference:
-        for speedup in args.speedups:
-            spec = StackRunSpec(LAYERS[args.layer], reference, args.scale, args.duration, speedup, args.repeats, args.drive, tuple(args.wind) if args.wind else None)
-            measurement = measure_stack(spec, work_folder, args.base_port, args.repo_entrypoints, args.keep_stacks)
-            _print_stack(measurement)
-            entries.extend(measurement.entries())
-            reports.append(
-                {
-                    "label": spec.label(),
-                    "achieved_speedup": measurement.achieved,
-                    "deviation": vars(measurement.deviation) if measurement.deviation else None,
-                    "repeats": [{"ok": repeat.ok, "error": repeat.error, "achieved_speedup": repeat.achieved_speedup, "state_digest": repeat.state_digest} for repeat in measurement.repeats],
-                }
-            )
+    for reference, scale, speedup in itertools.product(args.reference, args.scale, args.speedups):
+        duration = args.duration or default_duration(reference, scale)
+        spec = StackRunSpec(LAYERS[args.layer], reference, scale, duration, speedup, args.repeats, args.drive, tuple(args.wind) if args.wind else None, args.from_rest, CONTROL_LAYERS[args.control])
+        measurement = measure_stack(spec, work_folder, args.base_port, args.repo_entrypoints, args.keep_stacks)
+        _print_stack(measurement)
+        entries.extend(measurement.entries())
+        reports.append(
+            {
+                "label": spec.label(),
+                "achieved_speedup": measurement.achieved,
+                "deviation": vars(measurement.deviation) if measurement.deviation else None,
+                "repeats": [
+                    {
+                        "ok": repeat.ok,
+                        "error": repeat.error,
+                        "achieved_speedup": repeat.achieved_speedup,
+                        "state_digest": repeat.state_digest,
+                        "late_commands": repeat.late_commands,
+                        "tracking": vars(repeat.tracking) if repeat.tracking else None,
+                    }
+                    for repeat in measurement.repeats
+                ],
+            }
+        )
     return entries, reports
 
 

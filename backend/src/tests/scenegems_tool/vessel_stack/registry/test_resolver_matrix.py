@@ -32,7 +32,7 @@ EXPECTED: Dict[Tuple[str, str, str], Tuple[str, str, List[str]]] = {
     ("replay", "none", "ardupilot_sim"): ("no", UNAVAILABLE, [RULED_OUT["none_ardupilot_sim"]]),
     ("replay", "custom", "ardupilot_sim"): ("no", UNAVAILABLE, [RULED_OUT["custom_ardupilot_sim"]]),
     ("replay", "ardupilot", "gazebo"): ("yes", AVAILABLE, []),
-    ("replay", "custom", "gazebo"): ("yes", PLANNED, ["custom_controller_waypoint_follower is planned", "gz_transport_actuator is planned"]),
+    ("replay", "custom", "gazebo"): ("yes", AVAILABLE, []),
     ("replay", "none", "gazebo"): ("no", UNAVAILABLE, [RULED_OUT["none_gazebo"]]),
     ("usv_navigation", "none", "kinematic"): ("yes", AVAILABLE, []),
     ("usv_navigation", "ardupilot", "kinematic"): ("no", UNAVAILABLE, [RULED_OUT["kinematic"]]),
@@ -41,7 +41,7 @@ EXPECTED: Dict[Tuple[str, str, str], Tuple[str, str, List[str]]] = {
     ("usv_navigation", "none", "ardupilot_sim"): ("no", UNAVAILABLE, [RULED_OUT["none_ardupilot_sim"]]),
     ("usv_navigation", "custom", "ardupilot_sim"): ("no", UNAVAILABLE, [RULED_OUT["custom_ardupilot_sim"]]),
     ("usv_navigation", "ardupilot", "gazebo"): ("yes", PLANNED, ["usv_navigation_mavlink_guided is planned"]),
-    ("usv_navigation", "custom", "gazebo"): ("yes", PLANNED, ["custom_controller_heading_speed_input is planned", "gz_transport_actuator is planned"]),
+    ("usv_navigation", "custom", "gazebo"): ("yes", PLANNED, ["custom_controller_heading_speed_input is planned"]),
     ("usv_navigation", "none", "gazebo"): ("no", UNAVAILABLE, [RULED_OUT["none_gazebo"]]),
     ("mission_planner", "none", "kinematic"): ("no", UNAVAILABLE, [RULED_OUT["mission_planner_none"]]),
     ("mission_planner", "ardupilot", "kinematic"): ("no", UNAVAILABLE, [RULED_OUT["kinematic"]]),
@@ -95,10 +95,10 @@ def test_triple_matches_design_table(matrix, key):
         assert chain.reasons == ()
 
 
-def test_matrix_counts_are_six_available_four_planned_seventeen_unavailable(matrix):
+def test_matrix_counts_are_seven_available_three_planned_seventeen_unavailable(matrix):
     statuses = [chain.status for chain in matrix.values()]
-    assert statuses.count(AVAILABLE) == 6
-    assert statuses.count(PLANNED) == 4
+    assert statuses.count(AVAILABLE) == 7
+    assert statuses.count(PLANNED) == 3
     assert statuses.count(UNAVAILABLE) == 17
 
 
@@ -135,9 +135,14 @@ def test_mission_planner_rows_are_interactive_only(matrix):
 
 
 def test_planned_chain_lists_the_planned_specs(matrix):
-    chain = matrix[("usv_navigation", "custom", "gazebo")]
+    chain = matrix[("usv_navigation", "ardupilot", "gazebo")]
     planned_ids = {spec.id for spec in chain.planned_specs}
-    assert planned_ids == {"control_layer/custom", "custom_controller_heading_speed_input", "gz_transport_actuator"}
+    assert planned_ids == {"usv_navigation_mavlink_guided"}
+
+
+def test_replay_on_the_custom_controller_runs_through_the_waypoint_follower_and_the_gz_actuator(matrix):
+    chain = matrix[("replay", "custom", "gazebo")]
+    assert [adapter.id for adapter in chain.adapters] == ["custom_controller_waypoint_follower", "gz_transport_actuator"]
 
 
 def test_resolving_with_an_adapter_alternative_changes_the_asv_adapter():

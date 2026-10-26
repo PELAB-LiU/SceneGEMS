@@ -1,4 +1,4 @@
-"""Specs of the Gazebo simulation layer and of the ArduPilot link into it."""
+"""Specs of the Gazebo simulation layer and of the ArduPilot and custom controller links into it."""
 
 from typing import Optional
 
@@ -20,11 +20,14 @@ def wave_forces_enabled(environment: Optional[EnvironmentConfig]) -> bool:
     return GAZEBO_WAVE_FORCES_AVAILABLE and environment is not None and environment.waves_requested
 
 
+GZ_TRANSPORT_ACTUATOR_SOURCE = "backend/src/scenegems_tool/vessel_stack/simulation_layers/gazebo/gz_transport_actuator.py"  # copied into the image
+
 GAZEBO_CONTAINER = ContainerSpec(
     image="${GAZEBO_IMAGE:-scenegems-gazebo-harmonic:latest}",
     build_fingerprint_source="deploy/images/gazebo",
     entrypoint=GAZEBO_ENTRYPOINT_CONTAINER_PATH,
     upstream_pins_file=UPSTREAM_PINS_FILE,
+    extra_fingerprint_sources=(GZ_TRANSPORT_ACTUATOR_SOURCE,),
 )
 
 GAZEBO_LAYER = LayerSpec(
@@ -48,3 +51,25 @@ ARDUPILOT_GAZEBO_PLUGIN = AdapterSpec(
     provides_ports=frozenset({Port.ACTUATOR_CMD}),
     requires_ports=frozenset({Port.VESSEL_STATE, Port.CLOCK}),
 )
+
+GZ_TRANSPORT_ACTUATOR = AdapterSpec(
+    id="gz_transport_actuator",
+    source=LayerRef.of(ControlLayerId.CUSTOM),
+    target=LayerRef.of(SimulationLayerId.GAZEBO),
+    description=(
+        "gz-transport actuator adapter in the Gazebo container (gz_transport_actuator.py): thrust as gz.msgs.Double on "
+        "/model/<model>/joint/<joint>/cmd_thrust, odometry back, and the paused world stepped through its world control "
+        "service, so controller and physics share one clock."
+    ),
+    # Unmeasured until measured; registry/measured_capabilities.yaml holds the values.
+    capabilities=Capabilities(repeatability_tier=RepeatabilityTier.BOUNDED, max_speedup=None),
+    provides_ports=frozenset({Port.ACTUATOR_CMD}),
+    requires_ports=frozenset({Port.VESSEL_STATE, Port.CLOCK}),
+)
+
+
+def gz_lockstep_link_runtime():
+    """Runtime of GZ_TRANSPORT_ACTUATOR on the runner's side, imported on first use."""
+    from scenegems_tool.vessel_stack.simulation_layers.gazebo.gz_lockstep_link import GzLockstepLink
+
+    return GzLockstepLink
