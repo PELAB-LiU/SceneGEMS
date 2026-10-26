@@ -5,6 +5,10 @@ through replay_mavlink_lockstep), generates the vessel stack into the job's fold
 a runner from the scenario execution image on the stack network. The runner drives every
 vessel's SITL SERIAL0 (mavlink_lockstep_runner.run_mavlink_replay) and returns the run.
 
+Observed live, the runner forwards each step's observed states as frames, at most a bounded
+number a second at the stack's own pace: SITL runs free at the payload's speedup, so the run is
+not slowed to the observers' speed (that would delay its commands in SITL time and change it).
+
 The generated files reach SITL and Gazebo through the runtime assets volume, so the caller
 must run where that volume is mounted at RUNTIME_ASSETS_FOLDER: the node daemon's container
 or the workbench backend's.
@@ -12,7 +16,7 @@ or the workbench backend's.
 
 import threading
 from enum import Enum
-from typing import Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, Mapping, Optional, Tuple
 
 from pydantic import Field
 
@@ -25,6 +29,9 @@ from scenegems_tool.cluster.node.subsystem import Subsystem, subsystem_image
 from scenegems_tool.cluster.protocol.artifacts import ArtifactField, ArtifactKind
 from scenegems_tool.cluster.protocol.jobs import JobSpec
 from scenegems_tool.cluster.protocol.model_base import ProtocolModel
+
+if TYPE_CHECKING:
+    from scenegems_tool.cluster.node.jobs.in_container.run_observation import ContainerObservation
 
 STACK_NETWORK = "maritime_net"  # the network build_simulation_docker_stack_artifacts puts every vessel service on
 
@@ -92,17 +99,40 @@ def run(job: JobSpec, node: NodeContext, report: JobReport, cancel: Optional[thr
     payload = parse_payload(ArduPilotSimulationPayload, job)
     report.status(f"generating the {payload.simulation_layer.value} stack")
     stack = build_job_stack(job, node, payload)
-    return stack.run(job_document(job), report, timeout_s=payload.timeout_s, cancel=cancel)
+    # SITL runs free at the payload's speedup, so an observed run is not slowed down and keeps its timeout
+    return stack.run(job_document(job), report, timeout_s=payload.timeout_s, cancel=cancel, observation=node.observations.of(job), paced=False)
 
 
-def execute(job: JobSpec, status: StatusCallback) -> JobResultData:
-    """The in-container part: drive every vessel's SITL in lockstep and describe the run."""
+def frame_builder(scenario_id: str, trajectories, dt: float) -> Callable[[int, Mapping[int, Any]], Dict[str, Any]]:
+    """A lockstep step's frame in the workbench's wire format: every vessel's observed state."""
+    from concrete_level.trajectory_generation.scene_builder import SceneBuilder
+    from scenegems_tool.gateway.serialization import serialize_frame
+
+    vessels = {vessel.id: vessel for vessel in trajectories.initial_scene.vessels}
+    time_step = int(dt) if float(dt).is_integer() else dt
+
+    def build(index: int, samples: Mapping[int, Any]) -> Dict[str, Any]:
+        builder = SceneBuilder()
+        builder.set_states_as_dict({vessels[vessel_id]: sample.state for vessel_id, sample in samples.items()})
+        return serialize_frame(scenario_id=scenario_id, scene=builder.build(), timestamp=index * time_step, time_step=time_step)
+
+    return build
+
+
+def execute(job: JobSpec, status: StatusCallback, observation: Optional["ContainerObservation"] = None) -> JobResultData:
+    """The in-container part: drive every vessel's SITL in lockstep and describe the run; observation forwards its states live."""
     from scenegems_tool.vessel_stack.control_layers.ardupilot.mavlink_lockstep_runner import run_mavlink_replay
 
     payload = parse_payload(ArduPilotSimulationPayload, job)
     trajectories, instance = _instance(payload)
+    dt = float(trajectories.time_step) if payload.dt is None else payload.dt
+    steps = payload.steps if payload.steps is not None else int(round(trajectories.timespan / dt))
+    on_step = None
+    if observation is not None:
+        observer = observation.observer(frame_builder(job.job_id, trajectories, dt), dt, last_index=steps, pace=False, stride_speed=float(payload.speedup))
+        on_step = observer.step
     status("connecting to SITL")
-    result = run_mavlink_replay(trajectories, instance, payload.geofence.to_geofence(), dt=payload.dt, steps=payload.steps, start_boot_s=payload.start_boot_s)
+    result = run_mavlink_replay(trajectories, instance, payload.geofence.to_geofence(), dt=payload.dt, steps=payload.steps, start_boot_s=payload.start_boot_s, on_step=on_step)
     status("run finished", 1.0)
     data: JobResultData = {
         "run_record": dict(result.run_record),

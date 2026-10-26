@@ -20,3 +20,8 @@ def test_mismatch_message_names_both_versions_and_the_fix():
     assert "received 7" in message
     assert f"speaks {PROTOCOL_VERSION}" in message
     assert "same SceneGEMS revision" in message
+
+
+def test_phase_5_speaks_version_3():
+    # Version 3: the optional machine in Hello, Observe and ObservationFrames (live simulations)
+    assert PROTOCOL_VERSION == 3

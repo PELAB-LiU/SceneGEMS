@@ -8,11 +8,16 @@ for the same payload, and the result carries its state digest.
 With monitor live, the COLREGS monitor judges every step in process with the post-hoc
 monitor's summary (subsystems/monitoring/rule_outcomes.py), and early_stop ends the run once
 every rule is decided. A run without a monitor is the same run as before the monitor existed.
+
+Observed live (the node's observation, in_container/run_observation.py), the run is paced to
+the observers' speed and writes frames: every vessel's state at the step and, with the live
+monitor, its outcomes. The step observer only reads the states, so the digest and the result
+do not depend on whether or when the run was observed.
 """
 
 import threading
 from enum import Enum
-from typing import Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 
 from pydantic import Field, model_validator
 
@@ -25,6 +30,9 @@ from scenegems_tool.cluster.protocol.artifacts import ArtifactField, ArtifactKin
 from scenegems_tool.cluster.protocol.jobs import JobSpec
 from scenegems_tool.cluster.protocol.model_base import ProtocolModel
 from scenegems_tool.vessel_stack.asv_software.usv_navigation.usv_navigation_parameters import DEFAULT_PRESCRIBED_TIME_S, UsvNavigationParameters
+
+if TYPE_CHECKING:
+    from scenegems_tool.cluster.node.jobs.in_container.run_observation import ContainerObservation
 
 ARTIFACT_INPUT_FIELDS: Tuple[ArtifactField, ...] = (ArtifactField("trajectories", ArtifactKind.TRAJECTORIES),)
 ARTIFACT_RESULT_FIELDS: Tuple[ArtifactField, ...] = (ArtifactField("trajectories", ArtifactKind.TRAJECTORIES),)
@@ -109,6 +117,8 @@ class LiveMonitor:
         self.outcomes = RuleOutcomes()
         self.scenes = 0
         self.decided_at: Optional[int] = None  # scenario time at which every rule was decided, with early_stop
+        self.last_monitored: Any = None  # the latest MonitoredSceneWithResults, for the frames of an observed run
+        self.last_monitored_index: Optional[int] = None
 
     def on_step(self, index: int, states) -> bool:
         from concrete_level.colregs_monitoring.colregs_monitor_runtime import MonitoringTask
@@ -120,6 +130,7 @@ class LiveMonitor:
         self.scenes += 1
         for monitored_scene in self.runtime.monitor_current_tasks():
             self.outcomes.add(monitored_scene)
+            self.last_monitored, self.last_monitored_index = monitored_scene, index
         if self.early_stop and self.outcomes.every_rule_decided():
             self.decided_at = index * self.time_step
             return True
@@ -141,8 +152,40 @@ def run(job: JobSpec, node: NodeContext, report: JobReport, cancel: Optional[thr
     return run_in_runner_container(job, node, report, Subsystem.SCENARIO_EXECUTION, timeout_s=payload.timeout_s, cancel=cancel)
 
 
-def execute(job: JobSpec, status: StatusCallback) -> JobResultData:
-    """The in-container part: run the simulation in process and describe the run."""
+def frame_builder(scenario_id: str, actors, dt: float, monitor: Optional[LiveMonitor]) -> Callable[[int, Any], Dict[str, Any]]:
+    """A step's frame in the workbench's wire format: the monitored scene when the live monitor judged the step, else the scene alone."""
+    from concrete_level.trajectory_generation.scene_builder import SceneBuilder
+    from scenegems_tool.gateway.serialization import serialize_frame, serialize_monitored_frame
+
+    actors = tuple(actors)
+    time_step = int(dt) if float(dt).is_integer() else dt
+
+    def build(index: int, states) -> Dict[str, Any]:
+        timestamp = index * time_step
+        if monitor is not None and monitor.last_monitored_index == index:
+            return serialize_monitored_frame(scenario_id=scenario_id, monitored_scene=monitor.last_monitored, timestamp=timestamp, time_step=time_step)
+        builder = SceneBuilder()
+        builder.set_states_as_dict(dict(zip(actors, states)))
+        return serialize_frame(scenario_id=scenario_id, scene=builder.build(), timestamp=timestamp, time_step=time_step)
+
+    return build
+
+
+def step_observer(monitor: Optional[LiveMonitor], observer) -> Optional[Callable[[int, Any], bool]]:
+    """The run's step observer: the live monitor's (which may end the run), the observation's after it, both or none."""
+    if observer is None:
+        return monitor.on_step if monitor is not None else None
+
+    def on_step(index: int, states) -> bool:
+        stop = monitor.on_step(index, states) if monitor is not None else False
+        observer.step(index, states, last=stop)
+        return stop
+
+    return on_step
+
+
+def execute(job: JobSpec, status: StatusCallback, observation: Optional["ContainerObservation"] = None) -> JobResultData:
+    """The in-container part: run the simulation in process and describe the run; observation makes it observable live."""
     from scenegems_tool.vessel_stack.contracts.vessel_stack_config import EnvironmentConfig
     from scenegems_tool.vessel_stack.simulation_layers.kinematic.kinematic_runner import run_kinematic_closed_loop, run_kinematic_replay
 
@@ -152,7 +195,8 @@ def execute(job: JobSpec, status: StatusCallback) -> JobResultData:
     dt = float(trajectories.time_step) if payload.dt is None else payload.dt
     planned_steps = payload.steps if payload.steps is not None else int(round(trajectories.timespan / dt))
     monitor = LiveMonitor(trajectories.initial_scene.actors, int(dt), payload.colregs_constraints_content, payload.early_stop) if payload.monitor == KinematicMonitor.LIVE else None
-    on_step = monitor.on_step if monitor is not None else None
+    observer = observation.observer(frame_builder(job.job_id, trajectories.initial_scene.actors, dt, monitor), dt, last_index=planned_steps) if observation is not None else None
+    on_step = step_observer(monitor, observer)
     status(f"running the kinematic {payload.mode.value} run" + (" with the live monitor" if monitor is not None else ""))
     if payload.mode == KinematicMode.REPLAY:
         result = run_kinematic_replay(trajectories, environment=environment, dt=payload.dt, steps=payload.steps, on_step=on_step)

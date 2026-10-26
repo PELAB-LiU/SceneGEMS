@@ -27,6 +27,8 @@ from scenegems_tool.cluster.protocol.messages import (
     LeaseRenew,
     LogLines,
     LogStream,
+    ObservationFrames,
+    Observe,
     ProtocolError,
     ProtocolErrorCode,
     Welcome,
@@ -329,3 +331,39 @@ def test_an_unreachable_master_is_retried_until_stopped(node_configuration, star
     assert daemon.thread.is_alive()
     daemon.stop()
     assert daemon.error is None
+
+
+# Live observation
+
+
+def test_an_observed_job_relays_its_frames_until_the_master_stops_observing(fake_master, node_configuration, start_daemon):
+    """The job stands in for the job stack: it waits for the master's request and feeds frames as its runner's log follower would."""
+
+    def observed_run(job, node, report, cancel):
+        observation = node.observations.of(job)
+        control = observation.wait_for_change(0, timeout_s=10.0)
+        assert control.active and control.speed == 30.0
+        for index in range(25):
+            observation.add_frames([({"timestamp": index}, 20)])
+            time.sleep(0.01)
+        control = observation.wait_for_change(control.revision, timeout_s=10.0)
+        assert not control.active
+        observation.add_frames([({"timestamp": 99}, 20)])  # not observed any more: dropped
+        return {"state_digest": "abc"}
+
+    _, connection, _ = connect(fake_master, start_daemon, node_configuration(), run=observed_run)
+    connection.send(make_offer("lease-o", make_job("job-o")))
+    connection.expect(LeaseAccept)
+    connection.send(Observe(job_id="job-o", attempt=2, active=True, speed=30.0))  # another attempt: ignored
+    connection.send(Observe(job_id="job-o", attempt=1, active=True, speed=30.0))
+    batches = []
+    while sum(len(batch.frames) for batch in batches) < 25:
+        batches.append(connection.expect(ObservationFrames, skip=(Heartbeat, JobStatus, LogLines, LeaseRenew)))
+    assert [frame["timestamp"] for batch in batches for frame in batch.frames] == list(range(25))
+    assert [batch.seq for batch in batches] == list(range(1, len(batches) + 1)) and len(batches) >= 2  # batched about 10 times a second
+    assert all((batch.lease_id, batch.job_id, batch.attempt) == ("lease-o", "job-o", 1) for batch in batches)
+
+    connection.send(Observe(job_id="job-o", attempt=1, active=False))
+    result = connection.expect(JobResult, skip=(Heartbeat, JobStatus, LogLines, LeaseRenew))
+    assert result.outcome == JobOutcome.SUCCEEDED
+    assert len(connection.received(ObservationFrames)) == len(batches)

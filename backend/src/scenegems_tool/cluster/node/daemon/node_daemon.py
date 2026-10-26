@@ -8,7 +8,8 @@ Start-up order:
 
 Running jobs belong to the LeaseManager, not to a connection, so they keep running
 while the daemon reconnects; the next Hello names their leases. A ticker thread renews
-leases, sends heartbeats and streams reports whether or not a connection is up.
+leases, sends heartbeats and streams reports whether or not a connection is up; a relay
+thread sends the frames of observed simulations, about 10 batches a second at most.
 
 Conditions that no retry can fix stop the daemon with DaemonStopped: the master refused
 the credential, speaks another protocol version, or is not the paired master.
@@ -45,6 +46,7 @@ _logger = logging.getLogger(__name__)
 WELCOME_TIMEOUT_S = 30.0
 RECEIVE_POLL_S = 0.5  # how often the connection thread looks at the stop event
 TICK_S = 0.25
+RELAY_S = 0.1  # how often observed jobs' frames are relayed to the master
 SHUTDOWN_TIMEOUT_S = 30.0  # time for running jobs to stop and remove their containers
 
 
@@ -129,6 +131,8 @@ class NodeDaemon:
         ticker_stop = threading.Event()
         ticker = threading.Thread(target=self._tick_loop, args=(ticker_stop,), name="node-ticker", daemon=True)
         ticker.start()
+        relay = threading.Thread(target=self._relay_loop, args=(ticker_stop,), name="node-observation-relay", daemon=True)
+        relay.start()
         _logger.info("Node %s (%s) of master %s starts with slots %s", response.node_id, self.configuration.node_name, response.master_id, _slots_text(self.configuration))
         try:
             self._connection_loop(stop)
@@ -136,6 +140,7 @@ class NodeDaemon:
             self.manager.shutdown("the node daemon stopped", self._shutdown_timeout_s)
             ticker_stop.set()
             ticker.join(timeout=5)
+            relay.join(timeout=5)
             link, self._current.link = self._current.link, None
             self.connected.clear()
             if link is not None:
@@ -254,6 +259,13 @@ class NodeDaemon:
                 self._heartbeat()
             except Exception:
                 _logger.exception("Node ticker failed; continuing")
+
+    def _relay_loop(self, stop: threading.Event) -> None:
+        while not stop.wait(RELAY_S):
+            try:
+                self.manager.relay_observations()
+            except Exception:
+                _logger.exception("Observation relay failed; continuing")
 
     def _heartbeat(self) -> None:
         if self._heartbeat_interval_s is None or not self._current.connected:

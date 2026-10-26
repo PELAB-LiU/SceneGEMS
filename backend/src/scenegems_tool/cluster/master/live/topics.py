@@ -348,6 +348,11 @@ def create_live_channel(
     channel.add_source(TopicKind.INSTANCE, hub)
     plane.registry.on_change = nodes.node_changed
     plane.activity.listener = jobs
+    # Live simulations: the hub's observers drive the nodes' Observe frames, the nodes' frames come back to the hub
+    hub.on_job_observation = plane.observations.observe
+    hub.on_job_speed = plane.observations.speed_changed
+    plane.observations.speed_of = hub.observed_speed
+    plane.observations.frames_sink = hub.publish_simulation_frames
     if campaigns is not None:
         channel.add_source(TopicKind.CAMPAIGN, campaigns)
         if plane.pipeline is not None:

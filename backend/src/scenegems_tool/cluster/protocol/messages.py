@@ -3,12 +3,17 @@
 The node opens the WebSocket (outbound only) and sends Hello first; the master answers
 Welcome or ProtocolError. After that:
 
-    master to node: LeaseOffer, LeaseRenewed, Drain, Cancel, ProtocolError
+    master to node: LeaseOffer, LeaseRenewed, Drain, Cancel, Observe, ProtocolError
     node to master: Heartbeat, LeaseAccept, LeaseReject, LeaseRenew, LeaseRelease,
-                    JobStatus, JobResult, LogLines
+                    JobStatus, JobResult, LogLines, ObservationFrames
 
 A lease is the master's time-limited grant of one job to one node. The node renews it
 while the job runs; a lease that is not renewed expires and the job returns to the queue.
+
+Observation (live simulations): while a browser observes a running simulation, the master
+sends its node Observe with active true and the chosen speed, and the node relays the run's
+frames in ObservationFrames batches, at most about 10 a second. Observe with active false
+ends it; the node sends nothing for a job nobody observes.
 """
 
 from enum import Enum
@@ -19,6 +24,11 @@ from pydantic import AwareDatetime, Field
 from scenegems_tool.cluster.protocol.jobs import JobOutcome, JobSpec
 from scenegems_tool.cluster.protocol.model_base import ProtocolFrame, ProtocolModel
 from scenegems_tool.cluster.protocol.node_description import CapabilityOffer, NodeResources, SlotUsage
+
+DEFAULT_OBSERVED_SPEED = 10.0  # an observed run's pace as a multiple of real time, unless the observer chooses one
+MAX_OBSERVED_SPEED = 1000.0
+MAX_OBSERVATION_FRAMES = 200  # frames per ObservationFrames batch
+MAX_OBSERVATION_BATCH_BYTES = 8 * 1024 * 1024  # the node keeps a batch's frames below this, far under the link's 64 MiB
 
 # Node to master
 
@@ -106,6 +116,17 @@ class LogLines(ProtocolFrame):
     lines: List[LogLine]
 
 
+class ObservationFrames(ProtocolFrame):
+    """Frames of an observed run, in the workbench's frame wire format (gateway.serialization.serialize_frame and serialize_monitored_frame)."""
+
+    type: Literal["observation_frames"] = "observation_frames"
+    lease_id: str
+    job_id: str
+    attempt: int = Field(ge=1)
+    seq: int = Field(ge=1)  # the batch's number for the job attempt on its node, from 1, in order
+    frames: List[Dict[str, Any]] = Field(min_length=1, max_length=MAX_OBSERVATION_FRAMES)
+
+
 # Master to node
 
 
@@ -143,6 +164,16 @@ class Cancel(ProtocolFrame):
     reason: str
 
 
+class Observe(ProtocolFrame):
+    """Start (active) or stop relaying the frames of a running job's attempt; a repeated Observe changes the speed."""
+
+    type: Literal["observe"] = "observe"
+    job_id: str
+    attempt: int = Field(ge=1)
+    active: bool
+    speed: float = Field(default=DEFAULT_OBSERVED_SPEED, gt=0.0, le=MAX_OBSERVED_SPEED)  # multiple of real time
+
+
 class ProtocolErrorCode(str, Enum):
     VERSION_MISMATCH = "version_mismatch"
     MALFORMED_FRAME = "malformed_frame"
@@ -159,10 +190,10 @@ class ProtocolError(ProtocolFrame):
 
 
 NodeMessage = Annotated[
-    Union[Hello, Heartbeat, LeaseAccept, LeaseReject, LeaseRenew, LeaseRelease, JobStatus, JobResult, LogLines],
+    Union[Hello, Heartbeat, LeaseAccept, LeaseReject, LeaseRenew, LeaseRelease, JobStatus, JobResult, LogLines, ObservationFrames],
     Field(discriminator="type"),
 ]
 MasterMessage = Annotated[
-    Union[Welcome, LeaseOffer, LeaseRenewed, Drain, Cancel, ProtocolError],
+    Union[Welcome, LeaseOffer, LeaseRenewed, Drain, Cancel, Observe, ProtocolError],
     Field(discriminator="type"),
 ]

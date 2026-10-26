@@ -8,6 +8,13 @@ this process only: they survive a reconnect, not a restart (the master's lease e
 
 Frames of one lease are sent under that lease's lock, so its status and log lines always
 reach the master before its result.
+
+Observation: an accepted simulation gets an observation in NodeContext.observations, which the
+master's Observe switches on and off (on_observe) and the job's stack feeds with the run's
+frames. The daemon's relay calls relay_observations about 10 times a second; each observed job
+sends at most one ObservationFrames batch per call (job_observation.py bounds and rates them).
+When the job's worker stops, what is left goes out (if the lease still holds) and the
+observation is closed.
 """
 
 import logging
@@ -19,9 +26,23 @@ from scenegems_tool.cluster.node.daemon.leases.lease import Lease, LeasePhase
 from scenegems_tool.cluster.node.daemon.leases.lease_worker import JobRunner, start_lease_worker
 from scenegems_tool.cluster.node.daemon.leases.report_batcher import ReportBatcher
 from scenegems_tool.cluster.node.daemon.leases.slot_table import SlotTable
+from scenegems_tool.cluster.node.job_observation import JobObservation
 from scenegems_tool.cluster.node.node_context import NodeContext
 from scenegems_tool.cluster.protocol.jobs import JobSpec
-from scenegems_tool.cluster.protocol.messages import Cancel, Drain, JobResult, LeaseAccept, LeaseOffer, LeaseReject, LeaseRelease, LeaseRenew, LeaseRenewed, MasterMessage
+from scenegems_tool.cluster.protocol.messages import (
+    Cancel,
+    Drain,
+    JobResult,
+    LeaseAccept,
+    LeaseOffer,
+    LeaseReject,
+    LeaseRelease,
+    LeaseRenew,
+    LeaseRenewed,
+    MasterMessage,
+    ObservationFrames,
+    Observe,
+)
 from scenegems_tool.cluster.protocol.model_base import ProtocolFrame
 from scenegems_tool.cluster.protocol.node_description import SlotUsage
 
@@ -61,6 +82,7 @@ class LeaseManager:
         self._batchers: Dict[str, ReportBatcher] = {}
         self._frame_locks: Dict[str, threading.Lock] = {}
         self._workers: Dict[str, threading.Thread] = {}
+        self._observation_lock = threading.Lock()  # one ObservationFrames at a time, so every job's seq goes out in order
         self.lease_timeout_s: Optional[float] = None
         self.draining = False
         self.drain_reason = ""
@@ -85,6 +107,8 @@ class LeaseManager:
             self.on_cancel(message)
         elif isinstance(message, Drain):
             self.on_drain(message)
+        elif isinstance(message, Observe):
+            self.on_observe(message)
         else:
             return False
         return True
@@ -116,6 +140,7 @@ class LeaseManager:
             self._frame_locks[lease.lease_id] = threading.Lock()
             _logger.info("Accepted lease %s: %s job %s, attempt %d", lease.lease_id, job.job_type.value, job.job_id, job.attempt)
             batcher.daemon_line(f"accepted on node {self.node.node_id}, attempt {job.attempt}")
+            self.node.observations.open(job)
             self._workers[lease.lease_id] = start_lease_worker(lease, self._run, self.node, batcher, self._worker_stopped)
 
     def on_renewed(self, message: LeaseRenewed) -> None:
@@ -133,6 +158,17 @@ class LeaseManager:
             _logger.info("The master cancelled lease %s (job %s): %s", lease.lease_id, lease.job_id, message.reason)
             lease.cancel_by_master(message.reason)
             self._forget_if_ended(lease)
+
+    def on_observe(self, message: Observe) -> None:
+        with self._lock:
+            lease = next((lease for lease in self._leases.values() if lease.job_id == message.job_id and lease.job.attempt == message.attempt), None)
+        observation = self.node.observations.get(message.job_id, message.attempt) if lease is not None and lease.phase == LeasePhase.RUNNING else None
+        if observation is None:
+            _logger.debug("Observe for job %s attempt %d, which this node does not run observably", message.job_id, message.attempt)
+            return
+        if observation.request(message.active, message.speed):
+            what = f"observed at {message.speed:g} times real time" if message.active else "no longer observed"
+            _logger.info("Job %s (lease %s): %s", lease.job_id, lease.lease_id, what)
 
     def on_drain(self, message: Drain) -> None:
         with self._lock:
@@ -157,6 +193,7 @@ class LeaseManager:
             self._workers.pop(lease.lease_id, None)
             lease.worker_stopped(result)
             _logger.info("Lease %s stopped: %s", lease.lease_id, result.outcome.value if lease.phase == LeasePhase.FINISHED else lease.stop_reason or lease.phase.value)
+        self._end_observation(lease)
         self._deliver(lease)
 
     def _deliver(self, lease: Lease) -> None:
@@ -213,6 +250,39 @@ class LeaseManager:
                         lock.release()
             elif lease.phase == LeasePhase.FINISHED or lease.release_pending:
                 self._deliver(lease)
+
+    # Observation
+
+    def relay_observations(self) -> int:
+        """Sends each observed job's batch of frames when one is due; the number of batches sent."""
+        if not self.sender.connected:
+            return 0
+        with self._lock:
+            leases = [lease for lease in self._leases.values() if lease.phase == LeasePhase.RUNNING]
+        sent = 0
+        for lease in leases:
+            observation = self.node.observations.of(lease.job)
+            if observation is not None and self._send_frames(lease, observation):
+                sent += 1
+        return sent
+
+    def _send_frames(self, lease: Lease, observation: JobObservation, force: bool = False) -> bool:
+        with self._observation_lock:
+            batch = observation.take_batch(force=force)
+            if batch is None:
+                return False
+            seq, frames = batch
+            return self.sender.send(ObservationFrames(lease_id=lease.lease_id, job_id=lease.job_id, attempt=lease.job.attempt, seq=seq, frames=frames))
+
+    def _end_observation(self, lease: Lease) -> None:
+        """The job's run is over: the frames still waiting go out while the lease holds, then the observation closes."""
+        observation = self.node.observations.of(lease.job)
+        if observation is None:
+            return
+        if lease.held and observation.active and self.sender.connected:
+            while self._send_frames(lease, observation, force=True):
+                pass
+        self.node.observations.close(lease.job)
 
     def _lose(self, lease: Lease, now: float) -> None:
         silent_s = now - lease.confirmed_at

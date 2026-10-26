@@ -1,4 +1,4 @@
-"""What a job runner needs from its node: identity, slots, broker access, the shared pools and artifact transport.
+"""What a job runner needs from its node: identity, slots, broker access, the shared pools, artifact transport and observations.
 
 The node daemon builds one NodeContext from its configuration and pairing response
 (daemon/node_runtime.py) and calls `shutdown` when it stops. Tests build one directly.
@@ -9,6 +9,7 @@ from typing import Dict, Optional
 
 from scenegems_tool.cluster.node.artifacts.node_artifacts import ArtifactTransport
 from scenegems_tool.cluster.node.instance_scope import InstanceScope
+from scenegems_tool.cluster.node.job_observation import JobObservations
 from scenegems_tool.cluster.node.launchers.ca_certificate_mount import CaCertificateMount
 from scenegems_tool.cluster.node.launchers.pooled.service_pools import ServicePools
 from scenegems_tool.cluster.node.subsystem import Subsystem
@@ -35,6 +36,7 @@ class NodeContext:
     broker_network: Optional[str] = None  # Docker network the broker is reachable on; SCENEGEMS_DOCKER_NETWORK when None
     ca_certificate_mount: Optional[CaCertificateMount] = None  # how containers get the broker's CA file; mqtt_connection's CA path is this process's
     artifacts: Optional[ArtifactTransport] = None  # downloads referenced inputs and uploads results; None keeps results inline
+    observations: JobObservations = field(default_factory=JobObservations)  # running jobs' live observations; the daemon's lease manager opens them
     pools: ServicePools = field(init=False)
 
     def __post_init__(self) -> None:

@@ -10,10 +10,14 @@ An instance topic is `instance:<node id>/<instance>` (cluster/protocol/live.py):
             observer leaving ends the subscription. One broker connection serves every pool;
             it opens with the first pool observed.
     job     job-<job id>-<attempt>. Its status comes from the job's activity and state (topics.py
-            JobTopics passes them on). Simulation frames come from P5.10: when the node relays an
-            observed run's frames, the master calls publish_simulation_frames (or
-            publish_instance_update), and on_job_observation tells it when a job's instance gets
-            its first observer and loses its last, so it can send the node Observe on and off.
+            JobTopics passes them on). A running simulation's frames come from its node:
+            on_job_observation tells the master's ObservedJobs (cluster/master/observed_jobs.py)
+            when a job's instance gets its first observer and loses its last, so it sends the
+            node Observe on and off, and the node's ObservationFrames come back through
+            publish_simulation_frames. The speed of an observed run belongs to the job: a
+            subscribe's options or a configure set it (the latest wins), observed_speed reads
+            it, on_job_speed reports a change while observed, and every observer of the job
+            gets a status update with the new observed_speed.
 
 Broker messages arrive on the broker client's thread and are handed to the event loop.
 """
@@ -33,8 +37,9 @@ from pydantic import ValidationError
 
 from scenegems_tool.cluster.master.control_plane import ControlPlane
 from scenegems_tool.cluster.master.job_activity import JobProgress
-from scenegems_tool.cluster.master.live.live_channel import LiveChannel, UnknownTopic
+from scenegems_tool.cluster.master.live.live_channel import InvalidOptions, LiveChannel, UnknownTopic
 from scenegems_tool.cluster.protocol.live import (
+    DEFAULT_OBSERVED_SPEED,
     JOB_INSTANCE_KINDS,
     InstanceKind,
     InstanceName,
@@ -43,6 +48,7 @@ from scenegems_tool.cluster.protocol.live import (
     SceneSample,
     SimulationFrames,
     Topic,
+    TopicOptions,
     TrajectoryPreview,
     instance_topic,
     is_rated,
@@ -192,8 +198,12 @@ class ObservationHub:
         self._job_attempts: Dict[str, int] = {}  # the latest attempt of an observed job
         self._job_states: Dict[str, str] = {}
         self._sent_status: Dict[str, tuple] = {}
-        # P5.10: called with (node id, job id, attempt, observed) when a job instance gets its first observer (True) and loses its last (False)
+        self._job_status: Dict[str, Tuple[str, str, Optional[float]]] = {}  # job id to its latest (state, message, progress)
+        self._speeds: Dict[str, float] = {}  # job id to the speed an observer chose, while the job is observed or being subscribed to
+        # Called with (node id, job id, attempt, observed) when a job instance gets its first observer (True) and loses its last (False)
         self.on_job_observation: Optional[Callable[[str, str, int, bool], None]] = None
+        # Called with (job id, speed) when the speed of an observed job changes
+        self.on_job_speed: Optional[Callable[[str, float], None]] = None
 
     @property
     def broker_configured(self) -> bool:
@@ -222,8 +232,39 @@ class ObservationHub:
             self._job_attempts[name.job_id] = job.attempt
             self._job_states[name.job_id] = job.state.value
         state = job.state.value if job.attempt == name.attempt else SUPERSEDED
-        snapshot = InstanceSnapshot(node_id=topic.node_id, instance=topic.instance, kind=JOB_INSTANCE_KINDS[job.job_type], state=state, job_id=name.job_id, attempt=name.attempt)
+        snapshot = InstanceSnapshot(
+            node_id=topic.node_id,
+            instance=topic.instance,
+            kind=JOB_INSTANCE_KINDS[job.job_type],
+            state=state,
+            job_id=name.job_id,
+            attempt=name.attempt,
+            observed_speed=self.observed_speed(name.job_id),
+        )
         return snapshot.model_dump(mode="json")
+
+    def configure(self, topic: Topic, options: TopicOptions) -> None:
+        """A subscribe's options or a configure message: the job's speed, which the latest request sets for every observer."""
+        name = parse_instance(topic.instance)
+        if not name.is_job:
+            raise InvalidOptions("only job instance topics take options")
+        if options.speed is None:
+            return
+        changed = options.speed != self.observed_speed(name.job_id)
+        self._speeds[name.job_id] = options.speed
+        if not changed or name.job_id not in self._jobs:
+            return  # not observed yet: the activation sends the speed to the node
+        if self.on_job_speed is not None:
+            try:
+                self.on_job_speed(name.job_id, options.speed)
+            except Exception:
+                logger.exception("Telling the node of job %s its new speed failed", name.job_id)
+        state, message, progress = self._job_status.get(name.job_id, (self._job_states.get(name.job_id, "running"), "", None))
+        self._publish_status(name.job_id, state, message, progress)
+
+    def observed_speed(self, job_id: str) -> float:
+        """The pace of the job's observed run, as a multiple of real time."""
+        return self._speeds.get(job_id, DEFAULT_OBSERVED_SPEED)
 
     def activate(self, topic: Topic) -> None:
         name = parse_instance(topic.instance)
@@ -255,6 +296,8 @@ class ObservationHub:
                 self._jobs.pop(job_id, None)
                 self._job_attempts.pop(job_id, None)
                 self._job_states.pop(job_id, None)
+                self._job_status.pop(job_id, None)
+                self._speeds.pop(job_id, None)
             self._tell_node(observed, False)
             return
         self._pools.pop(observed.prefix, None)
@@ -302,17 +345,20 @@ class ObservationHub:
         self._publish_status(job.job_id, job.state.value, job.error or "", None)
 
     def _publish_status(self, job_id: str, state: str, message: str, progress: Optional[float]) -> None:
+        self._job_status[job_id] = (state, message, progress)
         current = self._job_attempts.get(job_id)
+        speed = self.observed_speed(job_id)
         for topic in sorted(self._jobs.get(job_id, ())):
             observed = self._observed.get(topic)
             if observed is None:
                 continue
             instance_state = state if current is None or observed.name.attempt == current else SUPERSEDED
-            status = (instance_state, message, progress)
+            status = (instance_state, message, progress, speed)
             if self._sent_status.get(topic) == status:
                 continue
             self._sent_status[topic] = status
-            self.publish_instance_update(observed.node_id, observed.instance, InstanceStatus(state=instance_state, message=message, progress=progress))
+            update = InstanceStatus(state=instance_state, message=message, progress=progress, observed_speed=speed)
+            self.publish_instance_update(observed.node_id, observed.instance, update)
 
     # The broker
 

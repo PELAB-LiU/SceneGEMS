@@ -20,6 +20,10 @@ at most one per interval and merges what arrives in between; in a connection's o
 unsent rated update of the same stream is merged as well, and one that finds the outbox
 full is dropped.
 
+Options. A subscribe may carry options and a configure message changes them while subscribed;
+the topic's source takes them (TopicSource.configure, which only job instance topics have) before
+the subscriber is registered, so the activation already sees them.
+
 Everything here runs on the master's event loop; the observation hub hands broker messages
 over with call_soon_threadsafe.
 """
@@ -38,7 +42,20 @@ import anyio
 from pydantic import BaseModel
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from scenegems_tool.cluster.protocol.live import LIVE_VERSION, InvalidLiveMessage, InvalidTopic, Ping, Subscribe, Topic, TopicKind, Unsubscribe, decode_client_message, parse_topic
+from scenegems_tool.cluster.protocol.live import (
+    LIVE_VERSION,
+    Configure,
+    InvalidLiveMessage,
+    InvalidTopic,
+    Ping,
+    Subscribe,
+    Topic,
+    TopicKind,
+    TopicOptions,
+    Unsubscribe,
+    decode_client_message,
+    parse_topic,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +66,10 @@ Merge = Callable[[Dict[str, Any], Dict[str, Any]], Dict[str, Any]]
 
 class UnknownTopic(LookupError):
     """The topic names nothing this master knows (no such campaign, job, node or instance), or it cannot be served."""
+
+
+class InvalidOptions(ValueError):
+    """The topic takes no options, or not these."""
 
 
 class TopicSource(Protocol):
@@ -62,6 +83,9 @@ class TopicSource(Protocol):
 
     def deactivate(self, topic: Topic) -> None:
         """The topic's last subscriber left."""
+
+    # Optional: def configure(self, topic: Topic, options: TopicOptions) -> None, raising InvalidOptions.
+    # A source without it takes no options.
 
 
 @dataclass(frozen=True)
@@ -464,11 +488,13 @@ class LiveChannel:
             if isinstance(message, Ping):
                 connection.message({"version": LIVE_VERSION, "type": "pong"})
             elif isinstance(message, Subscribe):
-                await self.subscribe(connection, message.topic)
+                await self.subscribe(connection, message.topic, message.options)
+            elif isinstance(message, Configure):
+                self.configure(connection, message.topic, message.options)
             elif isinstance(message, Unsubscribe):
                 self.unsubscribe(connection, message.topic)
 
-    async def subscribe(self, connection: LiveConnection, name: str) -> None:
+    async def subscribe(self, connection: LiveConnection, name: str, options: Optional[TopicOptions] = None) -> None:
         try:
             topic = parse_topic(name)
         except InvalidTopic as error:
@@ -480,6 +506,8 @@ class LiveChannel:
             return
         if topic.name not in connection.topics and len(connection.topics) >= self.settings.max_subscriptions:
             connection.error(f"at most {self.settings.max_subscriptions} subscriptions per connection", name)
+            return
+        if options is not None and not self._configure(connection, source, topic, options):
             return
         placeholder = connection.begin_subscription(topic.name)
         self._add(connection, topic, source)
@@ -496,6 +524,27 @@ class LiveChannel:
             return
         if connection.current_placeholder(topic.name) is placeholder:
             placeholder.fill({"version": LIVE_VERSION, "type": "subscribed", "topic": topic.name, "snapshot": snapshot})
+
+    def configure(self, connection: LiveConnection, name: str, options: TopicOptions) -> None:
+        """Changes the options of a topic the connection subscribed to."""
+        if name not in connection.topics:
+            connection.error("not subscribed", name)
+            return
+        state = self._topics.get(name)
+        source = self._sources.get(state.topic.kind) if state is not None else None
+        if source is not None:
+            self._configure(connection, source, state.topic, options)
+
+    def _configure(self, connection: LiveConnection, source: TopicSource, topic: Topic, options: TopicOptions) -> bool:
+        configure = getattr(source, "configure", None)
+        try:
+            if configure is None:
+                raise InvalidOptions(f"{topic.kind.value} topics take no options")
+            configure(topic, options)
+        except InvalidOptions as error:
+            connection.error(str(error), topic.name)
+            return False
+        return True
 
     def unsubscribe(self, connection: LiveConnection, name: str) -> None:
         if name not in connection.topics:

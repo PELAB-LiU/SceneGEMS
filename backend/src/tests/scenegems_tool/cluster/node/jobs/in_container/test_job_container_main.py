@@ -8,8 +8,10 @@ import pytest
 
 from scenegems_tool.cluster.node.jobs.in_container import job_container_main
 from scenegems_tool.cluster.node.jobs.in_container.job_container_main import json_safe
+from scenegems_tool.cluster.node.jobs.in_container.run_observation import ContainerObservation
 from scenegems_tool.cluster.node.jobs.monitoring_post_hoc_job import execute as execute_post_hoc
 from scenegems_tool.cluster.node.jobs.simulation_kinematic_job import execute as execute_kinematic
+from scenegems_tool.cluster.node.launchers.per_job.job_container_io import OBSERVE_DOCUMENT, ObservationControl, parse_frame_line
 from scenegems_tool.cluster.protocol.jobs import JobType
 from scenegems_tool.vessel_stack.simulation_layers.kinematic.kinematic_runner import run_kinematic_closed_loop, run_kinematic_replay
 
@@ -86,3 +88,26 @@ def test_main_writes_an_error_document_when_the_job_fails(job_folder, make_job, 
     assert "No vessel with id 99" in outcome["error"]
     assert outcome["retryable"] is False
     assert "result" not in outcome
+
+
+def test_an_observed_simulation_writes_frame_lines_and_the_same_result(job_folder, make_job, head_on_trajectories, capsys, monkeypatch):
+    monkeypatch.setattr(job_container_main, "ContainerObservation", lambda folder: ContainerObservation(folder, sleep=lambda seconds: None))
+    write_job(job_folder, make_job(JobType.SIMULATION_KINEMATIC, {"trajectories": head_on_trajectories.to_dict(), "include_trajectories": False}))
+    assert job_container_main.main() == 0
+    plain = read_outcome(job_folder)
+    assert not [line for line in capsys.readouterr().out.splitlines() if parse_frame_line(line)]  # nobody observes: no frames
+
+    (job_folder / OBSERVE_DOCUMENT).write_text(ObservationControl(active=True, speed=1000.0, revision=1).to_document(), encoding="utf-8")
+    assert job_container_main.main() == 0
+    assert read_outcome(job_folder) == plain
+    frames = [parse_frame_line(line) for line in capsys.readouterr().out.splitlines() if parse_frame_line(line)]
+    assert [frame["timestamp"] for frame in frames] == [0, 50, 100, 120]  # 1000 steps a second, 20 frames a second at most, and the last step
+
+
+def test_jobs_that_are_not_simulations_get_no_observation(job_folder, make_job, head_on_trajectories, monkeypatch):
+    def refuse(folder):
+        raise AssertionError("a post-hoc monitoring job is not observable")
+
+    monkeypatch.setattr(job_container_main, "ContainerObservation", refuse)
+    write_job(job_folder, make_job(JobType.MONITORING_POST_HOC, {"trajectories": head_on_trajectories.to_dict()}))
+    assert job_container_main.main() == 0 and "result" in read_outcome(job_folder)

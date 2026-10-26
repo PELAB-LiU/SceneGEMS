@@ -4,7 +4,7 @@ A WebSocket at LIVE_PATH on the master's operator listener (cluster/master/live/
 text frames that each carry "version": 1. The browser client (frontend/src/domain/cluster/)
 mirrors these models; design doc 5.3 ("Live channel contract") describes them in prose.
 
-    client to server   subscribe {topic}, unsubscribe {topic}, ping
+    client to server   subscribe {topic, options?}, configure {topic, options}, unsubscribe {topic}, ping
     server to client   subscribed {topic, snapshot}, update {topic, seq, data}, unsubscribed {topic},
                        error {message, topic?}, pong
 
@@ -20,6 +20,12 @@ Topics and what they carry:
                                    data: JobStatusChanged | JobLogsAdded | JobChanged
     instance:<node id>/<instance>  snapshot: InstanceSnapshot
                                    data: SceneSample | TrajectoryPreview | SimulationFrames | InstanceStatus
+
+Options of a job instance topic (live simulations): subscribe may carry {"speed": <multiple of real
+time>} and configure changes it while subscribed. The speed belongs to the job, not to one browser:
+the latest request wins for every observer. A job instance's snapshot and its status updates carry
+the current one as observed_speed (DEFAULT_OBSERVED_SPEED until somebody chooses), and a change
+sends every observer of the job a status update.
 
 seq counts a connection's updates of one subscription from 1; a new subscribe starts again
 at 1 after its snapshot. Nothing is sent for a topic the connection did not subscribe to.
@@ -38,6 +44,7 @@ from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from scenegems_tool.cluster.protocol.jobs import JobType
+from scenegems_tool.cluster.protocol.messages import DEFAULT_OBSERVED_SPEED, MAX_OBSERVED_SPEED  # noqa: F401 (the default is part of this contract)
 from scenegems_tool.cluster.protocol.routes import LIVE_PATH  # noqa: F401 (the channel's path, named here too)
 
 LIVE_VERSION = 1
@@ -63,9 +70,24 @@ class LiveMessage(LiveModel):
 # Client to server
 
 
+class TopicOptions(LiveModel):
+    """Options of a job instance topic: speed, the observed run's pace as a multiple of real time."""
+
+    speed: Optional[float] = Field(default=None, gt=0.0, le=MAX_OBSERVED_SPEED)
+
+
 class Subscribe(LiveMessage):
     type: Literal["subscribe"] = "subscribe"
     topic: str
+    options: Optional[TopicOptions] = None  # job instance topics only
+
+
+class Configure(LiveMessage):
+    """Changes the options of a subscribed job instance topic; the latest request wins for every observer of the job."""
+
+    type: Literal["configure"] = "configure"
+    topic: str
+    options: TopicOptions
 
 
 class Unsubscribe(LiveMessage):
@@ -77,7 +99,7 @@ class Ping(LiveMessage):
     type: Literal["ping"] = "ping"
 
 
-ClientMessage = Annotated[Union[Subscribe, Unsubscribe, Ping], Field(discriminator="type")]
+ClientMessage = Annotated[Union[Subscribe, Configure, Unsubscribe, Ping], Field(discriminator="type")]
 
 
 # Server to client
@@ -185,6 +207,7 @@ class InstanceSnapshot(LiveModel):
     state: str
     job_id: Optional[str] = None  # set for a job instance
     attempt: Optional[int] = None
+    observed_speed: Optional[float] = None  # a job instance: the pace an observed run follows (simulations), a multiple of real time
 
 
 class SceneSample(LiveModel):
@@ -219,12 +242,13 @@ class SimulationFrames(LiveModel):
 
 
 class InstanceStatus(LiveModel):
-    """A job instance's state (the job's) and its latest progress message."""
+    """A job instance's state (the job's), its latest progress message and the speed an observed run follows."""
 
     kind: Literal["status"] = "status"
     state: str
     message: str = ""
     progress: Optional[float] = None
+    observed_speed: Optional[float] = None  # set for a job instance; a change of speed sends a status of its own
 
 
 InstanceUpdate = Annotated[Union[SceneSample, TrajectoryPreview, SimulationFrames, InstanceStatus], Field(discriminator="kind")]
@@ -345,7 +369,7 @@ _CLIENT_MESSAGES: TypeAdapter = TypeAdapter(ClientMessage)
 _SERVER_MESSAGES: TypeAdapter = TypeAdapter(ServerMessage)
 
 
-def decode_client_message(text: Union[str, bytes]) -> Union[Subscribe, Unsubscribe, Ping]:
+def decode_client_message(text: Union[str, bytes]) -> Union[Subscribe, Configure, Unsubscribe, Ping]:
     return _decode(text, _CLIENT_MESSAGES)
 
 

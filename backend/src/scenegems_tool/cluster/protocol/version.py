@@ -7,9 +7,12 @@ any message without producing confusing validation errors on the other side.
 Version 2 (Phase 4): payloads and results may hold artifact references (artifacts.py), the
 generation payloads take a seed, trajectory results say whether the plan is complete, the
 kinematic simulation takes a live monitor, and calibration.deviation is a job type.
+
+Version 3 (Phase 5): Hello may name the node's machine, and running simulations are observed
+live (Observe from the master, ObservationFrames from the node).
 """
 
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 
 
 class ProtocolVersionMismatch(ValueError):

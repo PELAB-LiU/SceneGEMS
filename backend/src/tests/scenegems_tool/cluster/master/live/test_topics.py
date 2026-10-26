@@ -150,14 +150,14 @@ def test_a_job_instance_shows_the_jobs_state_and_progress(client, browser, make_
     channel.producers.hub.on_job_observation = lambda *arguments: observed.append(arguments)
     topic = instance_topic(node.node_id, job_instance(job["job_id"], 1))
     snapshot = browser.subscribe(topic)
-    assert snapshot == {"node_id": node.node_id, "instance": f"job-{job['job_id']}-1", "kind": "scene_generation", "state": "leased", "job_id": job["job_id"], "attempt": 1}
+    assert snapshot == {"node_id": node.node_id, "instance": f"job-{job['job_id']}-1", "kind": "scene_generation", "state": "leased", "job_id": job["job_id"], "attempt": 1, "observed_speed": 10.0}
     assert observed == [(node.node_id, job["job_id"], 1, True)]
 
     node.accept(offer)
     idle()
-    assert browser.expect_update(topic) == {"kind": "status", "state": "running", "message": "", "progress": None}
+    assert browser.expect_update(topic) == {"kind": "status", "state": "running", "message": "", "progress": None, "observed_speed": 10.0}
     node.send_and_sync(JobStatus(lease_id=offer.lease_id, job_id=job["job_id"], progress=0.5, message="half way"))
-    assert browser.expect_update(topic) == {"kind": "status", "state": "running", "message": "half way", "progress": 0.5}
+    assert browser.expect_update(topic) == {"kind": "status", "state": "running", "message": "half way", "progress": 0.5, "observed_speed": 10.0}
 
     browser.send({"type": "unsubscribe", "topic": topic})
     assert browser.receive()["type"] == "unsubscribed"

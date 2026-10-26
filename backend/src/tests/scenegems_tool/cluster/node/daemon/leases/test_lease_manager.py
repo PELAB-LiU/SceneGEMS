@@ -8,8 +8,23 @@ import pytest
 from scenegems_tool.cluster.node.daemon.leases.lease import LeasePhase
 from scenegems_tool.cluster.node.daemon.leases.lease_manager import LeaseManager
 from scenegems_tool.cluster.node.daemon.leases.slot_table import SlotTable
+from scenegems_tool.cluster.node.job_observation import JobObservations
 from scenegems_tool.cluster.protocol.jobs import JobOutcome, JobType
-from scenegems_tool.cluster.protocol.messages import Cancel, Drain, JobResult, JobStatus, LeaseAccept, LeaseReject, LeaseRelease, LeaseRenew, LeaseRenewed, LogLines, Welcome
+from scenegems_tool.cluster.protocol.messages import (
+    Cancel,
+    Drain,
+    JobResult,
+    JobStatus,
+    LeaseAccept,
+    LeaseReject,
+    LeaseRelease,
+    LeaseRenew,
+    LeaseRenewed,
+    LogLines,
+    ObservationFrames,
+    Observe,
+    Welcome,
+)
 from tests.scenegems_tool.cluster.node.daemon.conftest import make_job, make_offer, wait_for
 
 KINEMATIC = JobType.SIMULATION_KINEMATIC
@@ -44,6 +59,9 @@ class Clock:
 class FakeNode:
     node_id = "n1"
 
+    def __init__(self, clock) -> None:
+        self.observations = JobObservations(clock)
+
 
 @pytest.fixture
 def clock():
@@ -57,7 +75,7 @@ def sender():
 
 @pytest.fixture
 def manager(sender, clock, jobs):
-    manager = LeaseManager(SlotTable({KINEMATIC: 2}), FakeNode(), sender, run=jobs, clock=clock)
+    manager = LeaseManager(SlotTable({KINEMATIC: 2}), FakeNode(clock), sender, run=jobs, clock=clock)
     manager.set_lease_timeout(9.0)
     yield manager
     manager.shutdown("test over", timeout_s=5.0)
@@ -190,3 +208,76 @@ def test_shutdown_releases_running_leases_and_sends_finished_results(manager, se
 
 def test_non_lease_messages_are_left_to_the_daemon(manager):
     assert not manager.handle(Welcome(master_id="m", heartbeat_interval_s=1.0, lease_timeout_s=3.0))
+
+
+# Observation: the master's Observe, the run's frames (added here as the job stack's log follower adds them) and the relay
+
+
+def frames(count: int, start: int = 0):
+    return [({"timestamp": index}, 100) for index in range(start, start + count)]
+
+
+def test_observe_switches_the_jobs_observation_and_its_frames_go_out_in_bounded_batches(manager, sender, jobs, clock):
+    accept(manager, sender, jobs, "a")
+    observation = manager.node.observations.get("job-a", 1)
+    observation.add_frames(frames(3))  # not observed: dropped
+    assert manager.relay_observations() == 0
+
+    assert manager.handle(Observe(job_id="job-a", attempt=1, active=True, speed=20.0))
+    assert observation.control.active and observation.control.speed == 20.0
+    observation.add_frames(frames(250))
+    assert manager.relay_observations() == 1
+    assert manager.relay_observations() == 0  # at most one batch per 0.1 s
+    clock.now += 0.1
+    assert manager.relay_observations() == 1
+    first, second = sender.of(ObservationFrames)
+    assert (first.lease_id, first.job_id, first.attempt, first.seq, len(first.frames)) == ("a", "job-a", 1, 1, 200)
+    assert (second.seq, [frame["timestamp"] for frame in second.frames]) == (2, list(range(200, 250)))
+
+    manager.handle(Observe(job_id="job-a", attempt=1, active=False))
+    observation.add_frames(frames(5))
+    clock.now += 1.0
+    assert manager.relay_observations() == 0 and len(sender.of(ObservationFrames)) == 2
+    jobs.finish("job-a")
+
+
+def test_an_observe_for_another_attempt_or_job_is_ignored(manager, sender, jobs):
+    accept(manager, sender, jobs, "a")
+    manager.on_observe(Observe(job_id="job-a", attempt=2, active=True))
+    manager.on_observe(Observe(job_id="job-x", attempt=1, active=True))
+    assert not manager.node.observations.get("job-a", 1).active and manager.node.observations.get("job-a", 2) is None
+    jobs.finish("job-a")
+
+
+def test_frames_wait_while_the_master_is_unreachable(manager, sender, jobs, clock):
+    accept(manager, sender, jobs, "a")
+    manager.on_observe(Observe(job_id="job-a", attempt=1, active=True))
+    sender.connected = False
+    manager.node.observations.get("job-a", 1).add_frames(frames(4))
+    assert manager.relay_observations() == 0
+    sender.connected = True
+    clock.now += 0.1
+    assert manager.relay_observations() == 1 and len(sender.of(ObservationFrames)[0].frames) == 4
+    jobs.finish("job-a")
+
+
+def test_a_finished_job_sends_its_last_frames_and_closes_its_observation(manager, sender, jobs):
+    accept(manager, sender, jobs, "a")
+    manager.on_observe(Observe(job_id="job-a", attempt=1, active=True))
+    observation = manager.node.observations.get("job-a", 1)
+    observation.add_frames(frames(3))
+    assert manager.relay_observations() == 1
+    observation.add_frames(frames(2, start=3))  # within the interval: they go with the job's end
+    jobs.finish("job-a")
+    wait_for(lambda: sender.of(JobResult))
+    assert [len(batch.frames) for batch in sender.of(ObservationFrames)] == [3, 2]
+    assert observation.closed and manager.node.observations.get("job-a", 1) is None
+
+
+def test_a_cancelled_job_closes_its_observation_without_sending(manager, sender, jobs):
+    accept(manager, sender, jobs, "a")
+    manager.on_observe(Observe(job_id="job-a", attempt=1, active=True))
+    manager.node.observations.get("job-a", 1).add_frames(frames(3))
+    manager.handle(Cancel(lease_id="a", job_id="job-a", reason="operator"))
+    wait_for(lambda: not manager.busy)
+    assert sender.of(ObservationFrames) == [] and len(manager.node.observations) == 0

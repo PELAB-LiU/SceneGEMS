@@ -4,7 +4,8 @@ import asyncio
 
 import pytest
 
-from scenegems_tool.cluster.master.live.live_channel import CLOSE_TOO_SLOW, LiveConnection, LiveSettings, Outbox, RateLimit, RateLimiter, joined_frames, latest
+from scenegems_tool.cluster.master.live.live_channel import CLOSE_TOO_SLOW, InvalidOptions, LiveConnection, LiveSettings, Outbox, RateLimit, RateLimiter, joined_frames, latest
+from scenegems_tool.cluster.protocol.live import TopicKind
 from tests.scenegems_tool.cluster.master.live.conftest import Browser, FakeWebSocket, settle
 
 pytestmark = pytest.mark.anyio
@@ -278,3 +279,56 @@ async def test_unsubscribing_discards_unsent_updates_of_the_topic():
     assert entry.topic == "u" and len(connection.outbox) == 0
     connection.update("t", {"n": 4})  # no longer subscribed
     assert len(connection.outbox) == 0
+
+
+class ConfigurableSource:
+    """A job topic source that takes options and records when they arrive, relative to its activation."""
+
+    def __init__(self, inner) -> None:
+        self.inner = inner
+        self.events = []
+
+    async def snapshot(self, topic):
+        return await self.inner.snapshot(topic)
+
+    def activate(self, topic) -> None:
+        self.events.append(("activate", topic.name))
+
+    def deactivate(self, topic) -> None:
+        self.events.append(("deactivate", topic.name))
+
+    def configure(self, topic, options) -> None:
+        if options.speed == 999:
+            raise InvalidOptions("not this speed")
+        self.events.append(("configure", topic.name, options.speed))
+
+
+async def test_options_reach_the_source_before_its_activation_and_with_each_configure(make_channel, source):
+    channel = make_channel()
+    configurable = ConfigurableSource(source)
+    channel.add_source(TopicKind.JOB, configurable)
+    browser = Browser(channel)
+    browser.socket.client_sends({"version": 1, "type": "subscribe", "topic": "job:a", "options": {"speed": 30}})
+    await settle()
+    browser.socket.client_sends({"version": 1, "type": "configure", "topic": "job:a", "options": {"speed": 60}})
+    browser.socket.client_sends({"version": 1, "type": "configure", "topic": "job:a", "options": {"speed": 999}})
+    browser.socket.client_sends({"version": 1, "type": "subscribe", "topic": "job:b", "options": {"speed": 999}})
+    await settle()
+    assert configurable.events == [("configure", "job:a", 30.0), ("activate", "job:a"), ("configure", "job:a", 60.0)]
+    subscribed, refused_configure, refused_subscribe = browser.socket.take()
+    assert subscribed["type"] == "subscribed"
+    assert refused_configure == {"version": 1, "type": "error", "message": "not this speed", "topic": "job:a"}
+    assert refused_subscribe == {"version": 1, "type": "error", "message": "not this speed", "topic": "job:b"}
+    assert channel.topics() == {"job:a"}  # a refused option subscribes nothing
+    await browser.leave()
+
+
+async def test_a_source_without_configure_takes_no_options(make_channel, source):
+    channel = make_channel()
+    browser = Browser(channel)
+    browser.socket.client_sends({"version": 1, "type": "subscribe", "topic": "job:a", "options": {"speed": 30}})
+    await settle()
+    (error,) = browser.socket.take()
+    assert error == {"version": 1, "type": "error", "message": "job topics take no options", "topic": "job:a"}
+    assert source.activated == []
+    await browser.leave()
