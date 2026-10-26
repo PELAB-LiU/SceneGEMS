@@ -28,6 +28,7 @@ from scenegems_tool.cluster.master.api.artifact_routes import lease_holder_of, n
 from scenegems_tool.cluster.master.api.live_routes import live_router
 from scenegems_tool.cluster.master.api.node_routes import node_router
 from scenegems_tool.cluster.master.api.operator_routes import operator_router
+from scenegems_tool.cluster.master.api.origin_guard import OriginGuard
 from scenegems_tool.cluster.master.api.run_frames_routes import run_frames_router
 from scenegems_tool.cluster.master.control_plane import ControlPlane
 from scenegems_tool.cluster.master.live.live_channel import LiveChannel
@@ -78,7 +79,8 @@ def create_operator_app(
 
     The campaign routes need the campaign stores (assurance); without them they answer 503.
     Browsers of allowed_origins may read and post (CORS): GET, POST and HEAD with a JSON or YAML
-    body, and read X-Total-Count and Content-Disposition. No other origin is allowed.
+    body, and read X-Total-Count and Content-Disposition. No other origin is allowed, and the
+    origin guard refuses other origins' POSTs and WebSockets, which CORS alone would let through.
     Without a live channel one is made on the control plane, observing jobs but no pools.
     """
     live = live if live is not None else create_live_channel(plane, assurance)
@@ -100,6 +102,7 @@ def create_operator_app(
         app.include_router(operator_artifact_router(artifacts.artifacts))
     if gateway is not None:
         app.mount("/", gateway)  # last, so the cluster routes match first
+    app.add_middleware(OriginGuard, allowed_origins=list(allowed_origins))
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(allowed_origins),
