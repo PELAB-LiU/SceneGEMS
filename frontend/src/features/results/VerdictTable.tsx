@@ -1,5 +1,5 @@
 import type { Verdict } from "../../domain/cluster/schemas";
-import { clampPage, describeRange, pageCount, PAGE_SIZES, type SortDirection, type VerdictPaging } from "../../domain/cluster/resultsApi";
+import { clampPage, describeRange, pageCount, PAGE_SIZES, splitFailedRule, type SortDirection, type VerdictPaging } from "../../domain/cluster/resultsApi";
 import { StateChip } from "./CaseParts";
 import { formatSeconds, shortClassId } from "./resultsFormat";
 
@@ -14,11 +14,13 @@ interface VerdictTableProps {
   onDirection: (direction: SortDirection) => void;
 }
 
+/** The failed rules by name (a rule that failed for several vessel pairs shows once); the full text is the tooltip. */
 function FailedRules({ rules }: { rules: string[] }) {
   if (rules.length === 0) {
     return <span className="meta">-</span>;
   }
-  const shown = rules.slice(0, 2);
+  const names = [...new Set(rules.map((text) => splitFailedRule(text).rule))];
+  const shown = names.slice(0, 2);
   return (
     <span className="results-rules" title={rules.join("\n")}>
       {shown.map((rule) => (
@@ -26,7 +28,7 @@ function FailedRules({ rules }: { rules: string[] }) {
           {rule}
         </span>
       ))}
-      {rules.length > shown.length && <span className="meta">+{rules.length - shown.length}</span>}
+      {names.length > shown.length && <span className="meta">+{names.length - shown.length}</span>}
     </span>
   );
 }
