@@ -1,0 +1,283 @@
+import { useMemo, useState } from "react";
+import { describeOperatorError } from "../../../domain/cluster/operatorApi";
+import { plural, splitClassId } from "../campaignFormat";
+import { Field, FieldIssues, NumberField } from "./fields";
+import { reasonsOfEntry, splitByField, type Reason } from "./reasons";
+import { expandPattern, planScope, summarizeFolders, type ScopeEntryPlan } from "./scopePlan";
+import type { CatalogState, StepProps } from "./stepTypes";
+import { emptyScopeEntry, type ScopeEntryDraft } from "./wizardState";
+
+const ENTRY_FIELDS = ["quota", "failure_budget"] as const;
+const CLASS_ROWS_SHOWN = 200;
+const NO_CLASSES: readonly never[] = [];
+
+function EntryCard({
+  entry,
+  index,
+  plan,
+  reasons,
+  active,
+  canRemove,
+  onActivate,
+  onChange,
+  onRemove,
+}: {
+  entry: ScopeEntryDraft;
+  index: number;
+  plan: ScopeEntryPlan | undefined;
+  reasons: readonly Reason[];
+  active: boolean;
+  canRemove: boolean;
+  onActivate: () => void;
+  onChange: (change: (entry: ScopeEntryDraft) => void) => void;
+  onRemove: () => void;
+}) {
+  const { byField, rest } = splitByField(reasons, ENTRY_FIELDS);
+  const empty = entry.classes.length === 0 && entry.patterns.length === 0;
+  return (
+    <section className={`wiz-card${active ? " wiz-card--active" : ""}${reasons.length > 0 ? " wiz-card--invalid" : ""}`} onClick={onActivate} aria-label={`Scope entry ${index + 1}`}>
+      <header className="wiz-card-head">
+        <h4>Scope entry {index + 1}</h4>
+        {active ? <span className="camp-badge camp-badge--info">receives what you pick in the catalog</span> : <button type="button" onClick={onActivate}>Pick into this entry</button>}
+        {canRemove && (
+          <button type="button" className="wiz-remove" onClick={onRemove}>
+            Remove entry
+          </button>
+        )}
+      </header>
+      {empty ? (
+        <p className="meta">Nothing chosen yet. Pick folders or classes in the catalog, or type a pattern.</p>
+      ) : (
+        <ul className="wiz-chips">
+          {entry.patterns.map((pattern) => (
+            <li key={`p-${pattern}`} className="wiz-chip wiz-chip--pattern" title="A pattern: it selects every class it matches">
+              <code>{pattern}</code>
+              <span className="wiz-chip-note">{plan && plan.emptyPatterns.includes(pattern) ? "matches nothing" : "pattern"}</span>
+              <button type="button" aria-label={`Remove pattern ${pattern}`} onClick={() => onChange((item) => void (item.patterns = item.patterns.filter((value) => value !== pattern)))}>
+                x
+              </button>
+            </li>
+          ))}
+          {entry.classes.map((classId) => (
+            <li key={`c-${classId}`} className="wiz-chip" title={classId}>
+              <code>{classId}</code>
+              <button type="button" aria-label={`Remove class ${classId}`} onClick={() => onChange((item) => void (item.classes = item.classes.filter((value) => value !== classId)))}>
+                x
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="wiz-row">
+        <Field label="Quota" htmlFor={`quota-${entry.id}`} hint="Complete cases each class needs." issues={byField.get("quota")}>
+          <NumberField id={`quota-${entry.id}`} integer min={1} value={entry.quota} invalid={byField.has("quota")} onChange={(value) => onChange((item) => void (item.quota = value))} />
+        </Field>
+        <Field label="Failure budget" htmlFor={`budget-${entry.id}`} hint="Dropped or failed cases a class may use up before it is abandoned." issues={byField.get("failure_budget")}>
+          <NumberField id={`budget-${entry.id}`} integer min={0} value={entry.failureBudget} invalid={byField.has("failure_budget")} onChange={(value) => onChange((item) => void (item.failureBudget = value))} />
+        </Field>
+      </div>
+      {plan && !empty && (
+        <p className="wiz-plan">
+          <strong>{plural(plan.classes.length, "class", "classes")}</strong> bring{plan.classes.length === 1 ? "s" : ""} <strong>{plural(plan.casesPlanned, "case")}</strong> to complete
+          {plan.duplicates.length > 0 && <span className="wiz-plan-warning"> {plural(plan.duplicates.length, "class", "classes")} already in an earlier entry.</span>}
+          {plan.unknownClasses.length > 0 && <span className="wiz-plan-warning"> Not in the catalog: {plan.unknownClasses.join(", ")}.</span>}
+          {plan.emptyPatterns.length > 0 && <span className="wiz-plan-warning"> No class matches {plan.emptyPatterns.join(", ")}.</span>}
+        </p>
+      )}
+      <FieldIssues reasons={rest} showField />
+    </section>
+  );
+}
+
+function CatalogBrowser({ catalog, onPickPattern, onPickClasses, picked }: { catalog: CatalogState; onPickPattern: (pattern: string) => void; onPickClasses: (classIds: string[]) => void; picked: ReadonlySet<string> }) {
+  const [folder, setFolder] = useState("");
+  const [search, setSearch] = useState("");
+  const [pattern, setPattern] = useState("");
+  const classes = catalog.classes ?? NO_CLASSES;
+  const folders = useMemo(() => summarizeFolders(classes), [classes]);
+  const inFolder = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return classes.filter((entry) => (folder === "" || entry.folder === folder) && (needle === "" || entry.class_id.toLowerCase().includes(needle)));
+  }, [classes, folder, search]);
+  const matches = useMemo(() => (pattern.trim() ? expandPattern(pattern.trim(), classes) : []), [pattern, classes]);
+  const shown = inFolder.slice(0, CLASS_ROWS_SHOWN);
+
+  if (catalog.classesLoading) {
+    return <p className="meta" role="status">Loading the class catalog...</p>;
+  }
+  if (catalog.classesError || !catalog.classes) {
+    return (
+      <div className="wiz-error" role="alert">
+        <p>The class catalog did not load: {describeOperatorError(catalog.classesError)}</p>
+        <button type="button" onClick={catalog.retry}>
+          Try again
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="wiz-catalog">
+      <p className="meta">
+        {plural(classes.length, "class", "classes")} in {plural(folders.length, "folder")}. A folder pattern selects every class of the folders it matches, so classes added to the catalog later are not included: the campaign pins the classes found when it is created.
+      </p>
+      <Field label="Pattern" htmlFor="wiz-pattern" hint="Without a slash it matches folders, with a slash class ids. Wildcards: * ? [abc].">
+        <span className="wiz-pattern-row">
+          <input id="wiz-pattern" type="text" value={pattern} placeholder="2vessel_*_scenarios" onChange={(event) => setPattern(event.target.value)} />
+          <button type="button" disabled={pattern.trim() === "" || matches.length === 0} onClick={() => { onPickPattern(pattern.trim()); setPattern(""); }}>
+            Add pattern
+          </button>
+        </span>
+        {pattern.trim() !== "" && (
+          <p className={`wiz-hint${matches.length === 0 ? " wiz-hint--warn" : ""}`}>
+            {matches.length === 0 ? "No class matches this pattern." : `Matches ${plural(matches.length, "class", "classes")}.`}
+          </p>
+        )}
+      </Field>
+      <div className="wiz-folders" role="list" aria-label="Folders">
+        {folders.map((summary) => (
+          <div key={summary.folder} role="listitem" className={`wiz-folder${folder === summary.folder ? " wiz-folder--on" : ""}`}>
+            <button type="button" className="wiz-folder-name" aria-pressed={folder === summary.folder} onClick={() => setFolder(folder === summary.folder ? "" : summary.folder)}>
+              {summary.folder}
+            </button>
+            <span className="wiz-folder-counts">
+              {plural(summary.classes, "class", "classes")}; {summary.vessels.join(" or ")} vessels; {summary.obstacles.join(" or ")} obstacles
+            </span>
+            <button type="button" onClick={() => onPickPattern(summary.folder)} title="Select the folder as a pattern">
+              Add folder
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="wiz-class-bar">
+        <input type="search" placeholder="Find a class" aria-label="Find a class" value={search} onChange={(event) => setSearch(event.target.value)} />
+        <span className="meta">
+          {folder === "" ? "All folders" : folder}: {plural(inFolder.length, "class", "classes")}
+        </span>
+        <button type="button" disabled={inFolder.length === 0} onClick={() => onPickClasses(inFolder.map((entry) => entry.class_id))}>
+          Add these {inFolder.length} as classes
+        </button>
+      </div>
+      <div className="camp-table-wrap wiz-class-scroll">
+        <table className="camp-table camp-table--dense">
+          <thead>
+            <tr>
+              <th>Class</th>
+              <th>Vessels</th>
+              <th>Obstacles</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((entry) => (
+              <tr key={entry.class_id}>
+                <td title={entry.class_id}>
+                  <span className="camp-class-name">{splitClassId(entry.class_id).name}</span>
+                  {folder === "" && <span className="camp-class-folder">{entry.folder}</span>}
+                </td>
+                <td className="camp-num">{entry.vessel_count}</td>
+                <td className="camp-num">{entry.obstacle_count}</td>
+                <td>
+                  <button type="button" disabled={picked.has(entry.class_id)} onClick={() => onPickClasses([entry.class_id])}>
+                    {picked.has(entry.class_id) ? "Added" : "Add"}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {inFolder.length > shown.length && <p className="meta">Showing the first {shown.length}; narrow the list to see the rest.</p>}
+    </div>
+  );
+}
+
+/** Scope: the campaign's name, and the classes it covers (picked from the catalog or by pattern) with a quota and failure budget per entry. */
+export function ScopeStep({ draft, update, reasons, catalog }: StepProps & { catalog: CatalogState }) {
+  const [activeId, setActiveId] = useState(draft.scope[0]?.id ?? "");
+  const active = draft.scope.find((entry) => entry.id === activeId) ?? draft.scope[draft.scope.length - 1];
+  const plan = useMemo(() => (catalog.classes ? planScope(draft.scope, catalog.classes) : null), [draft.scope, catalog.classes]);
+  const own = splitByField(reasonsOfEntry(reasons, null), ["name", "description", "scope"]);
+  const picked = useMemo(() => new Set(draft.scope.flatMap((entry) => entry.classes)), [draft.scope]);
+
+  const change = (id: string, edit: (entry: ScopeEntryDraft) => void) =>
+    update((next) => {
+      const found = next.scope.find((entry) => entry.id === id);
+      if (found) {
+        edit(found);
+      }
+    });
+
+  return (
+    <div className="wiz-step">
+      <div className="wiz-columns">
+        <div className="wiz-column">
+          <Field label="Name" htmlFor="wiz-name" hint="Shown in the campaign list." issues={own.byField.get("name")}>
+            <input id="wiz-name" type="text" value={draft.name} maxLength={256} placeholder="phase 4 exit campaign" onChange={(event) => update((next) => void (next.name = event.target.value))} />
+          </Field>
+          <Field label="Description" htmlFor="wiz-description" hint="Optional." issues={own.byField.get("description")}>
+            <textarea id="wiz-description" rows={2} value={draft.description} onChange={(event) => update((next) => void (next.description = event.target.value))} />
+          </Field>
+          <h4 className="wiz-subhead">Scope entries</h4>
+          <FieldIssues reasons={[...(own.byField.get("scope") ?? []), ...own.rest]} showField />
+          {draft.scope.map((entry, index) => (
+            <EntryCard
+              key={entry.id}
+              entry={entry}
+              index={index}
+              plan={plan?.entries[index]}
+              reasons={reasonsOfEntry(reasons, index)}
+              active={active?.id === entry.id}
+              canRemove={draft.scope.length > 1}
+              onActivate={() => setActiveId(entry.id)}
+              onChange={(edit) => change(entry.id, edit)}
+              onRemove={() => update((next) => void (next.scope = next.scope.filter((item) => item.id !== entry.id)))}
+            />
+          ))}
+          <div>
+            <button
+              type="button"
+              className="wiz-add"
+              onClick={() => {
+                const created = emptyScopeEntry();
+                update((next) => void next.scope.push(created));
+                setActiveId(created.id);
+              }}
+            >
+              Add a scope entry
+            </button>
+          </div>
+          {plan && (
+            <p className="wiz-total" role="status">
+              <strong>{plural(plan.classes, "class", "classes")}</strong> selected, <strong>{plural(plan.casesPlanned, "case")}</strong> planned to complete (the quotas added up).
+              <span className="wiz-hint"> Spares and dropped cases come on top.</span>
+            </p>
+          )}
+        </div>
+        <div className="wiz-column">
+          <h4 className="wiz-subhead">Catalog</h4>
+          <CatalogBrowser
+            catalog={catalog}
+            picked={picked}
+            onPickPattern={(pattern) =>
+              change(active?.id ?? "", (entry) => {
+                if (!entry.patterns.includes(pattern)) {
+                  entry.patterns.push(pattern);
+                }
+              })
+            }
+            onPickClasses={(classIds) =>
+              change(active?.id ?? "", (entry) => {
+                for (const classId of classIds) {
+                  if (!entry.classes.includes(classId)) {
+                    entry.classes.push(classId);
+                  }
+                }
+              })
+            }
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
