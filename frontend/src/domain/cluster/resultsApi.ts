@@ -1,0 +1,268 @@
+import type { OperatorClient, ListPage, VerdictFilters } from "./operatorApi";
+import type { CampaignDetail, Verdict, VerdictState } from "./schemas";
+
+/**
+ * Verdict table logic of the Results section: filter and paging state, how a page is read
+ * from the master, and the summary over a filtered set. The master orders verdicts by class,
+ * case index and run, ascending, and has no sort parameter; the descending order is read from
+ * the end of the set.
+ */
+
+export type SensitiveFilter = "any" | "yes" | "no";
+export type SortDirection = "asc" | "desc";
+
+export interface VerdictFilterState {
+  /** Empty for every class. */
+  classId: string;
+  state: VerdictState | "any";
+  /** Null for every run. */
+  runIndex: number | null;
+  sensitive: SensitiveFilter;
+}
+
+export interface VerdictPaging {
+  /** Zero based. */
+  page: number;
+  pageSize: number;
+  direction: SortDirection;
+}
+
+export const DEFAULT_VERDICT_FILTERS: VerdictFilterState = { classId: "", state: "any", runIndex: null, sensitive: "any" };
+export const PAGE_SIZES = [25, 50, 100, 200] as const;
+export const DEFAULT_PAGE_SIZE = 50;
+/** The most verdicts one summary reads (in pages of `SUMMARY_PAGE`). */
+export const SUMMARY_CAP = 5000;
+export const SUMMARY_PAGE = 1000;
+
+export function hasActiveFilters(filters: VerdictFilterState): boolean {
+  return (
+    filters.classId !== "" || filters.state !== "any" || filters.runIndex !== null || filters.sensitive !== "any"
+  );
+}
+
+/** The API's query filters (without a page) for a filter state. */
+export function toApiFilters(filters: VerdictFilterState): VerdictFilters {
+  const query: VerdictFilters = {};
+  if (filters.classId !== "") {
+    query.class_id = filters.classId;
+  }
+  if (filters.state !== "any") {
+    query.state = filters.state;
+  }
+  if (filters.runIndex !== null) {
+    query.run_index = filters.runIndex;
+  }
+  if (filters.sensitive !== "any") {
+    query.sensitive = filters.sensitive === "yes";
+  }
+  return query;
+}
+
+export function pageCount(total: number, pageSize: number): number {
+  return Math.max(1, Math.ceil(total / Math.max(1, pageSize)));
+}
+
+/** The page kept inside `0 .. pageCount - 1`. */
+export function clampPage(page: number, total: number, pageSize: number): number {
+  return Math.min(Math.max(0, page), pageCount(total, pageSize) - 1);
+}
+
+export interface PageWindow {
+  offset: number;
+  limit: number;
+  /** The rows of the window are shown last to first. */
+  reverse: boolean;
+}
+
+/** Which rows of the ascending set a page shows; the descending pages count from the end. */
+export function pageWindow(total: number, paging: VerdictPaging): PageWindow {
+  const size = Math.max(1, paging.pageSize);
+  const page = clampPage(paging.page, total, size);
+  if (paging.direction === "asc") {
+    return { offset: page * size, limit: size, reverse: false };
+  }
+  const end = Math.max(0, total - page * size);
+  const start = Math.max(0, end - size);
+  return { offset: start, limit: end - start, reverse: true };
+}
+
+/** The "first to last of total" text of a page. */
+export function describeRange(total: number, paging: VerdictPaging, shown: number): string {
+  if (total === 0 || shown === 0) {
+    return "0 of 0";
+  }
+  const size = Math.max(1, paging.pageSize);
+  const first = clampPage(paging.page, total, size) * size + 1;
+  return `${first} to ${first + shown - 1} of ${total}`;
+}
+
+export interface VerdictPage {
+  items: Verdict[];
+  /** The number of verdicts the filters match; null when the master does not send `X-Total-Count`. */
+  total: number | null;
+}
+
+type VerdictLister = Pick<OperatorClient, "listVerdicts">;
+
+/** One page of the filtered verdicts, in the order the paging asks for. */
+export async function fetchVerdictPage(
+  client: VerdictLister,
+  campaignId: string,
+  filters: VerdictFilterState,
+  paging: VerdictPaging,
+  signal?: AbortSignal
+): Promise<VerdictPage> {
+  const query = toApiFilters(filters);
+  if (paging.direction === "asc") {
+    const page = await client.listVerdicts(campaignId, { ...query, limit: paging.pageSize, offset: paging.page * paging.pageSize }, signal);
+    return { items: page.items, total: page.total };
+  }
+  const probe: ListPage<Verdict> = await client.listVerdicts(campaignId, { ...query, limit: 1, offset: 0 }, signal);
+  if (probe.total === null) {
+    // No total to count back from: the first page, reversed within itself.
+    const page = await client.listVerdicts(campaignId, { ...query, limit: paging.pageSize, offset: 0 }, signal);
+    return { items: [...page.items].reverse(), total: null };
+  }
+  const window = pageWindow(probe.total, paging);
+  if (window.limit === 0) {
+    return { items: [], total: probe.total };
+  }
+  const page = await client.listVerdicts(campaignId, { ...query, limit: window.limit, offset: window.offset }, signal);
+  return { items: [...page.items].reverse(), total: page.total ?? probe.total };
+}
+
+// Summary
+
+export interface RunStateCounts {
+  runIndex: number;
+  passed: number;
+  failed: number;
+  unmonitored: number;
+  total: number;
+}
+
+export interface RuleFailure {
+  rule: string;
+  /** Verdicts the rule failed in. */
+  verdicts: number;
+  /** Relations (pairs of vessels) it failed for, as the monitor names them. */
+  relations: string[];
+  /** The earliest first failure time over those verdicts, in seconds. */
+  earliestFailureS: number | null;
+}
+
+export interface VerdictSummary {
+  /** Verdicts read for the summary. */
+  analyzed: number;
+  /** Verdicts the filters match, when the master said; the summary is partial when it is larger than `analyzed`. */
+  total: number | null;
+  partial: boolean;
+  byState: Record<VerdictState, number>;
+  byRun: RunStateCounts[];
+  failedRules: RuleFailure[];
+  sensitive: number;
+}
+
+/** A verdict's failed rule text is `<relation>: <rule>`; the rule name itself can hold a colon. */
+export function splitFailedRule(text: string): { relation: string | null; rule: string } {
+  const at = text.indexOf(": ");
+  if (at <= 0 || !text.slice(0, at).includes("->")) {
+    return { relation: null, rule: text };
+  }
+  return { relation: text.slice(0, at), rule: text.slice(at + 2) };
+}
+
+/** Counts per run and state and the failed rules ranked by the verdicts they failed in. */
+export function summarizeVerdicts(verdicts: readonly Verdict[], total: number | null = null): VerdictSummary {
+  const byState: Record<VerdictState, number> = { passed: 0, failed: 0, unmonitored: 0 };
+  const runs = new Map<number, RunStateCounts>();
+  const rules = new Map<string, { verdicts: number; relations: Set<string>; earliest: number | null }>();
+  let sensitive = 0;
+  for (const verdict of verdicts) {
+    byState[verdict.state] += 1;
+    if (verdict.sensitive) {
+      sensitive += 1;
+    }
+    let run = runs.get(verdict.run_index);
+    if (!run) {
+      run = { runIndex: verdict.run_index, passed: 0, failed: 0, unmonitored: 0, total: 0 };
+      runs.set(verdict.run_index, run);
+    }
+    run[verdict.state] += 1;
+    run.total += 1;
+    const inThisVerdict = new Set<string>();
+    for (const text of verdict.failed_rules) {
+      const { relation, rule } = splitFailedRule(text);
+      let entry = rules.get(rule);
+      if (!entry) {
+        entry = { verdicts: 0, relations: new Set(), earliest: null };
+        rules.set(rule, entry);
+      }
+      if (!inThisVerdict.has(rule)) {
+        inThisVerdict.add(rule);
+        entry.verdicts += 1;
+        if (verdict.first_failure_time_s !== null && (entry.earliest === null || verdict.first_failure_time_s < entry.earliest)) {
+          entry.earliest = verdict.first_failure_time_s;
+        }
+      }
+      if (relation !== null) {
+        entry.relations.add(relation);
+      }
+    }
+  }
+  const failedRules = [...rules.entries()]
+    .map(([rule, entry]) => ({ rule, verdicts: entry.verdicts, relations: [...entry.relations].sort(), earliestFailureS: entry.earliest }))
+    .sort((a, b) => b.verdicts - a.verdicts || a.rule.localeCompare(b.rule));
+  return {
+    analyzed: verdicts.length,
+    total,
+    partial: total !== null && total > verdicts.length,
+    byState,
+    byRun: [...runs.values()].sort((a, b) => a.runIndex - b.runIndex),
+    failedRules,
+    sensitive,
+  };
+}
+
+/** Reads the filtered verdicts (up to `cap`, in pages) and summarizes them. */
+export async function fetchVerdictSummary(
+  client: VerdictLister,
+  campaignId: string,
+  filters: VerdictFilterState,
+  signal?: AbortSignal,
+  cap: number = SUMMARY_CAP,
+  pageSize: number = SUMMARY_PAGE
+): Promise<VerdictSummary> {
+  const query = toApiFilters(filters);
+  const verdicts: Verdict[] = [];
+  let total: number | null = null;
+  while (verdicts.length < cap) {
+    const size = Math.min(pageSize, cap - verdicts.length);
+    const page = await client.listVerdicts(campaignId, { ...query, limit: size, offset: verdicts.length }, signal);
+    verdicts.push(...page.items);
+    total = page.total ?? total;
+    if (page.items.length < size || (total !== null && verdicts.length >= total)) {
+      break;
+    }
+  }
+  return summarizeVerdicts(verdicts, total ?? verdicts.length);
+}
+
+/** Share of `part` in `whole` as a whole percentage. */
+export function percent(part: number, whole: number): number {
+  return whole <= 0 ? 0 : Math.round((part / whole) * 100);
+}
+
+/** The run indexes the campaign has verdicts for, from its class counts. */
+export function runIndexesOf(detail: CampaignDetail | undefined): number[] {
+  const runs = new Set<number>();
+  for (const view of detail?.classes ?? []) {
+    for (const run of Object.keys(view.verdicts)) {
+      const index = Number(run);
+      if (Number.isInteger(index)) {
+        runs.add(index);
+      }
+    }
+  }
+  return [...runs].sort((a, b) => a - b);
+}
