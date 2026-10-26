@@ -1,10 +1,12 @@
 import {
+  configureMessage,
   parseServerMessage,
   pingMessage,
   subscribeMessage,
   unsubscribeMessage,
   type ClientMessage,
   type ServerMessage,
+  type SubscribeOptions,
 } from "./liveProtocol";
 
 /**
@@ -75,6 +77,8 @@ interface TopicEntry {
   lastSeq: number | null;
   backlog: { seq: number; data: unknown }[];
   backlogComplete: boolean;
+  /** Sent with every `subscribe` of the topic: the first subscriber's, then the latest `configure`. */
+  options: SubscribeOptions | undefined;
 }
 
 export class LiveChannel {
@@ -138,8 +142,11 @@ export class LiveChannel {
     };
   }
 
-  /** Subscribes to a topic; the returned function ends this subscription (once). */
-  subscribe(topic: string, listener: TopicListener): () => void {
+  /**
+   * Subscribes to a topic; the returned function ends this subscription (once). `options`
+   * go out with the topic's `subscribe` (the first subscriber's count; later ones share it).
+   */
+  subscribe(topic: string, listener: TopicListener, options?: SubscribeOptions): () => void {
     if (this.closed) {
       throw new Error("the live channel is closed");
     }
@@ -154,6 +161,7 @@ export class LiveChannel {
         lastSeq: null,
         backlog: [],
         backlogComplete: true,
+        options,
       };
       this.topics.set(topic, entry);
       entry.subscriptions.add(subscription);
@@ -180,6 +188,22 @@ export class LiveChannel {
       active = false;
       this.release(topic, subscription);
     };
+  }
+
+  /**
+   * Changes the options of a subscribed topic (a simulation's speed): sent as `configure`
+   * while the topic is subscribed, and kept for the next `subscribe` after a reconnect.
+   * A no-op for a topic nobody subscribes to.
+   */
+  configure(topic: string, options: SubscribeOptions): void {
+    const entry = this.topics.get(topic);
+    if (!entry) {
+      return;
+    }
+    entry.options = { ...entry.options, ...options };
+    if (this.isOpen() && (entry.phase === "subscribing" || entry.phase === "live")) {
+      this.send(configureMessage(topic, options));
+    }
   }
 
   /** Closes the channel for good. */
@@ -235,7 +259,7 @@ export class LiveChannel {
     entry.lastSeq = null;
     entry.backlog = [];
     entry.backlogComplete = true;
-    this.send(subscribeMessage(topic));
+    this.send(subscribeMessage(topic, entry.options));
   }
 
   private isOpen(): boolean {

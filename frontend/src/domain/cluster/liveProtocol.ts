@@ -65,13 +65,29 @@ export function parseTopic(topic: string): ParsedTopic | null {
 
 // Client to server
 
+/**
+ * Options of an observed job instance topic (live simulations, design doc 5.3 "Wave 2 contracts"):
+ * `speed` is the multiple of real time an observed run is paced to (the master's default is 10).
+ */
+export interface SubscribeOptions {
+  speed?: number;
+}
+
 export type ClientMessage =
-  | { type: "subscribe"; version: 1; topic: string }
+  | { type: "subscribe"; version: 1; topic: string; options?: SubscribeOptions }
   | { type: "unsubscribe"; version: 1; topic: string }
+  | { type: "configure"; version: 1; topic: string; options: SubscribeOptions }
   | { type: "ping"; version: 1 };
 
-export function subscribeMessage(topic: string): ClientMessage {
-  return { type: "subscribe", version: LIVE_PROTOCOL_VERSION, topic };
+export function subscribeMessage(topic: string, options?: SubscribeOptions): ClientMessage {
+  return options && Object.keys(options).length > 0
+    ? { type: "subscribe", version: LIVE_PROTOCOL_VERSION, topic, options }
+    : { type: "subscribe", version: LIVE_PROTOCOL_VERSION, topic };
+}
+
+/** Changes the options of a subscribed topic; the latest request wins for every observer of the job. */
+export function configureMessage(topic: string, options: SubscribeOptions): ClientMessage {
+  return { type: "configure", version: LIVE_PROTOCOL_VERSION, topic, options };
 }
 
 export function unsubscribeMessage(topic: string): ClientMessage {

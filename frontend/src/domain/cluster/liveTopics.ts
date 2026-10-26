@@ -203,6 +203,8 @@ export const instanceSnapshotSchema = z.object({
   state: z.string(),
   job_id: z.string().nullable().optional(),
   attempt: z.number().int().nullable().optional(),
+  /** Speed (multiple of real time) the master paces an observed simulation to; null when unpaced or not observed. */
+  observed_speed: z.number().nullable().optional(),
 });
 
 export const sceneSampleSchema = z.object({
@@ -238,6 +240,8 @@ export const instanceStatusSchema = z.object({
   state: z.string(),
   message: z.string().nullable().optional(),
   progress: z.number().nullable().optional(),
+  /** Optional: a changed pace of an observed run. */
+  observed_speed: z.number().nullable().optional(),
 });
 
 export const instanceUpdateSchema = z.discriminatedUnion("kind", [
@@ -286,7 +290,13 @@ export const instanceReducer: LiveTopicReducer<InstanceTopicState> = {
           frameCount: state.frameCount + update.frames.length,
         };
       case "status":
-        return { ...state, state: update.state, message: update.message ?? null, progress: update.progress ?? null };
+        return {
+          ...state,
+          info: update.observed_speed === undefined ? state.info : { ...state.info, observed_speed: update.observed_speed },
+          state: update.state,
+          message: update.message ?? null,
+          progress: update.progress ?? null,
+        };
     }
   },
 };
