@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { EvaluationData, SimulationFrame } from "./types";
+import type { StackOptionsPayload } from "./wireTypes";
 
 const stateSchema = z
   .object({
@@ -471,7 +472,10 @@ export type ParsedServerMessage =
         | "initializing"
         | "not initialized"
         | "offline";
+      /** Host port of each Mission Planner vessel's ground control station (TCP on localhost), by agent id. */
+      groundControlPortsByAgentId: Record<string, number>;
     }
+  | { kind: "stack_options"; options: StackOptionsPayload }
   | { kind: "waraps_status"; status: "connected" | "disconnected" }
   | { kind: "monitor_status"; status: "connected" | "disconnected" }
   | {
@@ -557,6 +561,34 @@ const simulationStatusSchema = z.object({
     "not initialized",
     "offline",
   ]),
+  groundControlPortsByAgentId: z.record(z.string(), z.number().int().positive()).optional().default({}),
+});
+
+const asvSoftwareSchema = z.enum(["replay", "usv_navigation", "mission_planner"]);
+const controlLayerSchema = z.enum(["ardupilot", "custom", "none"]);
+const supportSchema = z.enum(["supported", "unmeasured", "unsupported"]).nullable();
+
+const stackOptionsSchema = z.object({
+  type: z.literal("stack_options"),
+  simulatorTypes: z.array(z.string()),
+  asvSoftware: z.array(asvSoftwareSchema),
+  controlLayers: z.array(controlLayerSchema),
+  combinations: z.array(
+    z.object({
+      simulatorType: z.string(),
+      asvSoftware: asvSoftwareSchema,
+      controlLayer: controlLayerSchema,
+      available: z.boolean(),
+      status: z.string(),
+      reason: z.string(),
+      interactiveOnly: z.boolean(),
+      repeatabilityTier: z.enum(["exact", "bounded", "none"]).nullable(),
+      maxSpeedup: z.number().nullable(),
+      speedupUnlimited: z.boolean(),
+      wind: supportSchema,
+      waves: supportSchema,
+    })
+  ),
 });
 
 const framePushSchema = z
@@ -740,13 +772,21 @@ export function parseServerMessage(raw: unknown): ParsedServerMessage {
     };
   }
   if (msgType === "simulation_status") {
+    const parsed = simulationStatusSchema.parse({
+      type: "simulation_status",
+      status: payload.status ?? obj.status,
+      groundControlPortsByAgentId: payload.groundControlPortsByAgentId ?? obj.groundControlPortsByAgentId,
+    });
     return {
       kind: "simulation_status",
-      status: simulationStatusSchema.parse({
-        type: "simulation_status",
-        status: payload.status ?? obj.status,
-      }).status,
+      status: parsed.status,
+      groundControlPortsByAgentId: parsed.groundControlPortsByAgentId,
     };
+  }
+  if (msgType === "stack_options") {
+    const { type: _type, ...options } = stackOptionsSchema.parse(raw);
+    void _type;
+    return { kind: "stack_options", options };
   }
 
   return { kind: "unknown", raw };

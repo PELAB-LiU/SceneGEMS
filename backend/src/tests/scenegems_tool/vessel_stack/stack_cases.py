@@ -45,6 +45,7 @@ def _instance(case: str) -> SimulationInstanceConfig:
             agent_id="1",
             stack=VesselStackConfig(AsvSoftwareId.MISSION_PLANNER, ControlLayerId.ARDUPILOT, layer),
             connection=AgentConnection(agent_name="agent_1", topic="waraps/unit/surface/agent_1", port=14560),
+            adapter_ids=("mission_planner_mavlink_port",),
         )
         return instance
     raise KeyError(case)

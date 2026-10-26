@@ -9,7 +9,7 @@ Phase 2 every "yes" row of the availability matrix is available.
 from functools import lru_cache
 from typing import Mapping, Optional
 
-from scenegems_tool.vessel_stack.asv_software.mission_planner.mission_planner_specs import MISSION_PLANNER_LAYER, MISSION_PLANNER_MAVLINK_PORT
+from scenegems_tool.vessel_stack.asv_software.mission_planner.mission_planner_specs import MISSION_PLANNER_GCS_PORT, MISSION_PLANNER_LAYER, MISSION_PLANNER_MAVLINK_PORT
 from scenegems_tool.vessel_stack.asv_software.replay.replay_specs import REPLAY_ARDUAGENT_FOLLOWER, REPLAY_LAYER, REPLAY_MAVLINK_LOCKSTEP, REPLAY_STATE_FOLLOWER, mavlink_link_runtime
 from scenegems_tool.vessel_stack.asv_software.usv_navigation.usv_navigation_specs import (
     CUSTOM_CONTROLLER_HEADING_SPEED_INPUT,
@@ -109,7 +109,9 @@ def build_registry(measurements: Optional[Mapping[str, CapabilityMeasurement]] =
     registry.register_adapter(USV_NAVIGATION_IN_PROCESS, runtime=usv_navigation_participant_runtime)
     registry.register_adapter(REPLAY_ARDUAGENT_FOLLOWER)
     registry.register_adapter(REPLAY_MAVLINK_LOCKSTEP, runtime=mavlink_link_runtime, default=True)
-    registry.register_adapter(MISSION_PLANNER_MAVLINK_PORT)
+    registry.register_adapter(MISSION_PLANNER_GCS_PORT)
+    # ArduAgent's external control mode, for instances with real vessels (gateway/workbench_stack_mapping.py).
+    registry.register_adapter(MISSION_PLANNER_MAVLINK_PORT, default=False)
     registry.register_adapter(KINEMATIC_COMMAND_INPUT)
     registry.register_adapter(SITL_INTERNAL_PHYSICS)
     registry.register_adapter(ARDUPILOT_GAZEBO_PLUGIN)

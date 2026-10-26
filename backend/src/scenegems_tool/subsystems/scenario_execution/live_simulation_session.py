@@ -6,12 +6,7 @@ from concrete_level.models.concrete_scene import ConcreteScene
 from concrete_level.models.trajectories import Trajectories
 from concrete_level.trajectory_generation.trajectory_builder import TrajectoryBuilder
 from scenegems_tool.cluster.node.launchers.per_job.simulation_session_stack import SimulationSessionStack
-from scenegems_tool.gateway.protocol import (
-    ServerMessage,
-    SimulationStatus,
-    make_error_message,
-    make_simulation_status_message,
-)
+from scenegems_tool.gateway.protocol import ServerMessage, SimulationStatus, make_error_message
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.messaging.mqtt_scenario_execution_client import MqttScenarioExecutionClient
 from scenegems_tool.messaging.mqtt_scenario_execution_service import SCENARIO_EXECUTION_SERVICE_NAME
@@ -61,6 +56,7 @@ class LiveSimulationSession(SimulationSession):
             simulation_config,
             trajectories,
             time_step,
+            on_ground_control_ports=self._set_ground_control_ports,
         )
         self._client = MqttScenarioExecutionClient(
             mqtt_connection=mqtt_connection,
@@ -128,12 +124,16 @@ class LiveSimulationSession(SimulationSession):
     def _status_update(self) -> SimulationStatus:
         return self._resolve_simulation_status()
 
+    def _set_ground_control_ports(self, ports: Dict[str, int]) -> None:
+        """From the stack's spawn thread; the status loop sends them with the next status."""
+        self.ground_control_ports = dict(ports)
+
     def _emit_status_if_changed(self, worker_status: SimulationStatus) -> None:
         resolved = self._resolve_simulation_status(worker_status)
         if resolved == self.status:
             return
         self.status = resolved
-        self.send_payload(make_simulation_status_message(resolved))
+        self._send_status()
 
     def _send_scenario_chunks(self) -> None:
         time_step = self.live_trajectory_builder.time_step

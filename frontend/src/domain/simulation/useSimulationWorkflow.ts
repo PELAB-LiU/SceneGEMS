@@ -320,7 +320,10 @@ export function useSimulationWorkflow() {
           setMonitorStatus(message.status);
           break;
         case "simulation_status":
-          setSimulationStatus(message.status);
+          setSimulationStatus(message.status, message.groundControlPortsByAgentId);
+          break;
+        case "stack_options":
+          usePlaybackStore.getState().setStackOptions(message.options);
           break;
         case "simulation_models":
           simulationModelsToken += 1;
@@ -380,6 +383,8 @@ export function useSimulationWorkflow() {
         setStreamStatus(status);
         if (status === "connected") {
           setError(null);
+          // The simulator, ASV software and control layer choices come from the backend's stack resolver.
+          client.send({ type: "query_stack_options" });
           return;
         }
         setWarapsStatus("disconnected");
@@ -456,7 +461,7 @@ export function useSimulationWorkflow() {
         return;
       }
       clearSimulationTrajectories();
-      setSimulationStatus("agents are preparing");
+      setSimulationStatus("agents are preparing", usePlaybackStore.getState().groundControlPortsByAgentId);
       clientRef.current?.send({ type: "start_simulation" });
     },
     resetSimulation: () => {

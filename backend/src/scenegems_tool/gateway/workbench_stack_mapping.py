@@ -1,31 +1,41 @@
 """Maps the workbench wire vocabulary to vessel stack triples and back.
 
-The browser still sends the pre-adapter fields: one global simulatorType and a per-agent
-controlMode. Inside the backend these become a (ASV software, control layer, simulation
-layer) triple per vessel. Every Docker-based workbench stack runs the ardupilot control
-layer, and autonomous vessels select the ArduAgent follower, not the registry's default
-lockstep MAVLink link, because the workbench reaches its vessels over WARA-PS MQTT. The labels sent back (simulation_models, the scenario execution worker body) are the
-ones the browser offers, so the round trip is unchanged.
+The browser sends one simulatorType for the instance and, per agent, its ASV software
+(asvSoftware) and control layer (controlLayer). Older clients send only a controlMode per
+agent, which names the ASV software (autonomous is replay, external is mission_planner); the
+control layer then defaults to the one the simulator's ArduPilot-era stacks used (none on the
+kinematic layer, ardupilot otherwise).
+
+Adapters: an instance with a real vessel runs through ArduAgent, which reaches real and
+simulated vessels alike over WARA-PS MQTT, so its replay and Mission Planner vessels select
+the ArduAgent adapters. An instance of simulated vessels uses the registry's defaults (the
+lockstep MAVLink link, the custom controller's adapters, the Mission Planner ground station
+port), which the scenario execution worker drives with the lockstep runners.
+
+The labels sent back (simulation_models, the scenario execution worker body) are the ones the
+browser offers, so the round trip is unchanged.
 """
 
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
+from scenegems_tool.vessel_stack.asv_software.mission_planner.mission_planner_specs import MISSION_PLANNER_MAVLINK_PORT
 from scenegems_tool.vessel_stack.asv_software.replay.replay_specs import REPLAY_ARDUAGENT_FOLLOWER
 from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, SimulationLayerId
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import VesselStackConfig
 
-WORKBENCH_CONTROL_LAYER = ControlLayerId.ARDUPILOT
-
 _SIMULATOR_TYPE_LABELS: Dict[SimulationLayerId, str] = {
     SimulationLayerId.GAZEBO: "Gazebo",
     SimulationLayerId.ARDUPILOT_SIM: "ArduPilot Sim",
+    SimulationLayerId.KINEMATIC: "Kinematic",
 }
 _CONTROL_MODE_LABELS: Dict[AsvSoftwareId, str] = {
     AsvSoftwareId.REPLAY: "autonomous",
     AsvSoftwareId.MISSION_PLANNER: "external",
 }
-_WORKBENCH_ADAPTER_IDS: Dict[AsvSoftwareId, Tuple[str, ...]] = {
+# The adapters ArduAgent drives a vessel through, for instances with a real vessel.
+_ARDUAGENT_ADAPTER_IDS: Dict[AsvSoftwareId, Tuple[str, ...]] = {
     AsvSoftwareId.REPLAY: (REPLAY_ARDUAGENT_FOLLOWER.id,),
+    AsvSoftwareId.MISSION_PLANNER: (MISSION_PLANNER_MAVLINK_PORT.id,),
 }
 
 
@@ -50,21 +60,38 @@ def asv_software_from_control_mode(control_mode: str) -> AsvSoftwareId:
     raise ValueError(f"Unknown controlMode '{control_mode}'; expected one of {', '.join(_CONTROL_MODE_LABELS.values())}.")
 
 
-def control_mode_label(asv_software: AsvSoftwareId) -> str:
-    if asv_software not in _CONTROL_MODE_LABELS:
-        raise ValueError(f"ASV software {asv_software.value} has no workbench controlMode.")
-    return _CONTROL_MODE_LABELS[asv_software]
+def control_mode_label(asv_software: AsvSoftwareId) -> Optional[str]:
+    """The controlMode of an ASV software, None for one ArduAgent has no mode for (USV Navigation)."""
+    return _CONTROL_MODE_LABELS.get(asv_software)
 
 
-def workbench_adapter_ids(control_mode: str) -> Tuple[str, ...]:
-    """Adapters the workbench selects: it drives its vessels through ArduAgent over WARA-PS MQTT,
-    while the registry's default from replay to ardupilot is the lockstep MAVLink link."""
-    return _WORKBENCH_ADAPTER_IDS.get(asv_software_from_control_mode(control_mode), ())
+def default_control_layer(simulation_layer: SimulationLayerId) -> ControlLayerId:
+    """The control layer of an agent that names none: the kinematic layer integrates control itself."""
+    return ControlLayerId.NONE if simulation_layer == SimulationLayerId.KINEMATIC else ControlLayerId.ARDUPILOT
 
 
-def workbench_stack(simulator_type: str, control_mode: str) -> VesselStackConfig:
-    return VesselStackConfig(
-        asv_software=asv_software_from_control_mode(control_mode),
-        control_layer=WORKBENCH_CONTROL_LAYER,
-        simulation_layer=simulation_layer_from_simulator_type(simulator_type),
-    )
+def _parse_role(enum, value: str, field: str):
+    try:
+        return enum(value)
+    except ValueError:
+        raise ValueError(f"Unknown {field} '{value}'; expected one of {', '.join(member.value for member in enum)}.") from None
+
+
+def workbench_stack(simulator_type: str, asv_software: Optional[str], control_layer: Optional[str], control_mode: Optional[str] = None) -> VesselStackConfig:
+    """The triple of one agent: asvSoftware (or, from older clients, controlMode) and controlLayer (or the simulator's default)."""
+    simulation_layer = simulation_layer_from_simulator_type(simulator_type)
+    if asv_software:
+        software = _parse_role(AsvSoftwareId, asv_software, "asvSoftware")
+    elif control_mode:
+        software = asv_software_from_control_mode(control_mode)
+    else:
+        raise ValueError("An agent needs an asvSoftware (or a controlMode).")
+    control = _parse_role(ControlLayerId, control_layer, "controlLayer") if control_layer else default_control_layer(simulation_layer)
+    return VesselStackConfig(asv_software=software, control_layer=control, simulation_layer=simulation_layer)
+
+
+def workbench_adapter_ids(stack: VesselStackConfig, instance_has_real_vessel: bool) -> Tuple[str, ...]:
+    """ArduAgent's adapters in an instance with a real vessel, else the registry's defaults (none named)."""
+    if not instance_has_real_vessel:
+        return ()
+    return _ARDUAGENT_ADAPTER_IDS.get(stack.asv_software, ())

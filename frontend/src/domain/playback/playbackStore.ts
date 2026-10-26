@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { EvaluationData, GeneratedSceneData, SimulationFrame } from "../simulation/types";
+import type { StackOptionsPayload } from "../simulation/wireTypes";
 import { timestampAtOrBefore } from "./playbackFrameResolve";
 import { loadPersistedScene, savePersistedScene } from "./persistedScene";
 import { evaluationTimeBaseline } from "../sceneGeneration/evaluationTime";
@@ -76,6 +77,7 @@ const clearedLoadedPlaybackState = {
   simulationFrames: [] as SimulationFrame[],
   simulationFrameIndexByTimestamp: {} as Record<number, number>,
   simulationStatus: "not initialized" as const,
+  groundControlPortsByAgentId: {} as Record<string, number>,
   activeScenarioId: null as string | null,
   receivedSimulationModels: null,
 };
@@ -154,6 +156,11 @@ export interface PlaybackState {
   sceneGenerationEvaluationBaselineByRequestId: Record<string, number>;
   /** Latest server-generated Gazebo models (from `simulation_models`), to load into the init tables. */
   receivedSimulationModels: ReceivedSimulationModels | null;
+  /** Host port (TCP on localhost) of each Mission Planner vessel's ground control station, by agent id. */
+  groundControlPortsByAgentId: Record<string, number>;
+  /** The backend resolver's stack combinations (from `stack_options`); null until received. */
+  stackOptions: StackOptionsPayload | null;
+  setStackOptions: (options: StackOptionsPayload | null) => void;
   setStreamStatus: (status: PlaybackState["streamStatus"]) => void;
   setWarapsStatus: (status: PlaybackState["warapsStatus"]) => void;
   setMonitorStatus: (status: PlaybackState["monitorStatus"]) => void;
@@ -181,7 +188,10 @@ export interface PlaybackState {
   ingestPushFrame: (frame: SimulationFrame) => void;
   clearSimulationTrajectories: () => void;
   markSimulationInitialized: () => void;
-  setSimulationStatus: (status: PlaybackState["simulationStatus"]) => void;
+  setSimulationStatus: (
+    status: PlaybackState["simulationStatus"],
+    groundControlPortsByAgentId?: Record<string, number>
+  ) => void;
   setActiveSceneGenerationRequestId: (requestId: string | null) => void;
   recordSceneGenerationEvaluation: (requestId: string, evaluationData: EvaluationData) => void;
   completeSceneGeneration: (requestId: string) => void;
@@ -233,6 +243,9 @@ export const usePlaybackStore = create<PlaybackState>((set, get) => ({
   sceneGenerationEvaluationByRequestId: {},
   sceneGenerationEvaluationBaselineByRequestId: {},
   receivedSimulationModels: null,
+  groundControlPortsByAgentId: {},
+  stackOptions: null,
+  setStackOptions: (options) => set({ stackOptions: options }),
   setStreamStatus: (status) => set({ streamStatus: status }),
   setWarapsStatus: (status) => set({ warapsStatus: status }),
   setMonitorStatus: (status) => set({ monitorStatus: status }),
@@ -386,9 +399,10 @@ export const usePlaybackStore = create<PlaybackState>((set, get) => ({
       };
     }),
   markSimulationInitialized: () => set({ simulationInitialized: true }),
-  setSimulationStatus: (status) =>
+  setSimulationStatus: (status, groundControlPortsByAgentId = {}) =>
     set((state) => ({
       simulationStatus: status,
+      groundControlPortsByAgentId,
       // Any concrete status report from the backend ends the local "initializing"
       // spinner state started by beginSimulationInitialization().
       simulationInitializing:

@@ -13,6 +13,7 @@ import {
   type SimulationInitControlsHandle,
 } from "./SimulationInitControls";
 import { RecordingControls } from "./RecordingControls";
+import { groundControlEndpointLabels } from "./simulationInitConfig";
 
 interface Props {
   streamControls: SimulationStreamControls;
@@ -66,6 +67,8 @@ export function PlaybackControls({ streamControls }: Props) {
   const followLatestPush = usePlaybackStore((s) => s.followLatestPush);
   const followSimulationLive = usePlaybackStore((s) => s.followSimulationLive);
   const simulationStatus = usePlaybackStore((s) => s.simulationStatus);
+  const groundControlPorts = usePlaybackStore((s) => s.groundControlPortsByAgentId);
+  const groundControlEndpoints = groundControlEndpointLabels(groundControlPorts);
   const simulationFrames = usePlaybackStore((s) => s.simulationFrames);
   const simulationInitialized = usePlaybackStore((s) => s.simulationInitialized);
   const warapsStatus = usePlaybackStore((s) => s.warapsStatus);
@@ -125,6 +128,19 @@ export function PlaybackControls({ streamControls }: Props) {
           <span className="meta simulation-panel-status-meta">
             Buffered frames: {simulationFrames.length}
           </span>
+          {groundControlEndpoints.length > 0 ? (
+            <>
+              <span className="simulation-status-sep" aria-hidden="true">
+                |
+              </span>
+              <span
+                className="meta simulation-panel-status-meta"
+                title="Connect Mission Planner over TCP to fly these vessels"
+              >
+                Mission Planner: {groundControlEndpoints.join(", ")}
+              </span>
+            </>
+          ) : null}
         </div>
       ) : null}
 

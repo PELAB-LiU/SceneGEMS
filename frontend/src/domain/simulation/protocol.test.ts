@@ -246,6 +246,54 @@ describe("parseServerMessage", () => {
     }
   });
 
+  it("parses the ground control station ports of a simulation_status", () => {
+    const msg = parseServerMessage({
+      type: "simulation_status",
+      status: "ready to start",
+      groundControlPortsByAgentId: { "1": 49153 },
+    });
+    expect(msg.kind).toBe("simulation_status");
+    if (msg.kind === "simulation_status") {
+      expect(msg.groundControlPortsByAgentId).toEqual({ "1": 49153 });
+    }
+  });
+
+  it("gives a simulation_status without ports an empty port map", () => {
+    const msg = parseServerMessage({ type: "simulation_status", status: "running" });
+    if (msg.kind === "simulation_status") {
+      expect(msg.groundControlPortsByAgentId).toEqual({});
+    }
+  });
+
+  it("parses stack_options", () => {
+    const combination = {
+      simulatorType: "Kinematic",
+      asvSoftware: "replay",
+      controlLayer: "ardupilot",
+      available: false,
+      status: "unavailable",
+      reason: "the kinematic sim integrates control internally",
+      interactiveOnly: false,
+      repeatabilityTier: null,
+      maxSpeedup: null,
+      speedupUnlimited: false,
+      wind: null,
+      waves: null,
+    };
+    const msg = parseServerMessage({
+      type: "stack_options",
+      simulatorTypes: ["Kinematic", "Gazebo", "ArduPilot Sim"],
+      asvSoftware: ["replay", "usv_navigation", "mission_planner"],
+      controlLayers: ["ardupilot", "custom", "none"],
+      combinations: [combination],
+    });
+    expect(msg.kind).toBe("stack_options");
+    if (msg.kind === "stack_options") {
+      expect(msg.options.simulatorTypes).toEqual(["Kinematic", "Gazebo", "ArduPilot Sim"]);
+      expect(msg.options.combinations).toEqual([combination]);
+    }
+  });
+
   it("parses simulation_models with per-vessel models", () => {
     const msg = parseServerMessage({
       type: "simulation_models",

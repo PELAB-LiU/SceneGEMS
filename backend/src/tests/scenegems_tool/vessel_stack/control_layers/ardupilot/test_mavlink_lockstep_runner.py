@@ -163,6 +163,41 @@ class TestRunMavlinkLockstep:
         assert result.achieved_speedup is None or result.achieved_speedup > 0
 
 
+class TestPassiveVessels:
+    def test_a_passive_vessel_is_observed_but_never_armed_or_commanded(self):
+        trajectories = encounter_trajectories("head_on", 40)
+        links, followers, vessels = build_run(trajectories)
+        del followers[1]
+        result = run_mavlink_lockstep(links, followers, vessels, 1.0, 10, run_seed=3, passive=frozenset({1}))
+        own, operated = FakeLink.connections
+        assert all(len(step) == 2 for step in result.states), "both vessels are recorded"
+        assert own.armed and own.mav.named("set_position_target_local_ned_send")
+        assert not operated.armed
+        assert not operated.mav.named("set_mode_send") and not operated.mav.named("set_position_target_local_ned_send")
+        assert [seed for seed, _ in result.participant_seeds] == ["replay/0"]
+
+    def test_the_active_vessels_observe_the_passive_one(self):
+        trajectories = encounter_trajectories("head_on", 40)
+        links, followers, vessels = build_run(trajectories)
+        del followers[1]
+        seen = []
+
+        class Watching(type(followers[0])):
+            def on_step(self, request, observation):
+                seen.append(set(observation.target_states))
+                return super().on_step(request, observation)
+
+        follower = followers[0]
+        watching = Watching(follower.vessel, trajectories.state_list(follower.vessel), trajectories.time_step)
+        run_mavlink_lockstep(links, {0: watching}, vessels, 1.0, 3, run_seed=3, passive=frozenset({1}))
+        assert seen and all(targets == {1} for targets in seen)
+
+    def test_a_passive_vessel_may_not_also_have_a_participant(self):
+        links, followers, vessels = build_run(encounter_trajectories("head_on", 10))
+        with pytest.raises(ValueError, match="must name the same vessels"):
+            run_mavlink_lockstep(links, followers, vessels, 1.0, 3, run_seed=0, passive=frozenset({1}))
+
+
 class TestValidation:
     def test_links_participants_and_vessels_must_name_the_same_vessels(self):
         trajectories = encounter_trajectories("head_on", 10)
@@ -292,6 +327,17 @@ class TestRunMavlinkReplay:
         instance = mavlink_replay_instance(straight, SimulationLayerId.ARDUPILOT_SIM, speedup=100)
         with pytest.raises(StackUnavailableError, match="exceeds the measured max_speedup 50"):
             run_mavlink_stack(straight, instance, GEOFENCE, resolver=resolver)
+
+    def test_an_attended_run_leaves_mission_planner_vessels_to_the_operator(self, resolver):
+        trajectories = encounter_trajectories("head_on", 30)
+        instance = mavlink_instance(trajectories, SimulationLayerId.ARDUPILOT_SIM)
+        operated = instance.vessels["1"]
+        operated.stack = type(operated.stack)(AsvSoftwareId.MISSION_PLANNER, operated.stack.control_layer, operated.stack.simulation_layer)
+        operated.adapter_ids = ()
+        result = run_mavlink_stack(trajectories, instance, GEOFENCE, resolver=resolver, steps=5, attended=True)
+        assert result.run_record["operator_vessels"] == [1]
+        assert set(result.run_record["participant_seeds"]) == {"replay/0"}
+        assert not FakeLink.connections[1].armed
 
     def test_the_run_is_validated_as_unattended(self, resolver, straight):
         from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId

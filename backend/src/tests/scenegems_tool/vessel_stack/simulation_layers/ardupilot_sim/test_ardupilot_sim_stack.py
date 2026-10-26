@@ -2,6 +2,9 @@
 
 import pytest
 
+from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, SimulationLayerId
+from scenegems_tool.vessel_stack.simulation_docker_stack import build_simulation_docker_stack_artifacts
+from tests.scenegems_tool.vessel_stack.scenarios import GEOFENCE, encounter_trajectories, mqtt_connection, stack_instance
 from tests.scenegems_tool.vessel_stack.sdf import parse_params, parse_sdf, plugins
 
 
@@ -70,3 +73,23 @@ def test_agent_environment_carries_the_broker_and_credentials(arduagent_stack):
     assert "PORT=1883" in environment
     assert "MQTT_USER=user" in environment
     assert "TLS_CERTIFICE=0" in environment
+
+
+class TestMissionPlannerGroundStation:
+    """mission_planner_gcs_port: SITL plus a MAVProxy whose ground station endpoint Docker publishes; no ArduAgent."""
+
+    @pytest.fixture(scope="class")
+    def services(self):
+        instance = stack_instance(SimulationLayerId.ARDUPILOT_SIM, [0, 1], asv_software=AsvSoftwareId.MISSION_PLANNER)
+        _, compose = build_simulation_docker_stack_artifacts(instance, encounter_trajectories("head_on", 60), mqtt_connection(), GEOFENCE)
+        return compose["services"]
+
+    def test_each_vessel_has_sitl_and_mavproxy_only(self, services):
+        assert sorted(services) == ["agent_0", "agent_0_mavproxy", "agent_1", "agent_1_mavproxy"]
+
+    def test_mavproxy_takes_serial1_and_leaves_serial0_to_the_runner(self, services):
+        assert "--master=tcp:agent_1:5772" in services["agent_1_mavproxy"]["command"]
+
+    def test_the_ground_station_endpoint_is_published_on_a_port_docker_assigns(self, services):
+        assert "--out=tcpin:0.0.0.0:5770" in services["agent_0_mavproxy"]["command"]
+        assert services["agent_0_mavproxy"]["ports"] == ["5770"]

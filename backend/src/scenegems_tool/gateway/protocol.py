@@ -74,6 +74,22 @@ class ConnectToWARAPSMessage(TypedDict):
 class SimulationStatusMessage(TypedDict):
     type: Literal["simulation_status"]
     status: str
+    # Host port of each Mission Planner vessel's ground control station endpoint (TCP on localhost), by agent id.
+    groundControlPortsByAgentId: NotRequired[Dict[str, int]]
+
+
+class QueryStackOptionsMessage(TypedDict):
+    type: Literal["query_stack_options"]
+
+
+class StackOptionsMessage(TypedDict):
+    """Every (simulatorType, asvSoftware, controlLayer) the resolver knows, with whether the workbench can run it and why not."""
+
+    type: Literal["stack_options"]
+    simulatorTypes: List[str]
+    asvSoftware: List[str]
+    controlLayers: List[str]
+    combinations: List[Dict[str, Any]]
 
 
 class StopSceneGenerationMessage(TypedDict):
@@ -106,7 +122,11 @@ class ResetSimulationMessage(TypedDict):
 
 class SimulationConnectionInfo(TypedDict):
     context: str
-    controlMode: str
+    # The agent's stack: asvSoftware and controlLayer (AsvSoftwareId and ControlLayerId values). An
+    # older client sends only controlMode (autonomous or external), which names the ASV software.
+    asvSoftware: NotRequired[str]
+    controlLayer: NotRequired[str]
+    controlMode: NotRequired[str]
     agentName: str
     topic: str
     port: Optional[int]
@@ -167,6 +187,7 @@ ClientMessage = Union[
     StopTrajectoryGenerationMessage,
     ShutDownMonitorMessage,
     GenerateSimulationModelsMessage,
+    QueryStackOptionsMessage,
 ]
 
 
@@ -256,6 +277,7 @@ ServerMessage = Union[
     WarAPSStatusMessage,
     Dict[str, Any],
     SimulationStatusMessage,
+    StackOptionsMessage,
     MonitorStatusMessage,
     GeneratedSceneMessage,
     TrajectoryGenerationPreviewMessage,
@@ -346,13 +368,18 @@ def _parse_agent_context(connection: SimulationConnectionInfo) -> AgentContext:
 def simulation_config_from_body(body: SimulationModelsBody) -> SimulationInstanceConfig:
     """Convert an inbound simulation-models body (initialize_simulation /
     generate_simulation_models / simulation_models) into a typed simulation instance.
-    simulatorType and each agent's controlMode become one stack triple per vessel, with
-    the ArduAgent adapters the workbench uses (see gateway.workbench_stack_mapping)."""
+    simulatorType and each agent's asvSoftware and controlLayer (or controlMode) become one
+    stack triple per vessel; an instance with a real vessel selects the ArduAgent adapters
+    (see gateway.workbench_stack_mapping)."""
     wave = body["wave"]
     wind_vector = list(body["windVector"])
     if len(wind_vector) != 3:
         raise ValueError(f"windVector must have 3 components [east, north, up]; got {len(wind_vector)}.")
     simulator_type = body["simulatorType"]
+    connections = body["connectionsByAgentId"]
+    contexts = {agent_id: _parse_agent_context(connection) for agent_id, connection in connections.items()}
+    has_real_vessel = any(context == AgentContext.REAL for context in contexts.values())
+    stacks = {agent_id: workbench_stack(simulator_type, connection.get("asvSoftware"), connection.get("controlLayer"), connection.get("controlMode")) for agent_id, connection in connections.items()}
     return SimulationInstanceConfig(
         simulation_layer=simulation_layer_from_simulator_type(simulator_type),
         environment=EnvironmentConfig(
@@ -368,15 +395,31 @@ def simulation_config_from_body(body: SimulationModelsBody) -> SimulationInstanc
         vessels={
             agent_id: VesselConfig(
                 agent_id=agent_id,
-                stack=workbench_stack(simulator_type, connection["controlMode"]),
-                context=_parse_agent_context(connection),
+                stack=stacks[agent_id],
+                context=contexts[agent_id],
                 connection=AgentConnection(agent_name=connection["agentName"], topic=connection["topic"], port=_parse_agent_port(connection)),
                 gazebo_vessel_model=connection.get("gazeboVesselModel", None),
-                adapter_ids=workbench_adapter_ids(connection["controlMode"]),
+                adapter_ids=workbench_adapter_ids(stacks[agent_id], has_real_vessel),
             )
-            for agent_id, connection in body["connectionsByAgentId"].items()
+            for agent_id, connection in connections.items()
         },
     )
+
+
+def _connection_info(vessel: VesselConfig) -> SimulationConnectionInfo:
+    info = SimulationConnectionInfo(
+        context=vessel.context.value,
+        asvSoftware=vessel.stack.asv_software.value,
+        controlLayer=vessel.stack.control_layer.value,
+        agentName=vessel.require_connection().agent_name,
+        topic=vessel.require_connection().topic,
+        port=vessel.require_connection().port,
+        gazeboVesselModel=vessel.gazebo_vessel_model,
+    )
+    control_mode = control_mode_label(vessel.stack.asv_software)
+    if control_mode is not None:
+        info["controlMode"] = control_mode
+    return info
 
 
 def make_simulation_models_body(config: SimulationInstanceConfig) -> SimulationModelsBody:
@@ -392,17 +435,7 @@ def make_simulation_models_body(config: SimulationInstanceConfig) -> SimulationM
             direction=[float(component) for component in environment.wave.direction],
         ),
         simulationSpeed=int(config.speedup),
-        connectionsByAgentId={
-            agent_id: SimulationConnectionInfo(
-                context=vessel.context.value,
-                controlMode=control_mode_label(vessel.stack.asv_software),
-                agentName=vessel.require_connection().agent_name,
-                topic=vessel.require_connection().topic,
-                port=vessel.require_connection().port,
-                gazeboVesselModel=vessel.gazebo_vessel_model,
-            )
-            for agent_id, vessel in config.vessels.items()
-        },
+        connectionsByAgentId={agent_id: _connection_info(vessel) for agent_id, vessel in config.vessels.items()},
     )
 
 
@@ -441,5 +474,8 @@ def make_simulation_chunk_message(
     )
 
 
-def make_simulation_status_message(status: SimulationStatus) -> SimulationStatusMessage:
-    return SimulationStatusMessage(type="simulation_status", status=status.value)
+def make_simulation_status_message(status: SimulationStatus, ground_control_ports: Optional[Dict[str, int]] = None) -> SimulationStatusMessage:
+    message = SimulationStatusMessage(type="simulation_status", status=status.value)
+    if ground_control_ports:
+        message["groundControlPortsByAgentId"] = {agent_id: int(port) for agent_id, port in sorted(ground_control_ports.items())}
+    return message

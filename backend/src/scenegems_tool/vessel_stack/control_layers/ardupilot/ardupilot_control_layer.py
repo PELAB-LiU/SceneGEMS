@@ -3,13 +3,14 @@
 from concrete_level.models.actor_state import ActorState
 from concrete_level.models.concrete_actors import ConcreteVessel
 from scenegems_tool.messaging.mqtt_agent_client import MqttAgentClient
+from scenegems_tool.vessel_stack.asv_software.mission_planner.mission_planner_specs import MISSION_PLANNER_GCS_PORT
 from scenegems_tool.vessel_stack.contracts.docker_stack import DockerStackArtifacts, DockerStackRequest
 from scenegems_tool.vessel_stack.contracts.roles import SimulationLayerId
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import VesselConfig
 from scenegems_tool.vessel_stack.control_layers.ardupilot.ardu_param_generator import generate_ardu_params
 from scenegems_tool.vessel_stack.control_layers.ardupilot.arduagent_control_mode import ARDUAGENT_ADAPTER_IDS, arduagent_control_mode
 from scenegems_tool.vessel_stack.control_layers.ardupilot.ardupilot_specs import ARDUPILOT_CONTROL_LAYER
-from scenegems_tool.vessel_stack.control_layers.ardupilot.vessel_service_generator import generate_vessel_service
+from scenegems_tool.vessel_stack.control_layers.ardupilot.vessel_service_generator import generate_gcs_mavproxy_service, generate_vessel_service
 from scenegems_tool.vessel_stack.registry.catalog import default_resolver
 
 
@@ -56,6 +57,9 @@ class ArduPilotControlLayer:
         services = generate_vessel_service(agent_stub, connection.port, params_file, request.simulation.speedup, sitl_internal_physics)
         if not arduagent:
             # The ASV software talks MAVLink to SITL's SERIAL0 itself (mavlink_link.py), so the
-            # vessel gets SITL only: no MAVProxy, no ArduAgent and no ground control station port.
+            # vessel gets SITL only: no MAVProxy and no ArduAgent. A Mission Planner vessel adds
+            # MAVProxy with the operator's ground control station endpoint.
             services = {connection.agent_name: services[connection.agent_name]}
+            if asv_adapter is not None and asv_adapter.id == MISSION_PLANNER_GCS_PORT.id:
+                services.update(generate_gcs_mavproxy_service(connection.agent_name, vessel.id))
         artifacts.services.update(services)

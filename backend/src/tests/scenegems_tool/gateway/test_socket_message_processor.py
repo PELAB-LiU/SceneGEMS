@@ -67,6 +67,9 @@ class RecordingSession:
     async def monitor_scene(self, **kwargs) -> None:
         self._record("monitor_scene", kwargs)
 
+    def send_payload(self, payload) -> None:
+        self._record("send_payload", payload)
+
     def names(self) -> List[str]:
         return [name for name, _ in self.calls]
 
@@ -159,7 +162,14 @@ class TestDispatch:
         session, processor = setup
         await send(processor, {"type": message_type, **SIMULATION_BODY, "simulatorType": "Webots"})
         assert session.calls == []
-        assert session.errors == ["Invalid simulation configuration: Unknown simulatorType 'Webots'; expected one of Gazebo, ArduPilot Sim."]
+        assert session.errors == ["Invalid simulation configuration: Unknown simulatorType 'Webots'; expected one of Gazebo, ArduPilot Sim, Kinematic."]
+
+    async def test_the_stack_options_are_answered_from_the_resolver(self, setup):
+        session, processor = setup
+        await send(processor, {"type": "query_stack_options"})
+        ((name, payload),) = session.calls
+        assert name == "send_payload" and payload["type"] == "stack_options"
+        assert len(payload["combinations"]) == 27
 
     async def test_generate_scene_forwards_every_field(self, setup):
         session, processor = setup

@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useId, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useEffect, useId, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { usePersistedState } from "../../../app/usePersistedState";
 import { usePlaybackStore } from "../../../domain/playback/playbackStore";
 import type { ActorStaticInfo } from "../../../domain/simulation/types";
@@ -6,13 +6,21 @@ import { downloadBlob } from "../scene/sceneExport";
 import type { WaveInfoWire } from "../../../domain/simulation/wireTypes";
 import type { SimulationStreamControls } from "./types";
 import {
+  ASV_SOFTWARE,
+  ASV_SOFTWARE_LABELS,
+  asvSoftwareChoice,
   buildInitializeSimulationConnectionsByAgentIdMap,
   buildInitialVesselConnectionDrafts,
+  CONTROL_LAYER_LABELS,
+  CONTROL_LAYERS,
+  controlLayerChoice,
   mergePersistedVesselSettings,
+  normalizeDraftStack,
   round2,
   toPersistedVesselDrafts,
   toTopicSegment,
-  type ControlMode,
+  type AsvSoftware,
+  type ControlLayer,
   DEFAULT_SIMULATION_SPEED,
   GLOBAL_SIMULATOR_TYPES,
   SIMULATION_SPEED_MAX,
@@ -215,6 +223,13 @@ export const SimulationInitControls = forwardRef<SimulationInitControlsHandle, P
     ...DEFAULT_WAVE,
   }));
   const receivedSimulationModels = usePlaybackStore((s) => s.receivedSimulationModels);
+  const stackOptions = usePlaybackStore((s) => s.stackOptions);
+  // The drafts as shown and sent: a simulator that does not run a vessel's control layer gets one
+  // that runs its ASV software. The stored drafts keep the user's choice for the other simulators.
+  const stackDrafts = useMemo(
+    () => vesselConnectionDrafts.map((draft) => normalizeDraftStack(draft, simulatorType, stackOptions)),
+    [vesselConnectionDrafts, simulatorType, stackOptions]
+  );
   // Per-instance guard against re-applying the same server `simulation_models`
   // payload. A component-scoped ref (not a module global) so navigating away and
   // back re-applies the still-present models onto freshly rebuilt drafts.
@@ -237,7 +252,7 @@ export const SimulationInitControls = forwardRef<SimulationInitControlsHandle, P
           ],
           wave: waveWire,
           connectionsByAgentId:
-            buildInitializeSimulationConnectionsByAgentIdMap(vesselConnectionDrafts),
+            buildInitializeSimulationConnectionsByAgentIdMap(stackDrafts),
         };
       };
       return {
@@ -263,7 +278,7 @@ export const SimulationInitControls = forwardRef<SimulationInitControlsHandle, P
       windNorth,
       windUp,
       wave,
-      vesselConnectionDrafts,
+      stackDrafts,
     ]
   );
 
@@ -379,31 +394,58 @@ export const SimulationInitControls = forwardRef<SimulationInitControlsHandle, P
             <thead>
               <tr>
                 <th align="left">ID</th>
-                <th align="left">Control mode</th>
+                <th align="left">ASV software</th>
+                <th align="left">Control layer</th>
                 <th align="left">Agent name</th>
                 <th align="left">Topic</th>
                 <th align="left">Port</th>
               </tr>
             </thead>
             <tbody>
-              {vesselConnectionDrafts.length > 0 ? (
-                vesselConnectionDrafts.map((draft) => (
+              {stackDrafts.length > 0 ? (
+                stackDrafts.map((draft) => (
                   <tr key={draft.vesselId}>
                     <td>{draft.vesselId}</td>
                     <td>
                       <select
-                        value={draft.controlMode}
+                        value={draft.asvSoftware}
                         onChange={(e) =>
-                          updateConnection(
-                            draft.vesselId,
-                            "controlMode",
-                            e.target.value as ControlMode
-                          )
+                          updateConnection(draft.vesselId, "asvSoftware", e.target.value as AsvSoftware)
                         }
                       >
-                        <option value="autonomous">autonomous</option>
-                        <option value="external">external</option>
+                        {ASV_SOFTWARE.map((software) => {
+                          const choice = asvSoftwareChoice(stackOptions, simulatorType, software);
+                          return (
+                            <option key={software} value={software} disabled={!choice.available} title={choice.reason}>
+                              {ASV_SOFTWARE_LABELS[software]}
+                            </option>
+                          );
+                        })}
                       </select>
+                    </td>
+                    <td>
+                      {draft.context === "simulation" ? (
+                        <select
+                          value={draft.controlLayer}
+                          title={controlLayerChoice(stackOptions, simulatorType, draft.asvSoftware, draft.controlLayer).reason}
+                          onChange={(e) =>
+                            updateConnection(draft.vesselId, "controlLayer", e.target.value as ControlLayer)
+                          }
+                        >
+                          {CONTROL_LAYERS.map((layer) => {
+                            const choice = controlLayerChoice(stackOptions, simulatorType, draft.asvSoftware, layer);
+                            return (
+                              <option key={layer} value={layer} disabled={!choice.available} title={choice.reason}>
+                                {CONTROL_LAYER_LABELS[layer]}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      ) : (
+                        <span className="meta" title="A real vessel is its own control and physics">
+                          -
+                        </span>
+                      )}
                     </td>
                     <td>
                       <input
@@ -446,7 +488,7 @@ export const SimulationInitControls = forwardRef<SimulationInitControlsHandle, P
                 ))
               ) : (
                 <tr>
-                  <td colSpan={5} className="meta">
+                  <td colSpan={6} className="meta">
                     No vessels received from backend stream yet.
                   </td>
                 </tr>
@@ -478,8 +520,8 @@ export const SimulationInitControls = forwardRef<SimulationInitControlsHandle, P
               </tr>
             </thead>
             <tbody>
-              {vesselConnectionDrafts.length > 0 ? (
-                vesselConnectionDrafts.map((draft) => (
+              {stackDrafts.length > 0 ? (
+                stackDrafts.map((draft) => (
                   <tr key={draft.vesselId}>
                     <td>{draft.vesselId}</td>
                     <td>

@@ -14,6 +14,11 @@ The runner reads the wall clock only for timeouts and to report the achieved pac
 An optional step observer sees each step's observed states, keyed by vessel id, as soon as
 they are recorded (a live observation forwards them). It must return quickly: SITL does not
 wait for the runner.
+
+In an attended run a vessel can be passive: an operator flies it from a ground control
+station (mission_planner_gcs_port). The runner reads its state on SERIAL0 like any other
+vessel's, so every participant observes it, but never arms it, switches its mode or
+commands it.
 """
 
 import dataclasses
@@ -23,10 +28,11 @@ import select
 import struct
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import AbstractSet, Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from concrete_level.models.concrete_actors import ConcreteVessel
 from concrete_level.models.trajectories import Trajectories
+from scenegems_tool.vessel_stack.asv_software.mission_planner.mission_planner_specs import MISSION_PLANNER_GCS_PORT
 from scenegems_tool.vessel_stack.asv_software.replay.replay_follower import ReplayFollower
 from scenegems_tool.vessel_stack.asv_software.replay.replay_specs import REPLAY_MAVLINK_LOCKSTEP
 from scenegems_tool.vessel_stack.asv_software.usv_navigation.usv_navigation_parameters import UsvNavigationParameters
@@ -90,27 +96,30 @@ def run_mavlink_lockstep(
     ready_timeout_s: float = 600.0,
     step_timeout_s: float = 120.0,
     on_step: Optional[StepObserver] = None,
+    passive: AbstractSet[int] = frozenset(),
 ) -> MavlinkRunResult:
     """Connect, wait for readiness, arm in HOLD, then run `steps` steps of dt seconds of SITL time.
 
-    The first command of each vessel switches it to GUIDED. links, participants and vessels are keyed by vessel id. Scenario time 0 is start_boot_s of
+    The first command of each vessel switches it to GUIDED. links, participants and vessels are keyed by vessel id; the passive
+    vessels have a link and no participant, and are only observed. Scenario time 0 is start_boot_s of
     SITL time on the lowest vessel id when given, else the first multiple of START_QUANTUM_S
     at least START_MARGIN_S after every vessel is armed; the other vessels start at the same
     instant of their own SITL clock as measured at that moment.
     """
     vessel_ids = tuple(sorted(links))
-    if tuple(sorted(participants)) != vessel_ids or not set(vessel_ids) <= set(vessels):
-        raise ValueError(f"links {vessel_ids}, participants {tuple(sorted(participants))} and vessels must name the same vessels")
-    clock = LockstepClock(dt, (participants[vessel_id].participant_id for vessel_id in vessel_ids))
+    active_ids = tuple(vessel_id for vessel_id in vessel_ids if vessel_id not in passive)
+    if tuple(sorted(participants)) != active_ids or not set(passive) <= set(vessel_ids) or not set(vessel_ids) <= set(vessels):
+        raise ValueError(f"links {vessel_ids}, participants {tuple(sorted(participants))} plus passive vessels {tuple(sorted(passive))}, and vessels must name the same vessels")
+    clock = LockstepClock(dt, (participants[vessel_id].participant_id for vessel_id in active_ids))
     seeds: Dict[str, int] = {}
-    for vessel_id in vessel_ids:
+    for vessel_id in active_ids:
         participant = participants[vessel_id]
         seeds[participant.participant_id] = derive_seed(run_seed, participant.participant_id)
         participant.start(seeds[participant.participant_id])
     dt_ms = int(round(dt * 1000))
     if dt_ms <= 0 or abs(dt_ms - dt * 1000) > 1e-6 or dt >= GUIDED_TARGET_TIMEOUT_S:
         raise ValueError(f"dt must be a whole number of milliseconds below Rover's {GUIDED_TARGET_TIMEOUT_S:g} s GUIDED target timeout, got {dt}")
-    _engage(links, vessel_ids, ready_timeout_s)
+    _engage(links, vessel_ids, active_ids, ready_timeout_s)
     epochs = _epochs(links, vessel_ids, start_boot_s)
     recorded: List[Tuple[StampedState, ...]] = []
     wall_start: Optional[float] = None
@@ -121,14 +130,14 @@ def run_mavlink_lockstep(
             wall_start = time.monotonic()
         if index * dt_ms >= GUIDED_CHECK_MS and index * dt_ms < GUIDED_CHECK_MS + dt_ms:
             # Heartbeats come once a second, so two seconds after the first command every vessel must report GUIDED.
-            not_guided = [vessel_id for vessel_id in vessel_ids if not links[vessel_id].in_guided]
+            not_guided = [vessel_id for vessel_id in active_ids if not links[vessel_id].in_guided]
             if not_guided:
                 raise MavlinkLinkError(f"vessels {not_guided} did not switch from HOLD to GUIDED with their first command")
         _record(recorded, index, observed, vessel_ids, on_step)
         if index == steps:
             break
         commands = _step_commands(clock, participants, vessels, observed)
-        for vessel_id in vessel_ids:
+        for vessel_id in active_ids:
             links[vessel_id].send_heading_speed(commands[vessel_id], boundaries[vessel_id])
     wall_s = time.monotonic() - wall_start if wall_start is not None else 0.0
     return MavlinkRunResult(
@@ -197,6 +206,7 @@ def run_mavlink_stack(
     resolver: Optional[StackResolver] = None,
     on_step: Optional[StepObserver] = None,
     usv_navigation_parameters: Optional[Mapping[int, UsvNavigationParameters]] = None,
+    attended: bool = False,
 ) -> MavlinkRunResult:
     """Run every simulated vessel on a running ArduPilot stack (ardupilot_sim or gazebo) through the registry.
 
@@ -206,17 +216,22 @@ def run_mavlink_stack(
     given). endpoints maps agent ids to MAVLink endpoints; by default each is SERIAL0 of the
     vessel's SITL service inside the stack network. dt defaults to the trajectory time step and
     steps to its timespan. The run seed is environment.seed. on_step sees every step's observed states.
+    An attended run (an operator is watching, as in the workbench) may also hold Mission Planner
+    vessels on their ground control station port (mission_planner_gcs_port), which it observes
+    and leaves to the operator.
     """
     resolver = resolver or default_resolver()
-    resolution = resolver.require_instance(simulation, attended=False, host=host)
+    resolution = resolver.require_instance(simulation, attended=attended, host=host)
     lockstep_ids = set(MAVLINK_LOCKSTEP_ADAPTERS.values())
+    passive_ids = {MISSION_PLANNER_GCS_PORT.id} if attended else set()
     wrong = [
         f"vessel {agent_id} runs through {chain.asv_adapter.id if chain.asv_adapter else 'no adapter'}"
         for agent_id, chain in resolution.chains.items()
-        if chain.asv_adapter is None or chain.asv_adapter.id not in lockstep_ids
+        if chain.asv_adapter is None or chain.asv_adapter.id not in lockstep_ids | passive_ids
     ]
     if wrong:
-        raise StackUnavailableError([f"run_mavlink_stack needs {' or '.join(sorted(lockstep_ids))} for every simulated vessel: {', '.join(wrong)}"])
+        accepted = " or ".join(sorted(lockstep_ids | passive_ids))
+        raise StackUnavailableError([f"run_mavlink_stack needs {accepted} for every simulated vessel: {', '.join(wrong)}"])
     dt = float(trajectories.time_step) if dt is None else dt
     scene = trajectories.initial_scene
 
@@ -224,12 +239,18 @@ def run_mavlink_stack(
     participants: Dict[int, LockstepParticipant] = {}
     vessels: Dict[int, ConcreteVessel] = {}
     navigation_parameters: Dict[int, UsvNavigationParameters] = {}
+    passive = set()
     for agent_id, vessel_config in simulation.simulated_vessels.items():
         vessel = scene.get_by_id(agent_id)
         if not isinstance(vessel, ConcreteVessel):
             raise ValueError(f"Vessel {vessel} is not a ConcreteVessel.")
         adapter = resolution.chains[agent_id].asv_adapter
         endpoint = (endpoints or {}).get(agent_id) or sitl_mavlink_endpoint(vessel_config.require_connection().agent_name, vessel.id)
+        if adapter.id in passive_ids:
+            links[vessel.id] = resolver.registry.runtime(REPLAY_MAVLINK_LOCKSTEP.id)(endpoint, vessel.id, reference_geofence)
+            passive.add(vessel.id)
+            vessels[vessel.id] = vessel
+            continue
         links[vessel.id] = resolver.registry.runtime(adapter.id)(endpoint, vessel.id, reference_geofence)
         if adapter.id == REPLAY_MAVLINK_LOCKSTEP.id:
             participants[vessel.id] = ReplayFollower(vessel, trajectories.state_list(vessel), trajectories.time_step)
@@ -240,7 +261,7 @@ def run_mavlink_stack(
         vessels[vessel.id] = vessel
     steps = steps if steps is not None else int(round(trajectories.timespan / dt))
     try:
-        result = run_mavlink_lockstep(links, participants, vessels, dt, steps, simulation.environment.seed, start_boot_s=start_boot_s, on_step=on_step)
+        result = run_mavlink_lockstep(links, participants, vessels, dt, steps, simulation.environment.seed, start_boot_s=start_boot_s, on_step=on_step, passive=frozenset(passive))
     finally:
         for link in links.values():
             link.close()
@@ -262,6 +283,8 @@ def run_mavlink_stack(
     }
     if navigation_parameters:
         run_record["usv_navigation"] = {str(vessel_id): parameters.as_dict() for vessel_id, parameters in sorted(navigation_parameters.items())}
+    if passive:
+        run_record["operator_vessels"] = sorted(passive)
     return dataclasses.replace(result, run_record=run_record)
 
 
@@ -272,18 +295,19 @@ def _record(recorded: List[Tuple[StampedState, ...]], index: int, observed: Mapp
         on_step(index, {vessel_id: observed[vessel_id] for vessel_id in vessel_ids})
 
 
-def _engage(links: Mapping[int, MavlinkLink], vessel_ids: Tuple[int, ...], timeout_s: float) -> None:
-    """Connect, wait for readiness and arm every vessel in HOLD."""
+def _engage(links: Mapping[int, MavlinkLink], vessel_ids: Tuple[int, ...], active_ids: Tuple[int, ...], timeout_s: float) -> None:
+    """Connect and wait for readiness of every vessel, and arm the active ones in HOLD (an operator arms a passive one)."""
     # SITL boots only once its SERIAL0 client connects, so connect every vessel before waiting on any.
     for vessel_id in vessel_ids:
         links[vessel_id].connect(timeout_s)
     for vessel_id in vessel_ids:
         links[vessel_id].wait_until_ready(timeout_s)
+    for vessel_id in active_ids:
         links[vessel_id].begin_engagement()
     deadline = time.monotonic() + timeout_s
-    while not all([links[vessel_id].advance_engagement() for vessel_id in vessel_ids]):
+    while not all([links[vessel_id].advance_engagement() for vessel_id in active_ids]):
         if time.monotonic() > deadline:
-            raise MavlinkLinkError(f"vessels {[vessel_id for vessel_id in vessel_ids if links[vessel_id].engaged_boot_ms is None]} not armed in HOLD within {timeout_s:g} s")
+            raise MavlinkLinkError(f"vessels {[vessel_id for vessel_id in active_ids if links[vessel_id].engaged_boot_ms is None]} not armed in HOLD within {timeout_s:g} s")
         _read_available(links, vessel_ids, 0.5)
 
 
@@ -294,7 +318,7 @@ def _step_commands(
     request = clock.request()
     commands = {}
     acks = []
-    for vessel_id in sorted(observed):
+    for vessel_id in sorted(participants):
         participant = participants[vessel_id]
         observation = VesselStateObservation(
             sim_time=request.time,

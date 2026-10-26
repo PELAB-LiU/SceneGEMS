@@ -9,8 +9,10 @@ from concrete_level.trajectory_generation.trajectory_data import TrajectoryData
 from logical_level.constraint_satisfaction.evaluation_data import EvaluationData
 from scenegems_tool.gateway.protocol import ClientMessage, ServerMessage, make_error_message, make_monitor_status_message, make_waraps_status_message
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo, resolve_mqtt_broker_endpoints
+from scenegems_tool.subsystems.scenario_execution.lockstep_simulation_driver import uses_lockstep_driver
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import SimulationInstanceConfig
+from scenegems_tool.vessel_stack.control_layers.ardupilot.arduagent_control_mode import ARDUAGENT_ADAPTER_IDS
 from scenegems_tool.vessel_stack.registry.catalog import default_resolver
 from scenegems_tool.workbench.empty_scenario_session import EmptyScenarioSession
 from scenegems_tool.workbench.empty_subsystem_integration_session import EmptySubsystemIntegrationSession
@@ -150,6 +152,14 @@ class SocketSession:
         if not resolution.accepted:
             self.send_runtime_error(f"Simulation configuration rejected: {resolution.reason}")
             return False
+        if not uses_lockstep_driver(simulation_config):
+            # A real vessel is reached only over WARA-PS MQTT, so ArduAgent drives every vessel of the instance.
+            without_arduagent = [
+                f"vessel {agent_id} ({chain.stack})" for agent_id, chain in resolution.chains.items() if chain.asv_adapter is None or chain.asv_adapter.id not in ARDUAGENT_ADAPTER_IDS
+            ]
+            if without_arduagent:
+                self.send_runtime_error(f"Simulation configuration rejected: with a real vessel, ArduAgent drives every simulated vessel, and it cannot drive {', '.join(without_arduagent)}")
+                return False
         return True
 
     def set_simulation_session(self, simulation_config: SimulationInstanceConfig) -> None:

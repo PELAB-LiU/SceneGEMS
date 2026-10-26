@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+from typing import Optional
 
 import yaml
 
@@ -27,12 +28,21 @@ class ComposeProject:
         with open(self.compose_filename, "w", encoding="utf-8") as file:
             file.write(dump_compose(compose))
 
-    def _compose(self, *arguments: str, check: bool = False) -> subprocess.CompletedProcess:
-        return subprocess.run([*COMPOSE_COMMAND, "-f", self.compose_filename, "--project-name", self.name, *arguments], check=check)
+    def _compose(self, *arguments: str, check: bool = False, capture: bool = False) -> subprocess.CompletedProcess:
+        return subprocess.run([*COMPOSE_COMMAND, "-f", self.compose_filename, "--project-name", self.name, *arguments], check=check, capture_output=capture, text=capture)
 
     def up(self, *options: str) -> subprocess.CompletedProcess:
         """Start detached from local images only, as the workbench always has."""
         return self._compose("up", "-d", "--no-build", *options)
+
+    def published_port(self, service: str, container_port: int) -> Optional[int]:
+        """The host port Docker published a service's container port on, None while it has none."""
+        result = self._compose("port", service, str(container_port), capture=True)
+        address = (result.stdout or "").strip().splitlines()
+        if result.returncode != 0 or not address or ":" not in address[0]:
+            return None
+        port = address[0].rsplit(":", 1)[1]
+        return int(port) if port.isdigit() and int(port) > 0 else None
 
     def create(self) -> None:
         """Create every container without starting one, so files can be copied in first."""

@@ -56,6 +56,11 @@ class TestMessageBuilders:
     def test_simulation_status_message(self):
         assert make_simulation_status_message(SimulationStatus.RUNNING) == {"type": "simulation_status", "status": "running"}
 
+    def test_simulation_status_message_carries_the_ground_control_ports(self):
+        message = make_simulation_status_message(SimulationStatus.READY_TO_START, {"1": 49154, "0": 49153})
+        assert message["groundControlPortsByAgentId"] == {"0": 49153, "1": 49154}
+        assert "groundControlPortsByAgentId" not in make_simulation_status_message(SimulationStatus.RUNNING, {})
+
     def test_waraps_and_monitor_status_messages(self):
         assert make_waraps_status_message(status="connected") == {"type": "waraps_status", "status": "connected"}
         assert make_monitor_status_message(status="disconnected") == {"type": "monitor_status", "status": "disconnected"}
@@ -110,8 +115,24 @@ class TestSimulationConfigFromBody:
         assert first.connection.agent_name == "os" and first.connection.port == 14550
         assert first.adapter_ids == ("replay_arduagent_follower",)
 
-    def test_external_vessels_use_the_default_adapter(self, body):
-        assert simulation_config_from_body(body).vessels["1"].adapter_ids == ()
+    def test_with_a_real_vessel_every_vessel_runs_through_arduagent(self, body):
+        assert simulation_config_from_body(body).vessels["1"].adapter_ids == ("mission_planner_mavlink_port",)
+
+    def test_simulated_vessels_alone_use_the_registry_defaults(self, body):
+        del body["connectionsByAgentId"]["2"]
+        config = simulation_config_from_body(body)
+        assert [config.vessels[agent_id].adapter_ids for agent_id in ("0", "1")] == [(), ()]
+
+    def test_asv_software_and_control_layer_choose_the_stack(self, body):
+        body["simulatorType"] = "Gazebo"
+        body["connectionsByAgentId"]["0"].update(asvSoftware="usv_navigation", controlLayer="custom")
+        del body["connectionsByAgentId"]["0"]["controlMode"]
+        stack = simulation_config_from_body(body).vessels["0"].stack
+        assert (stack.asv_software, stack.control_layer, stack.simulation_layer) == (AsvSoftwareId.USV_NAVIGATION, ControlLayerId.CUSTOM, SimulationLayerId.GAZEBO)
+
+    def test_kinematic_vessels_default_to_no_control_layer(self, body):
+        body["simulatorType"] = "Kinematic"
+        assert simulation_config_from_body(body).vessels["0"].stack.control_layer == ControlLayerId.NONE
 
     def test_real_vessel_may_omit_its_port(self, body):
         real = simulation_config_from_body(body).vessels["2"]
@@ -173,6 +194,8 @@ class TestRoundTrip:
             sent = again["connectionsByAgentId"][agent_id]
             assert sent["context"] == connection["context"]
             assert sent["controlMode"] == connection["controlMode"]
+            assert sent["controlLayer"] == "ardupilot"
+            assert sent["asvSoftware"] == {"autonomous": "replay", "external": "mission_planner"}[connection["controlMode"]]
             assert sent["agentName"] == connection["agentName"]
             assert sent["topic"] == connection["topic"]
             assert sent["port"] == connection["port"]
@@ -187,8 +210,15 @@ class TestRoundTrip:
         config.vessels["0"].gazebo_vessel_model = "<sdf/>"
         assert make_simulation_models_body(config)["connectionsByAgentId"]["0"]["gazeboVesselModel"] == "<sdf/>"
 
-    def test_the_kinematic_layer_cannot_be_sent_to_the_browser_yet(self, body):
+    def test_every_stack_survives_the_round_trip(self, body):
+        """The scenario execution worker gets the body back, so a kinematic or USV Navigation instance must read back the same."""
+        del body["connectionsByAgentId"]["2"]
+        body["simulatorType"] = "Kinematic"
+        body["connectionsByAgentId"]["0"].update(asvSoftware="usv_navigation", controlLayer="none")
         config = simulation_config_from_body(body)
-        config.simulation_layer = SimulationLayerId.KINEMATIC
-        with pytest.raises(ValueError, match="no workbench simulatorType"):
-            make_simulation_models_body(config)
+        again = simulation_config_from_body(make_simulation_models_body(config))
+        assert again.simulation_layer == SimulationLayerId.KINEMATIC
+        assert {agent_id: (vessel.stack, vessel.adapter_ids) for agent_id, vessel in again.vessels.items()} == {
+            agent_id: (vessel.stack, vessel.adapter_ids) for agent_id, vessel in config.vessels.items()
+        }
+        assert "controlMode" not in make_simulation_models_body(config)["connectionsByAgentId"]["0"], "ArduAgent has no mode for USV Navigation"
