@@ -1,8 +1,12 @@
 """simulation.kinematic in process: the live monitor gives the post-hoc result, and a run without it is unchanged."""
 
+import io
+
 import pytest
 
 from scenegems_tool.cluster.node.jobs import monitoring_post_hoc_job, simulation_kinematic_job
+from scenegems_tool.cluster.node.jobs.in_container.run_observation import ContainerObservation, RunObserver
+from scenegems_tool.cluster.node.launchers.per_job.job_container_io import OBSERVE_DOCUMENT, ObservationControl, parse_frame_line
 from scenegems_tool.cluster.protocol.jobs import JobType
 from scenegems_tool.subsystems.monitoring.rule_outcomes import RuleOutcomes
 from scenegems_tool.vessel_stack.simulation_layers.kinematic.kinematic_runner import run_kinematic_replay
@@ -57,3 +61,79 @@ def test_a_stop_on_the_last_step_is_not_early(simulate, monkeypatch):
     monkeypatch.setattr(RuleOutcomes, "every_rule_decided", lambda outcomes: outcomes.monitored_scenes == 11)
     result = simulate(monitor="live", early_stop=True, steps=10)
     assert result["steps"] == 10 and result["monitor"]["stopped_early_at"] is None
+
+
+# Live observation: the run in the runner container, with the job folder on disk and a fake clock (its sleeps move the time only)
+
+
+class FakeTime:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+@pytest.fixture
+def observe(make_job, head_on_trajectories, tmp_path):
+    """Runs the job observed from the start at a speed; returns the result, its frames and the wall time it took."""
+
+    def observe(speed: float, **fields):
+        (tmp_path / OBSERVE_DOCUMENT).write_text(ObservationControl(active=True, speed=speed, revision=1).to_document(), encoding="utf-8")
+        out, fake_time = io.StringIO(), FakeTime()
+        observation = ContainerObservation(str(tmp_path), out=out, clock=fake_time, sleep=fake_time.sleep)
+        job = make_job(JobType.SIMULATION_KINEMATIC, {"trajectories": head_on_trajectories.to_dict(), **fields})
+        result = simulation_kinematic_job.execute(job, _quiet, observation=observation)
+        return result, [parse_frame_line(line) for line in out.getvalue().splitlines()], fake_time.now
+
+    return observe
+
+
+@pytest.mark.parametrize("fields", [{}, {"monitor": "live"}, {"mode": "usv_navigation"}])
+def test_an_observed_run_has_the_digest_and_the_result_of_an_unobserved_one(simulate, observe, fields):
+    observed, frames, wall_s = observe(10.0, **fields)
+    assert observed == simulate(**fields)  # the whole result, digest included
+    assert wall_s == pytest.approx(120 / 10.0)  # 120 s of scenario time at ten times real time
+    assert [frame["timestamp"] for frame in frames] == list(range(121))  # ten steps a second: a frame per step
+
+
+def test_frames_hold_every_vessels_state_and_the_live_monitors_outcomes(observe, head_on_trajectories):
+    _, frames, _ = observe(10.0, monitor="live")
+    replay = run_kinematic_replay(head_on_trajectories)
+    for index in (0, 61, 120):
+        frame = frames[index]
+        assert frame["scenarioId"] == "job-1" and frame["timeStep"] == 1 and frame["timestamp"] == index
+        assert {actor["id"] for actor in frame["actors"]} == {"0", "1"}
+        states = [frame["statesByActorId"][str(actor.id)] for actor in replay.actors]
+        assert [(state["x"], state["y"], state["speed"], state["heading"]) for state in states] == [(s.x, s.y, s.speed, s.heading) for s in replay.states[index]]
+        assert frame["ruleResults"] and frame["situationContexts"] and frame["metrics"]
+    _, plain_frames, _ = observe(10.0)
+    assert plain_frames[0]["ruleResults"] == [] and plain_frames[0]["statesByActorId"] == frames[0]["statesByActorId"]  # without the monitor: the scene only
+
+
+def test_a_fast_observed_run_writes_decimated_frames(observe):
+    _, frames, wall_s = observe(100.0)
+    assert [frame["timestamp"] for frame in frames] == list(range(0, 121, 5))  # at most 20 frames a second
+    assert wall_s == pytest.approx(1.2)
+
+
+def test_an_observation_that_starts_mid_run_picks_up_at_the_current_step(simulate, make_job, head_on_trajectories):
+    written = []
+    calls = []
+
+    def requests():  # read once per step while not observed: on from step 50, off from step 80
+        calls.append(len(calls))
+        return ObservationControl(active=50 <= len(calls) - 1 < 80, speed=1000.0, revision=1)
+
+    class Observation:
+        def observer(self, build_frame, dt, **options):
+            return RunObserver(requests, written.append, build_frame, dt, sleep=lambda seconds: None, **options)
+
+    job = make_job(JobType.SIMULATION_KINEMATIC, {"trajectories": head_on_trajectories.to_dict(), "monitor": "live"})
+    result = simulation_kinematic_job.execute(job, _quiet, observation=Observation())
+    assert result == simulate(monitor="live")
+    assert written[0]["timestamp"] == 50 and written[-1]["timestamp"] < 80
+    assert written[0]["ruleResults"]

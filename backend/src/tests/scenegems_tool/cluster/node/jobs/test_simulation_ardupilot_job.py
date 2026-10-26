@@ -6,9 +6,13 @@ import pytest
 
 from scenegems_tool.cluster.node import instance_scope
 from scenegems_tool.cluster.node.job_report import JobFailed
-from scenegems_tool.cluster.node.jobs.simulation_ardupilot_job import STACK_NETWORK, ArduPilotSimulationPayload, build_job_stack
+from scenegems_tool.cluster.node.jobs.in_container.run_observation import RunObserver
+from scenegems_tool.cluster.node.jobs.simulation_ardupilot_job import STACK_NETWORK, ArduPilotSimulationPayload, build_job_stack, execute
+from scenegems_tool.cluster.node.launchers.per_job.job_container_io import ObservationControl
 from scenegems_tool.cluster.node.launchers.per_job.job_stack import RUNNER_SERVICE
 from scenegems_tool.cluster.protocol.jobs import JobType
+from scenegems_tool.vessel_stack.control_layers.ardupilot.mavlink_link import StampedState
+from scenegems_tool.vessel_stack.control_layers.ardupilot.mavlink_lockstep_runner import MavlinkRunResult
 from utils.file_system_utils import RUNTIME_ASSETS_VOLUME
 
 GEOFENCE = {"latitude": 57.7, "longitude": 11.9, "radius_meters": 2000.0}
@@ -74,3 +78,36 @@ def test_unavailable_stack_fails_for_good(instances_folder, node, make_job, head
     with pytest.raises(JobFailed) as failure:
         build_job_stack(job, node, ArduPilotSimulationPayload.model_validate(payload_data))
     assert not failure.value.retryable
+
+
+def test_an_observed_run_forwards_its_lockstep_states_at_the_stacks_own_pace(monkeypatch, make_job, head_on_trajectories):
+    """SITL runs free, so the run is not slowed down; its frames are decimated by its speedup and the result is unchanged."""
+    from scenegems_tool.vessel_stack.control_layers.ardupilot import mavlink_lockstep_runner
+
+    vessels = head_on_trajectories.initial_scene.vessels
+    columns = {vessel.id: head_on_trajectories.state_list(vessel) for vessel in vessels}
+
+    def replay(trajectories, instance, geofence, *, dt, steps, start_boot_s, on_step=None):
+        recorded = []
+        for index in range(len(columns[0])):
+            samples = {vessel_id: StampedState(boot_ms=100_000 + index * 1000, state=column[index]) for vessel_id, column in columns.items()}
+            recorded.append(tuple(samples[vessel_id] for vessel_id in sorted(samples)))
+            if on_step is not None:
+                on_step(index, samples)
+        return MavlinkRunResult((0, 1), 1.0, 0, (), (100_000, 100_000), tuple(recorded), (), 12.0, {"steps": len(recorded) - 1})
+
+    monkeypatch.setattr(mavlink_lockstep_runner, "run_mavlink_replay", replay)
+    job = make_job(JobType.SIMULATION_ARDUPILOT, {"simulation_layer": "ardupilot_sim", "trajectories": head_on_trajectories.to_dict(), "geofence": GEOFENCE, "speedup": 50})
+    plain = execute(job, lambda message, progress=None: None)
+    frames, sleeps = [], []
+
+    class Observation:
+        def observer(self, build_frame, dt, **options):
+            return RunObserver(lambda: ObservationControl(active=True, speed=10.0, revision=1), frames.append, build_frame, dt, sleep=sleeps.append, **options)
+
+    assert execute(job, lambda message, progress=None: None, observation=Observation()) == plain
+    assert sleeps == []  # not paced
+    assert [frame["timestamp"] for frame in frames] == list(range(0, 121, 3))  # 50 steps a second at speedup 50: every third step
+    last = frames[-1]
+    assert last["scenarioId"] == job.job_id and set(last["statesByActorId"]) == {"0", "1"}
+    assert last["statesByActorId"]["1"]["x"] == columns[1][120].x

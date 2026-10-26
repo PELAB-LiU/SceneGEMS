@@ -12,6 +12,7 @@ from scenegems_tool.cluster.protocol.live import (
     CampaignChanged,
     CampaignClassesChanged,
     CampaignEventAdded,
+    Configure,
     Error,
     InstanceKind,
     InstanceSnapshot,
@@ -31,6 +32,7 @@ from scenegems_tool.cluster.protocol.live import (
     Subscribe,
     Subscribed,
     TopicKind,
+    TopicOptions,
     TrajectoryPreview,
     Unsubscribe,
     Unsubscribed,
@@ -57,6 +59,8 @@ def test_the_channel_lives_on_the_operator_api_at_version_1():
         ('{"version": 1, "type": "subscribe", "topic": "nodes"}', Subscribe(topic="nodes")),
         ('{"version": 1, "type": "unsubscribe", "topic": "job:abc"}', Unsubscribe(topic="job:abc")),
         ('{"version": 1, "type": "ping"}', Ping()),
+        ('{"version": 1, "type": "subscribe", "topic": "instance:n1/job-a-1", "options": {"speed": 25}}', Subscribe(topic="instance:n1/job-a-1", options=TopicOptions(speed=25.0))),
+        ('{"version": 1, "type": "configure", "topic": "instance:n1/job-a-1", "options": {"speed": 0.5}}', Configure(topic="instance:n1/job-a-1", options=TopicOptions(speed=0.5))),
     ],
 )
 def test_client_messages_decode(text, expected):
@@ -73,6 +77,10 @@ def test_client_messages_decode(text, expected):
         ('{"version": 1, "type": "publish", "topic": "nodes"}', "invalid publish"),
         ('{"version": 1, "type": "subscribe"}', "invalid subscribe"),
         ('{"version": 1, "type": "ping", "extra": 1}', "invalid ping"),
+        ('{"version": 1, "type": "subscribe", "topic": "nodes", "options": {"speed": 0}}', "invalid subscribe"),
+        ('{"version": 1, "type": "configure", "topic": "instance:n1/job-a-1", "options": {"speed": 1001}}', "invalid configure"),
+        ('{"version": 1, "type": "configure", "topic": "instance:n1/job-a-1"}', "invalid configure"),
+        ('{"version": 1, "type": "subscribe", "topic": "nodes", "options": {"pace": 2}}', "invalid subscribe"),
     ],
 )
 def test_bad_client_messages_are_refused_with_a_reason(text, reason):
@@ -116,7 +124,9 @@ def test_instance_updates_carry_their_kind():
     result = TrajectoryPreview(request_id="r2", final=True, valid=True, complete=False)
     frames = SimulationFrames(job_id="j1", frames=[{"timestamp": 0}])
     status = InstanceStatus(state="running", message="step 4", progress=0.4)
-    assert [update.model_dump()["kind"] for update in (sample, preview, result, frames, status)] == ["scene_sample", "trajectory_preview", "trajectory_preview", "simulation_frames", "status"]
+    kinds = [update.model_dump()["kind"] for update in (sample, preview, result, frames, status)]
+    assert kinds == ["scene_sample", "trajectory_preview", "trajectory_preview", "simulation_frames", "status"]
+    assert status.model_dump()["observed_speed"] is None and InstanceStatus(state="running", observed_speed=20.0).model_dump()["observed_speed"] == 20.0
     assert sample.model_dump()["final"] is False and result.model_dump()["complete"] is False
 
 
@@ -131,7 +141,9 @@ def test_previews_and_frames_are_rated_but_final_results_and_status_are_not():
 
 def test_instance_snapshot():
     snapshot = InstanceSnapshot(node_id="n1", instance="job-abc-1", kind=InstanceKind.SIMULATION, state="running", job_id="abc", attempt=1)
-    assert snapshot.model_dump(mode="json") == {"node_id": "n1", "instance": "job-abc-1", "kind": "simulation", "state": "running", "job_id": "abc", "attempt": 1}
+    assert snapshot.model_dump(mode="json") == {"node_id": "n1", "instance": "job-abc-1", "kind": "simulation", "state": "running", "job_id": "abc", "attempt": 1, "observed_speed": None}
+    observed = InstanceSnapshot(node_id="n1", instance="job-abc-1", kind=InstanceKind.SIMULATION, state="running", job_id="abc", attempt=1, observed_speed=25.0)
+    assert observed.model_dump(mode="json")["observed_speed"] == 25.0
 
 
 def test_every_job_type_has_an_instance_kind():

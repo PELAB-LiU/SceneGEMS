@@ -9,6 +9,10 @@ A submission's payload is validated with its job type's payload model before it 
 an artifact reference gets a structural check only, its content is checked on the node.
 The job type modules load on the first submission, so the master starts without them.
 
+Live simulations: observations (observed_jobs.py) sends Observe to the nodes of jobs that
+browsers observe, again when such a node reconnects or accepts the job's lease, and hands the
+frames the nodes relay to the live channel, which create_live_channel wires to it.
+
 With attach_pipeline the pipeline engine (assurance/pipeline) runs as one more timer on the
 same loop; it submits and cancels through this control plane like the operator does. It is
 loaded only then, for the same reason.
@@ -24,6 +28,7 @@ from pydantic import ValidationError
 
 from scenegems_tool.cluster.master.job_activity import JobActivity
 from scenegems_tool.cluster.master.leases.lease_manager import LeaseManager
+from scenegems_tool.cluster.master.observed_jobs import ObservedJobs
 from scenegems_tool.cluster.master.registry.node_registry import NodeRegistry
 from scenegems_tool.cluster.master.registry.node_session import ControlSocket, NodeSession
 from scenegems_tool.cluster.master.scheduling.fingerprint_policy import ExpectedFingerprints, with_required_fingerprints
@@ -44,6 +49,7 @@ from scenegems_tool.cluster.protocol.messages import (
     LeaseRenew,
     LogLines,
     NodeMessage,
+    ObservationFrames,
     ProtocolError,
     ProtocolErrorCode,
     Welcome,
@@ -56,6 +62,10 @@ if TYPE_CHECKING:
     from scenegems_tool.persistence.stores import AssuranceStores
 
 logger = logging.getLogger(__name__)
+
+
+# Node frames about a lease that the lease manager handles as they are: frame type to LeaseManager method
+_LEASE_STEPS = {LeaseRenew: "renew", LeaseReject: "reject", LeaseRelease: "release", JobResult: "result", JobStatus: "status", LogLines: "logs"}
 
 
 class FingerprintsUnavailable(RuntimeError):
@@ -102,6 +112,7 @@ class ControlPlane:
         self.activity = JobActivity(clock)
         self.scheduler = Scheduler(job_store, self.registry, expected, self.backoff, timing, guard, self.activity)
         self.leases = LeaseManager(job_store, self.registry, self.backoff, self.activity, timing, on_change=self.scheduler.wake)
+        self.observations = ObservedJobs(self.registry)
         self._clock = clock
         self._tasks: List[asyncio.Task] = []
         self.pipeline: Optional["PipelineEngine"] = None
@@ -150,28 +161,24 @@ class ControlPlane:
         await session.send(Welcome(master_id=self.master_id, heartbeat_interval_s=self.timing.heartbeat_interval_s, lease_timeout_s=self.timing.lease_timeout_s))
         for frame in frames:
             await session.send(frame)
+        self.observations.node_connected(session)
         logger.info("Node %s (%s) connected at revision %s", hello.node_id, hello.node_name, hello.software_revision)
         self.scheduler.wake()
         return session
 
     async def handle_frame(self, session: NodeSession, frame: NodeMessage) -> None:
-        if isinstance(frame, Heartbeat):
+        lease_step = _LEASE_STEPS.get(type(frame))
+        if lease_step is not None:
+            await getattr(self.leases, lease_step)(session, frame)
+        elif isinstance(frame, Heartbeat):
             await self.registry.heartbeat(session, frame)
             self.scheduler.wake()
         elif isinstance(frame, LeaseAccept):
             await self.leases.accept(session, frame)
-        elif isinstance(frame, LeaseRenew):
-            await self.leases.renew(session, frame)
-        elif isinstance(frame, LeaseReject):
-            await self.leases.reject(session, frame)
-        elif isinstance(frame, LeaseRelease):
-            await self.leases.release(session, frame)
-        elif isinstance(frame, JobResult):
-            await self.leases.result(session, frame)
-        elif isinstance(frame, JobStatus):
-            await self.leases.status(session, frame)
-        elif isinstance(frame, LogLines):
-            await self.leases.logs(session, frame)
+            if session.owns(frame.lease_id):
+                self.observations.lease_accepted(session, session.job_of(frame.lease_id))
+        elif isinstance(frame, ObservationFrames):
+            self.observations.handle_frames(session, frame)
         elif isinstance(frame, Hello):
             await session.send(ProtocolError(code=ProtocolErrorCode.MALFORMED_FRAME, message="Hello was already received on this connection"))
 

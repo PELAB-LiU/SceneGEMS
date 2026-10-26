@@ -2,7 +2,17 @@ import pytest
 from pydantic import ValidationError
 
 from scenegems_tool.cluster.protocol.jobs import JobType
-from scenegems_tool.cluster.protocol.messages import Hello, JobStatus, LeaseAccept, Welcome
+from scenegems_tool.cluster.protocol.messages import (
+    DEFAULT_OBSERVED_SPEED,
+    MAX_OBSERVATION_FRAMES,
+    MAX_OBSERVED_SPEED,
+    Hello,
+    JobStatus,
+    LeaseAccept,
+    ObservationFrames,
+    Observe,
+    Welcome,
+)
 from scenegems_tool.cluster.protocol.node_description import CapabilityOffer
 from scenegems_tool.cluster.protocol.version import PROTOCOL_VERSION
 
@@ -59,3 +69,25 @@ def test_progress_is_a_fraction():
 def test_welcome_needs_positive_intervals():
     with pytest.raises(ValidationError):
         Welcome(master_id="m1", heartbeat_interval_s=0.0, lease_timeout_s=30.0)
+
+
+def test_observe_defaults_to_ten_times_real_time_within_bounds():
+    observe = Observe(job_id="j1", attempt=1, active=True)
+    assert observe.speed == DEFAULT_OBSERVED_SPEED == 10.0
+    assert Observe(job_id="j1", attempt=1, active=True, speed=MAX_OBSERVED_SPEED).speed == 1000.0
+    for speed in (0.0, -1.0, MAX_OBSERVED_SPEED + 1):
+        with pytest.raises(ValidationError):
+            Observe(job_id="j1", attempt=1, active=True, speed=speed)
+    with pytest.raises(ValidationError):
+        Observe(job_id="j1", attempt=0, active=False)
+
+
+def test_observation_frames_come_in_bounded_non_empty_batches():
+    frame = {"scenarioId": "j1", "timestamp": 0}
+    batch = ObservationFrames(lease_id="l1", job_id="j1", attempt=2, seq=1, frames=[frame] * MAX_OBSERVATION_FRAMES)
+    assert (batch.attempt, batch.seq, len(batch.frames)) == (2, 1, 200)
+    for frames in ([], [frame] * (MAX_OBSERVATION_FRAMES + 1)):
+        with pytest.raises(ValidationError):
+            ObservationFrames(lease_id="l1", job_id="j1", attempt=1, seq=1, frames=frames)
+    with pytest.raises(ValidationError):
+        ObservationFrames(lease_id="l1", job_id="j1", attempt=1, seq=0, frames=[frame])

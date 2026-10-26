@@ -51,6 +51,16 @@ class TestRunMavlinkLockstep:
         assert len(result.states) == 31
         assert all(len(step) == 2 for step in result.states)
 
+    def test_the_step_observer_sees_every_recorded_step_and_changes_nothing(self):
+        trajectories = encounter_trajectories("head_on", 40)
+        plain = run_mavlink_lockstep(*build_run(trajectories), 1.0, 12, run_seed=3)
+        FakeLink.connections = []
+        seen = []
+        observed = run_mavlink_lockstep(*build_run(trajectories), 1.0, 12, run_seed=3, on_step=lambda index, samples: seen.append((index, dict(samples))))
+        assert [index for index, _ in seen] == list(range(13))
+        assert all(tuple(samples[vessel_id] for vessel_id in observed.vessel_ids) == step for (_, samples), step in zip(seen, observed.states))
+        assert observed.state_digest() == plain.state_digest()
+
     def test_observations_are_stamped_on_the_step_boundaries(self):
         trajectories = encounter_trajectories("head_on", 40)
         links, followers, vessels = build_run(trajectories)

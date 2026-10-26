@@ -20,6 +20,8 @@ from scenegems_tool.cluster.protocol.messages import (
     LogLine,
     LogLines,
     LogStream,
+    ObservationFrames,
+    Observe,
     ProtocolError,
     ProtocolErrorCode,
     Welcome,
@@ -49,6 +51,7 @@ def node_frames(resources, instant):
         JobStatus(lease_id="l1", job_id="j1", progress=0.5, message="step 150 of 300"),
         JobResult(lease_id="l1", job_id="j1", idempotency_key="j1/1", outcome=JobOutcome.SUCCEEDED, result={"state_digest": "ff"}),
         LogLines(lease_id="l1", job_id="j1", lines=[LogLine(timestamp=instant, stream=LogStream.STDOUT, source="scenario_execution.n1.0", text="ready")]),
+        ObservationFrames(lease_id="l1", job_id="j1", attempt=1, seq=3, frames=[{"scenarioId": "j1", "timestamp": 12, "statesByActorId": {"0": {"x": 1.5}}}]),
     ]
 
 
@@ -60,6 +63,7 @@ def master_frames(job_spec, instant):
         LeaseRenewed(lease_id="l1", expires_at=instant),
         Drain(reason="maintenance"),
         Cancel(lease_id="l1", job_id="j1", reason="cancelled by user"),
+        Observe(job_id="j1", attempt=1, active=True, speed=25.0),
         ProtocolError(code=ProtocolErrorCode.UNKNOWN_LEASE, message="lease l9 is not yours"),
     ]
 

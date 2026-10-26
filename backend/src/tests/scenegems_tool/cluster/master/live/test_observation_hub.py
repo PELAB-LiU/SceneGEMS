@@ -58,7 +58,7 @@ async def test_one_broker_subscription_serves_every_observer_until_the_last_leav
     (subscribed,) = await first.messages(1)
     await second.messages(1)
     assert broker.started == 1 and broker.calls == [("subscribe", SCENE_PREFIX + GENERATED_SCENE_TOPIC)]
-    assert subscribed["snapshot"] == {"node_id": NODE, "instance": SCENE_POOL, "kind": "scene_generation", "state": "online", "job_id": None, "attempt": None}
+    assert subscribed["snapshot"] == {"node_id": NODE, "instance": SCENE_POOL, "kind": "scene_generation", "state": "online", "job_id": None, "attempt": None, "observed_speed": None}
 
     await first.leave()
     assert broker.filters == [SCENE_PREFIX + GENERATED_SCENE_TOPIC]
@@ -162,7 +162,7 @@ async def test_a_job_instance_gets_status_and_simulation_frames(channel, plane, 
     hub.publish_simulation_frames(NODE, "another-job", 1, [{"timestamp": 0}])
     await settle()
     status, frames = browser.socket.take()  # both batches waited unsent together, so they were joined
-    assert status["data"] == {"kind": "status", "state": "leased", "message": "step 25", "progress": 0.25}
+    assert status["data"] == {"kind": "status", "state": "leased", "message": "step 25", "progress": 0.25, "observed_speed": 10.0}
     assert frames["data"] == {"kind": "simulation_frames", "job_id": job.job_id, "frames": [{"timestamp": 0}, {"timestamp": 1}, {"timestamp": 2}]}
     hub.publish_simulation_frames(NODE, job.job_id, 1, [{"timestamp": 3}])
     await settle()
@@ -187,7 +187,7 @@ async def test_an_observed_job_instance_hears_state_changes(channel, plane):
     await channel.producers.idle()
     await settle()
     (update,) = browser.socket.take()
-    assert update["data"] == {"kind": "status", "state": "running", "message": "", "progress": None}
+    assert update["data"] == {"kind": "status", "state": "running", "message": "", "progress": None, "observed_speed": 10.0}
     await browser.leave()
 
 

@@ -9,6 +9,10 @@ participant computes its command, acknowledges the step, and the command is sent
 SITL is free-running, so the acknowledgement does not hold the physics: a command arrives a
 wall-clock latency (times the speedup) after its boundary. That is why the tier is bounded.
 The runner reads the wall clock only for timeouts and to report the achieved pace.
+
+An optional step observer sees each step's observed states, keyed by vessel id, as soon as
+they are recorded (a live observation forwards them). It must return quickly: SITL does not
+wait for the runner.
 """
 
 import dataclasses
@@ -18,7 +22,7 @@ import select
 import struct
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from concrete_level.models.concrete_actors import ConcreteVessel
 from concrete_level.models.trajectories import Trajectories
@@ -36,6 +40,8 @@ from scenegems_tool.vessel_stack.registry.resolver import StackResolver, StackUn
 START_QUANTUM_S = 5.0  # scenario time 0 is put on a multiple of this SITL time, so repeats share it
 START_MARGIN_S = 1.0  # at least this much SITL time between arming and scenario time 0
 GUIDED_CHECK_MS = 2500  # scenario time by which every vessel must report GUIDED
+
+StepObserver = Callable[[int, Mapping[int, StampedState]], None]  # (step index, the observed sample of each vessel id)
 
 
 @dataclass(frozen=True)
@@ -79,6 +85,7 @@ def run_mavlink_lockstep(
     start_boot_s: Optional[float] = None,
     ready_timeout_s: float = 600.0,
     step_timeout_s: float = 120.0,
+    on_step: Optional[StepObserver] = None,
 ) -> MavlinkRunResult:
     """Connect, wait for readiness, arm in HOLD, then run `steps` steps of dt seconds of SITL time.
 
@@ -113,7 +120,7 @@ def run_mavlink_lockstep(
             not_guided = [vessel_id for vessel_id in vessel_ids if not links[vessel_id].in_guided]
             if not_guided:
                 raise MavlinkLinkError(f"vessels {not_guided} did not switch from HOLD to GUIDED with their first command")
-        recorded.append(tuple(observed[vessel_id] for vessel_id in vessel_ids))
+        _record(recorded, index, observed, vessel_ids, on_step)
         if index == steps:
             break
         commands = _step_commands(clock, participants, vessels, observed)
@@ -173,13 +180,15 @@ def run_mavlink_replay(
     start_boot_s: Optional[float] = None,
     host: Optional[str] = None,
     resolver: Optional[StackResolver] = None,
+    on_step: Optional[StepObserver] = None,
 ) -> MavlinkRunResult:
     """Replay every simulated vessel on a running ArduPilot stack (ardupilot_sim or gazebo) through the registry.
 
     The instance is validated as an unattended run, and every simulated vessel must resolve to
     replay_mavlink_lockstep. endpoints maps agent ids to MAVLink endpoints; by default each is
     SERIAL0 of the vessel's SITL service inside the stack network. dt defaults to the
-    trajectory time step and steps to its timespan. The run seed is environment.seed.
+    trajectory time step and steps to its timespan. The run seed is environment.seed. on_step
+    sees every step's observed states.
     """
     resolver = resolver or default_resolver()
     resolution = resolver.require_instance(simulation, attended=False, host=host)
@@ -206,7 +215,7 @@ def run_mavlink_replay(
         vessels[vessel.id] = vessel
     steps = steps if steps is not None else int(round(trajectories.timespan / dt))
     try:
-        result = run_mavlink_lockstep(links, followers, vessels, dt, steps, simulation.environment.seed, start_boot_s=start_boot_s)
+        result = run_mavlink_lockstep(links, followers, vessels, dt, steps, simulation.environment.seed, start_boot_s=start_boot_s, on_step=on_step)
     finally:
         for link in links.values():
             link.close()
@@ -227,6 +236,13 @@ def run_mavlink_replay(
         "state_digest": result.state_digest(),
     }
     return dataclasses.replace(result, run_record=run_record)
+
+
+def _record(recorded: List[Tuple[StampedState, ...]], index: int, observed: Mapping[int, StampedState], vessel_ids: Tuple[int, ...], on_step: Optional[StepObserver]) -> None:
+    """Records a step's observed samples in vessel order and shows them to the step observer."""
+    recorded.append(tuple(observed[vessel_id] for vessel_id in vessel_ids))
+    if on_step is not None:
+        on_step(index, {vessel_id: observed[vessel_id] for vessel_id in vessel_ids})
 
 
 def _engage(links: Mapping[int, MavlinkLink], vessel_ids: Tuple[int, ...], timeout_s: float) -> None:

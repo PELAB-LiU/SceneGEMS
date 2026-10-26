@@ -1,7 +1,9 @@
 """Running a job in a single runner container of a subsystem image, with no network.
 
 Used by the job types whose work is a batch in process (kinematic simulation, post-hoc
-monitoring). Their execute function runs inside the container.
+monitoring). Their execute function runs inside the container. A job the node observes
+(NodeContext.observations) gets its observation requests and returns its frames through
+the job folder and its output (launchers/per_job/job_container_io.py).
 """
 
 import threading
@@ -23,4 +25,4 @@ def job_document(job: JobSpec) -> dict:
 
 def run_in_runner_container(job: JobSpec, node: NodeContext, report: JobReport, subsystem: Subsystem, *, timeout_s: float, cancel: Optional[threading.Event] = None) -> JobResultData:
     stack = JobStack(node.job_scope(job), {RUNNER_SERVICE: runner_service(subsystem_image(subsystem))})
-    return stack.run(job_document(job), report, timeout_s=timeout_s, cancel=cancel)
+    return stack.run(job_document(job), report, timeout_s=timeout_s, cancel=cancel, observation=node.observations.of(job))
