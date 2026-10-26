@@ -76,7 +76,7 @@ RUN : "${ARDUPILOT_GAZEBO_REPO:?missing build arg, see deploy/images/upstream_pi
     cmake --build build -j$(nproc) && \
     cmake --install build
 
-# 5. ASV Sim2 system plugins (ocean.sdf: asv_sim2-anemometer-system, asv_sim2-wind-system)
+# 5. ASV Sim2 system plugins (the generated world: asv_sim2-anemometer-system, asv_sim2-wind-system)
 # https://github.com/srmainwaring/asv_sim at the pinned commit: build the Harmonic plugin stack
 # (GZ_VERSION selects gz-sim8).
 ARG ASV_SIM_REPO
@@ -102,10 +102,9 @@ RUN : "${ASV_SIM_REPO:?missing build arg, see deploy/images/upstream_pins.env}" 
 ENV GZ_VERSION=harmonic
 ENV GZ_PARTITION=scenegems
 ENV GZ_SIM_SYSTEM_PLUGIN_PATH=/usr/local/lib:/usr/local/lib/ardupilot_gazebo
-ENV GZ_SIM_RESOURCE_PATH=/worlds:/models:/opt/asv_wave_sim/gz-waves-models/models
+ENV GZ_SIM_RESOURCE_PATH=/worlds:/opt/asv_wave_sim/gz-waves-models/models
 ENV LC_NUMERIC=C
 
-COPY deploy/images/gazebo/models /models
 COPY deploy/images/gazebo/gazebo_entrypoint_prod.sh /scripts/entrypoint.sh
 RUN chmod +x /scripts/entrypoint.sh
 

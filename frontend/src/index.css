@@ -2981,23 +2981,6 @@ pre {
   text-align: left;
 }
 
-.scenario-diff-panel {
-  padding: 8px 12px;
-  border-bottom: 1px solid #334155;
-}
-
-.scenario-diff-table {
-  width: 100%;
-  font-size: 0.75rem;
-  border-collapse: collapse;
-}
-
-.scenario-diff-table th,
-.scenario-diff-table td {
-  border: 1px solid #334155;
-  padding: 4px 6px;
-}
-
 .batch-preset-runner {
   margin: 8px 0;
   border: 1px solid #334155;

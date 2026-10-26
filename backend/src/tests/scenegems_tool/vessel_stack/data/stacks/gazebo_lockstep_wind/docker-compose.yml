@@ -73,7 +73,6 @@ services:
       DISPLAY: host.docker.internal:0.0
       QT_X11_NO_MITSHM: '1'
       WORLD_SDF: <backend>/assets/runtime_assets/scenario_execution/gen_tmp/ocean_world.sdf
-      MODELS_DIR: /models
     volumes:
     - scenegems_runtime_assets:<backend>/assets/runtime_assets:ro
     entrypoint:

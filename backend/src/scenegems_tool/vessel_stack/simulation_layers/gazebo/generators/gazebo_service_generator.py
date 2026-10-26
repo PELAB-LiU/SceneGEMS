@@ -14,7 +14,6 @@ def generate_gazebo_service(world_file: str, vessel_services: list[str], headles
             "DISPLAY": display,
             "QT_X11_NO_MITSHM": "1",
             "WORLD_SDF": docker_volume_path(world_file),
-            "MODELS_DIR": "/models",
         },
         "volumes": [runtime_assets_volume_mount(read_only=True)],
         "entrypoint": [

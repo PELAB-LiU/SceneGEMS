@@ -5,21 +5,13 @@ from typing import Dict, List
 _BACKEND_SRC_UTILS = os.path.dirname(os.path.abspath(__file__))
 BACKEND_ROOT = os.path.normpath(f"{_BACKEND_SRC_UTILS}/../..")
 REPO_ROOT = os.path.normpath(f"{BACKEND_ROOT}/..")
-# Repo root: Docker build context for subsystem images under deploy/images/.
-ROOT_FOLDER = REPO_ROOT
 
 ASSET_FOLDER = f"{BACKEND_ROOT}/assets"
 GEN_DATA_FOLDER = f"{ASSET_FOLDER}/gen_data"
 FUNCTIONAL_MODELS_FOLDER = f"{ASSET_FOLDER}/generated_functional_models"
-PROJECT_REPORT_FOLDER = f"{ASSET_FOLDER}/project_report"
 IMAGES_FOLDER = f"{ASSET_FOLDER}/images"
 EXPORTED_PLOTS_FOLDER = f"{IMAGES_FOLDER}/exported_plots"
 GAZEBO_FOLDER = f"{REPO_ROOT}/deploy/images/gazebo"
-SITL_FOLDER = f"{REPO_ROOT}/deploy/images/sitl"
-MAVPROXY_FOLDER = f"{REPO_ROOT}/deploy/images/mavproxy"
-MONITORING_FOLDER = f"{REPO_ROOT}/deploy/images/monitoring"
-SCENARIO_GENERATION_FOLDER = f"{REPO_ROOT}/deploy/images/scenario_generation"
-SCENARIO_EXECUTION_FOLDER = f"{REPO_ROOT}/deploy/images/scenario_execution"
 RUNTIME_ASSETS_FOLDER = f"{ASSET_FOLDER}/runtime_assets"
 MONITORING_GEN_FOLDER = f"{RUNTIME_ASSETS_FOLDER}/monitoring/gen_tmp"
 SCENARIO_EXECUTION_GEN_FOLDER = f"{RUNTIME_ASSETS_FOLDER}/scenario_execution/gen_tmp"
@@ -29,8 +21,6 @@ TRAJECTORY_GENERATION_RUNTIME_FOLDER = f"{RUNTIME_ASSETS_FOLDER}/trajectory_gene
 TRAJECTORY_GENERATION_GEN_FOLDER = f"{TRAJECTORY_GENERATION_RUNTIME_FOLDER}/gen_tmp"
 SCENIC_FOLDER = SCENARIO_GENERATION_RUNTIME_FOLDER
 SIMULATION_GEN_FOLDER = SCENARIO_EXECUTION_GEN_FOLDER
-SIMULATION_GZ_FOLDER = GAZEBO_FOLDER
-SSH_KEY_FILE = f"{ASSET_FOLDER}/ssh_key/measurement_key.pem"
 CONFIG_FOLDER = f"{ASSET_FOLDER}/domain_config"
 COLREGS_CONSTANTS_FOLDER = f"{CONFIG_FOLDER}/colregs_constants"
 VESSEL_TYPES_FOLDER = f"{CONFIG_FOLDER}/vessel_types"
@@ -41,7 +31,6 @@ RUNTIME_ASSETS_VOLUME = os.environ.get("SCENEGEMS_RUNTIME_VOLUME", "scenegems_ru
 GAZEBO_GEN_MOUNT = f"{RUNTIME_ASSETS_FOLDER}/scenario_execution/gen_tmp"
 SITL_ENTRYPOINT_CONTAINER_PATH = "/scripts/sitl_entrypoint.sh"
 GAZEBO_ENTRYPOINT_CONTAINER_PATH = "/scripts/entrypoint.sh"
-GAZEBO_MODELS_CONTAINER_PATH = "/models"
 
 _initialized = False  # Global flag
 
@@ -57,7 +46,6 @@ def ensure_directories() -> None:
         ASSET_FOLDER,
         GEN_DATA_FOLDER,
         FUNCTIONAL_MODELS_FOLDER,
-        PROJECT_REPORT_FOLDER,
         IMAGES_FOLDER,
         EXPORTED_PLOTS_FOLDER,
         COLREGS_CONSTANTS_FOLDER,

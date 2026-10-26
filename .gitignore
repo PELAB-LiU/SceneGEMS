@@ -1,9 +1,6 @@
 # Python build metadata
 *.egg-info/
 
-# MQTT broker runtime data
-deploy/images/mqtt_broker/data/broker/
-
 # Real env files hold secrets (master, node); only the .env.example templates are tracked
 .env
 
@@ -23,10 +20,6 @@ frontend/*.local
 .cursor/
 .claude/
 CLAUDE.md
-
-/assets/
-
-**/assets/figures/tool_paper/screen_captures
 
 system_revision
 

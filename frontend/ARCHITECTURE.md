@@ -6,7 +6,7 @@
 src/
   app/           AppShell (frame: left pane and the shown section), WorkbenchSection
                  (the workbench views and their state), UI-only Zustand (uiStore)
-  components/    Shared UI pieces (SectionFrame, SectionPlaceholder, LoadingSpinner)
+  components/    Shared UI pieces (SectionFrame, LoadingSpinner)
   domain/        Simulation protocol, WebSocket client, playback store; cluster/ has the
                  cluster list, the operator API client, the live channel client and stores
   features/      React UI by section: workbench/ (connection, controls, metrics, monitor,

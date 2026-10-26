@@ -5,16 +5,6 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "View Trajectories",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "backend/src/scripts/view_trajectory.py",
-            "console": "integratedTerminal",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}/backend/src"
-            }
-        },
-        {
             "name": "Generate Trajectories",
             "type": "debugpy",
             "request": "launch",
@@ -45,16 +35,6 @@
             }
         },
 
-        {
-            "name": "Table Browser",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "backend/src/scripts/table_browser.py",
-            "console": "integratedTerminal",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}/backend/src"
-            }
-        },
 
         {
             "name": "Evaluation Plots",
@@ -97,16 +77,6 @@
             }
         },
 
-        {
-            "name": "Run Tests",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "backend/src/scripts/run_tests.py",
-            "console": "integratedTerminal",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}/backend/src"
-            }
-        },
         {
             "name": "Evaluate Hyperparameters",
             "type": "debugpy",
