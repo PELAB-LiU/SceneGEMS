@@ -4,6 +4,7 @@ import traceback
 
 from scenegems_tool.gateway.protocol import ClientMessage, simulation_config_from_body
 from scenegems_tool.gateway.socket_session import SocketSession
+from scenegems_tool.gateway.stack_options import stack_options_message
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 
 
@@ -74,6 +75,8 @@ class SocketMessageProcessor:
                             self.session.send_runtime_error(f"Invalid simulation configuration: {exc}")
                         else:
                             self.session.generate_simulation_models(simulation_config)
+                    case "query_stack_options":
+                        self.session.send_payload(stack_options_message())
                     case "initialize_monitor":
                         self.session.set_monitor_session(message["name"], message["topic"], message["scope"], message["colregsConstraintsContent"])
                     case "shut_down_monitor":

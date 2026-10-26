@@ -22,7 +22,13 @@ def test_stack_needs_a_layer():
 def test_stack_arguments():
     args = calibrate.build_parser().parse_args(["stack", "--layer", "gazebo", "--drive", "target", "--speedups", "1", "2", "--reference", "straight", "turning", "--wind", "0", "5"])
     assert (args.layer, args.drive, args.speedups, args.reference, args.wind) == ("gazebo", "target", [1, 2], ["straight", "turning"], [0.0, 5.0])
-    assert args.repeats == 3 and args.duration == 90
+    assert args.repeats == 3 and args.scale == ["5m"]
+    assert args.duration is None, "each reference run and scale has its own duration (reference_scenarios.default_duration)"
+
+
+def test_stack_arguments_of_the_phase_2_measurements():
+    args = calibrate.build_parser().parse_args(["stack", "--layer", "gazebo", "--control", "custom", "--drive", "usv_navigation", "--scale", "5m", "100m", "--from-rest", "--waves", "0.5", "5"])
+    assert (args.control, args.drive, args.scale, args.from_rest, args.waves) == ("custom", "usv_navigation", ["5m", "100m"], True, [0.5, 5.0])
 
 
 def test_unknown_layer_is_rejected():

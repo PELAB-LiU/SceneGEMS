@@ -15,7 +15,7 @@ import pytest
 from scenegems_tool.gateway.protocol import SimulationStatus
 from scenegems_tool.subsystems.scenario_execution import live_simulation_session
 from scenegems_tool.subsystems.scenario_execution.live_simulation_session import LiveSimulationSession
-from scenegems_tool.vessel_stack.contracts.roles import SimulationLayerId
+from scenegems_tool.vessel_stack.contracts.roles import ControlLayerId, SimulationLayerId
 from tests.scenegems_tool.gateway.conftest import settle
 from tests.scenegems_tool.vessel_stack.scenarios import GEOFENCE, encounter_trajectories, mqtt_connection, stack_instance
 
@@ -50,8 +50,9 @@ class FakeClient:
 class FakeContainer:
     service_topic = "waraps/service/virtual/real/scenario_execution_service"
 
-    def __init__(self, *args):
+    def __init__(self, *args, on_ground_control_ports=None):
         self.args = args
+        self.on_ground_control_ports = on_ground_control_ports
         self.cancelled = False
         self.destroyed = False
 
@@ -113,6 +114,12 @@ class TestConstruction:
         assert all(vessel.gazebo_vessel_model for vessel in setup.config.vessels.values())
         assert any(payload["type"] == "simulation_models" for payload in setup.sent)
 
+    async def test_kinematic_vessels_get_no_gazebo_model(self, setup):
+        config = stack_instance(SimulationLayerId.KINEMATIC, [0, 1], control_layer=ControlLayerId.NONE)
+        setup.session.generate_vessel_models(setup.trajectories.initial_scene, config)
+        assert all(vessel.gazebo_vessel_model is None for vessel in config.vessels.values())
+        assert setup.sent[-1]["type"] == "simulation_models" and setup.sent[-1]["simulatorType"] == "Kinematic"
+
     async def test_connects_a_client_that_reports_to_the_state_handler(self, setup):
         client = setup.session._client
         assert client.connected
@@ -150,6 +157,14 @@ class TestStatus:
         setup.session._handle_simulation_state(state_message(setup, SimulationStatus.AGENTS_ARE_PREPARING))
         setup.session._handle_simulation_state(state_message(setup, SimulationStatus.AGENTS_ARE_PREPARING))
         assert statuses(setup) == ["initializing", "agents are preparing"]
+
+    async def test_the_ground_station_ports_the_stack_reports_go_out_with_the_next_status(self, setup):
+        setup.session._container.on_ground_control_ports({"1": 49153})
+        setup.session._refresh_status()
+        with_ports = [payload for payload in setup.sent if payload["type"] == "simulation_status" and payload.get("groundControlPortsByAgentId")]
+        assert with_ports and with_ports[0]["groundControlPortsByAgentId"] == {"1": 49153}
+        setup.session._handle_simulation_state(state_message(setup, SimulationStatus.RUNNING, clock=1.0, step=1))
+        assert setup.sent[-1]["groundControlPortsByAgentId"] == {"1": 49153}, "every later status carries them too"
 
     async def test_unknown_status_values_are_ignored(self, setup):
         setup.session._handle_simulation_state({"status": "levitating", "clock": 0.0, "scene": None})

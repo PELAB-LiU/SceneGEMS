@@ -13,7 +13,8 @@ import pytest
 from logical_level.constraint_satisfaction.evaluation_data import EvaluationData
 from scenegems_tool.gateway.protocol import SimulationStatus
 from scenegems_tool.gateway.socket_session import NO_TRAJECTORIES_MESSAGE, SocketSession
-from scenegems_tool.vessel_stack.contracts.roles import ControlLayerId, SimulationLayerId
+from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, SimulationLayerId
+from scenegems_tool.vessel_stack.contracts.vessel_stack_config import AgentContext
 from scenegems_tool.workbench.empty_subsystem_integration_session import EmptySubsystemIntegrationSession
 from tests.scenegems_tool.gateway.conftest import settle
 from tests.scenegems_tool.vessel_stack.scenarios import encounter_scene, encounter_trajectories, stack_instance
@@ -128,6 +129,21 @@ class TestSimulationConfigValidation:
         (error,) = [payload["message"] for payload in websocket.sent if payload["type"] == "error"]
         assert error.startswith("Simulation configuration rejected: ")
         assert "Gazebo needs actuator commands" in error
+
+    async def test_with_a_real_vessel_usv_navigation_is_refused_since_arduagent_cannot_drive_it(self, session, loaded, websocket):
+        config = stack_instance(SimulationLayerId.ARDUPILOT_SIM, [0, 1], asv_software=AsvSoftwareId.USV_NAVIGATION)
+        config.vessels["1"].context = AgentContext.REAL
+        session.set_simulation_session(config)
+        await settle()
+        assert loaded.initialized == []
+        (error,) = [payload["message"] for payload in websocket.sent if payload["type"] == "error"]
+        assert "ArduAgent drives every simulated vessel, and it cannot drive vessel 0 (usv_navigation, ardupilot, ardupilot_sim)" in error
+
+    async def test_simulated_vessels_alone_may_run_any_available_stack(self, session, loaded, websocket):
+        session.set_simulation_session(stack_instance(SimulationLayerId.GAZEBO, [0, 1], asv_software=AsvSoftwareId.USV_NAVIGATION, control_layer=ControlLayerId.CUSTOM))
+        await settle()
+        assert len(loaded.initialized) == 1
+        assert not [payload for payload in websocket.sent if payload["type"] == "error"]
 
     async def test_vessel_models_are_generated_for_the_initial_scene(self, session, loaded):
         config = stack_instance(SimulationLayerId.ARDUPILOT_SIM, [0, 1], adapter_ids=["replay_arduagent_follower"])

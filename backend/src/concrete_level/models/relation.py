@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Tuple
 from concrete_level.models.concrete_actors import ConcreteActor
 
+
 class Relation(Tuple[ConcreteActor, ConcreteActor]):
     def __new__(cls, actor1: ConcreteActor, actor2: ConcreteActor):
         return super().__new__(cls, (actor1, actor2))
@@ -26,3 +27,8 @@ class Relation(Tuple[ConcreteActor, ConcreteActor]):
         if actor1.id <= actor2.id:
             return Relation(actor1, actor2)
         return Relation(actor2, actor1)
+
+
+def relation_order(relation: Relation) -> Tuple[int, int]:
+    """Sort key of relations: by the ids of their actors."""
+    return relation.actor1.id, relation.actor2.id

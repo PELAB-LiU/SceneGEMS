@@ -16,6 +16,7 @@ from concrete_level.trajectory_generation.scene_builder import SceneBuilder
 from scenegems_tool.gateway.protocol import SimulationStatus, simulation_config_from_body
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.messaging.mqtt_scenario_execution_service import MqttScenarioExecutionService, MqttStartSimulationTask
+from scenegems_tool.subsystems.scenario_execution.lockstep_simulation_driver import LockstepSimulationDriver, uses_lockstep_driver
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import SimulationInstanceConfig
 from scenegems_tool.vessel_stack.simulation_parser import SimulationParser
@@ -26,7 +27,12 @@ _logger = logging.getLogger(__name__)
 
 
 class ScenarioExecutionWorker:
-    """Runs simulation orchestration inside the scenario-execution Docker container."""
+    """Runs simulation orchestration inside the scenario-execution Docker container.
+
+    An instance of simulated vessels runs through the registry's lockstep runners
+    (lockstep_simulation_driver.py); one with real vessels through ArduAgent over WARA-PS MQTT
+    (simulation_parser.py).
+    """
 
     AGENTS_READY_POLL_INTERVAL_SEC = 1.0
     SIMULATOR_CLOCK_POLL_INTERVAL_SEC = 0.02
@@ -53,17 +59,23 @@ class ScenarioExecutionWorker:
         self._simulation_is_starting = False
         self._running_simulation_clock: Optional[float] = None
         self._stop_event = threading.Event()
+        self._lockstep_stop = threading.Event()
         self._runtime_thread: Optional[threading.Thread] = None
         self._obstacle_distances_thread: Optional[threading.Thread] = None
         self._heartbeat_thread: Optional[threading.Thread] = None
         self.publish_period = 1.0 / self.mqtt_service.info_update_rate
-        self.simulation_parser = SimulationParser(
-            simulation_config,
-            trajectories,
-            mqtt_connection,
-            self.mqtt_service,
-            spawn_docker_stack=False,
-        )
+        self.lockstep_driver: Optional[LockstepSimulationDriver] = None
+        self.simulation_parser: Optional[SimulationParser] = None
+        if uses_lockstep_driver(simulation_config):
+            self.lockstep_driver = LockstepSimulationDriver(simulation_config, trajectories, reference_geofence)
+        else:
+            self.simulation_parser = SimulationParser(
+                simulation_config,
+                trajectories,
+                mqtt_connection,
+                self.mqtt_service,
+                spawn_docker_stack=False,
+            )
         # self._start_obstacle_distances_loop()
 
     @classmethod
@@ -98,7 +110,8 @@ class ScenarioExecutionWorker:
         finally:
             self._stop_heartbeat_thread()
             self._stop_runtime()
-            self.simulation_parser.destroy()
+            if self.simulation_parser is not None:
+                self.simulation_parser.destroy()
             self.mqtt_service.disconnect()
 
     def stop(self) -> None:
@@ -158,14 +171,19 @@ class ScenarioExecutionWorker:
         self._simulation_is_starting = False
         self._running_simulation_clock = None
         if self._runtime_thread is not None and self._runtime_thread.is_alive():
+            self._lockstep_stop.set()
             self._runtime_thread.join(timeout=5.0)
         self._runtime_thread = None
+        self._lockstep_stop = threading.Event()
 
     def _start_obstacle_distances_loop(self) -> None:
         self._obstacle_distances_thread = threading.Thread(target=self._obstacle_distances_loop, name="obstacle_distances", daemon=True)
         self._obstacle_distances_thread.start()
 
     def _run_simulation_runtime(self) -> None:
+        if self.lockstep_driver is not None:
+            self._run_lockstep_runtime(self.lockstep_driver)
+            return
         try:
             self.start_scenario()
             self._publish_simulation_state()
@@ -178,6 +196,24 @@ class ScenarioExecutionWorker:
         except Exception:
             _logger.exception("Scenario execution runtime failed")
             self._simulation_is_starting = False
+            self._publish_simulation_state()
+
+    def _run_lockstep_runtime(self, driver: LockstepSimulationDriver) -> None:
+        """Run the instance's lockstep runner; every step it records is published as the running clock and scene."""
+
+        def on_scene(clock: float, scene) -> None:
+            del scene  # the driver keeps it as the current scene
+            self._simulation_is_starting = False
+            self._running_simulation_clock = clock
+            self._publish_simulation_state()
+
+        try:
+            driver.run(on_scene, self._lockstep_stop)
+        except Exception:
+            _logger.exception("Scenario execution lockstep run failed")
+        finally:
+            self._simulation_is_starting = False
+            self._running_simulation_clock = None
             self._publish_simulation_state()
 
     def _wait_until_agents_running(self) -> bool:
@@ -232,6 +268,11 @@ class ScenarioExecutionWorker:
         return None
 
     def _compute_status(self) -> SimulationStatus:
+        if self.lockstep_driver is not None:
+            # The runner connects to the simulators when the run starts, so the instance is ready right away.
+            if self.lockstep_driver.is_running:
+                return SimulationStatus.RUNNING
+            return SimulationStatus.STARTING if self._simulation_is_starting else SimulationStatus.READY_TO_START
         if self.simulation_parser.are_agents_running:
             return SimulationStatus.RUNNING
         if self._simulation_is_starting:
@@ -243,7 +284,13 @@ class ScenarioExecutionWorker:
         return SimulationStatus.INITIALIZING
 
     def get_current_scene(self) -> Optional[ConcreteScene]:
+        if self.lockstep_driver is not None:
+            return self.lockstep_driver.current_scene
         return self.simulation_parser.get_current_scene
+
+    @property
+    def _agents_initialized(self) -> bool:
+        return self.lockstep_driver is not None or self.simulation_parser.are_agents_initialized
 
     def _publish_simulation_state(self) -> None:
         status = self._compute_status()
@@ -253,7 +300,7 @@ class ScenarioExecutionWorker:
             self._running_simulation_clock = None
             clock = 0.0
         scene = self.get_current_scene()
-        scene_dict = scene.to_dict() if scene is not None and self.simulation_parser.are_agents_initialized else None
+        scene_dict = scene.to_dict() if scene is not None and self._agents_initialized else None
         self.mqtt_service.publish_simulation_state(status=status, clock=clock, scene=scene_dict)
 
     def start_scenario(self) -> None:

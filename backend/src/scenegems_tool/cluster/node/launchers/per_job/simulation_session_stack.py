@@ -5,6 +5,13 @@ execution service, which the workbench drives over WARA-PS MQTT. There is one su
 per machine with fixed names, because ArduAgent publishes unscoped WARA-PS topics; the
 node runs simulations as scoped per-job stacks instead (per_job/job_stack.py).
 
+The scenario execution service joins the vessel stack's network, since an instance of
+simulated vessels is driven by its lockstep runner over MAVLink or gz-transport from there
+(subsystems/scenario_execution/lockstep_simulation_driver.py). A kinematic instance has no
+simulator services: the service runs it alone. Once the stack is up, the host port Docker
+published for each Mission Planner vessel's ground control station is read back and handed
+to on_ground_control_ports.
+
 A new session takes ownership of the stack; a teardown scheduled by an older owner is
 skipped, so replacing a session never removes the stack its successor just started.
 """
@@ -14,6 +21,7 @@ import json
 import logging
 import os
 import threading
+from typing import Callable, Dict, Optional
 
 from concrete_level.models.trajectories import Trajectories
 from scenegems_tool.cluster.node.launchers.compose_project import ComposeProject
@@ -23,8 +31,12 @@ from scenegems_tool.cluster.node.subsystem import Subsystem, subsystem_image
 from scenegems_tool.gateway.protocol import make_simulation_models_body
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.messaging.mqtt_scenario_execution_service import SCENARIO_EXECUTION_SERVICE_TOPIC
+from scenegems_tool.vessel_stack.asv_software.mission_planner.mission_planner_specs import GCS_CONTAINER_PORT, MISSION_PLANNER_GCS_PORT
+from scenegems_tool.vessel_stack.contracts.roles import SimulationLayerId
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import SimulationInstanceConfig
+from scenegems_tool.vessel_stack.control_layers.ardupilot.vessel_service_generator import gcs_mavproxy_service_name
+from scenegems_tool.vessel_stack.registry.catalog import default_resolver
 from scenegems_tool.vessel_stack.simulation_docker_stack import SIMULATION_COMPOSE_PROJECT, build_simulation_docker_stack_artifacts, write_simulation_gen_files
 from utils.docker_compose_network import attach_broker_network_to_compose
 from utils.file_system_utils import SCENARIO_EXECUTION_GEN_FOLDER, docker_volume_path, merge_compose_volumes, runtime_assets_volume_mount
@@ -33,6 +45,8 @@ COMPOSE_PROJECT = "scenegems-scenario-execution-subsystem"
 SERVICE_NAME = "scenario_execution"
 SERVICE_CPU = 2
 TRAJECTORIES_GEN_FILE = f"{SCENARIO_EXECUTION_GEN_FOLDER}/trajectories.json"
+GROUND_CONTROL_PORT_ATTEMPTS = 30  # seconds to wait for Docker to publish the ground station ports after up
+GroundControlPortsObserver = Callable[[Dict[str, int]], None]  # host port by agent id
 _logger = logging.getLogger(__name__)
 _stack_lock = threading.Lock()
 _stack_generation = 0
@@ -89,8 +103,10 @@ class SimulationSessionStack:
         simulation_config: SimulationInstanceConfig,
         trajectories: Trajectories,
         time_step: int,
+        on_ground_control_ports: Optional[GroundControlPortsObserver] = None,
     ):
         self.project = ComposeProject(COMPOSE_PROJECT, f"{SCENARIO_EXECUTION_GEN_FOLDER}/docker-compose.yml")
+        self._on_ground_control_ports = on_ground_control_ports
         self.compose_filename = self.project.compose_filename
         self._destroyed = False
         self._shutdown = threading.Event()
@@ -134,19 +150,41 @@ class SimulationSessionStack:
         trajectories: Trajectories,
         time_step: int,
     ) -> None:
-        pending_writes, stack_compose = build_simulation_docker_stack_artifacts(
-            simulation_config,
-            trajectories,
-            mqtt_connection,
-            reference_geofence,
-            embedded_in_subsystem=True,
-        )
+        if simulation_config.simulation_layer == SimulationLayerId.KINEMATIC:
+            # The worker integrates the kinematic layer itself; it only needs the trajectories.
+            pending_writes = [(TRAJECTORIES_GEN_FILE, json.dumps(trajectories.to_dict()))]
+            stack_compose: dict = {"services": {}, "networks": {}}
+        else:
+            pending_writes, stack_compose = build_simulation_docker_stack_artifacts(
+                simulation_config,
+                trajectories,
+                mqtt_connection,
+                reference_geofence,
+                embedded_in_subsystem=True,
+            )
         write_simulation_gen_files(pending_writes)
         self._verify_gen_files(pending_writes)
 
         unified_compose = build_unified_compose(stack_compose, mqtt_connection, reference_geofence, simulation_config, time_step)
         self.project.write(unified_compose)
         self.project.up("--force-recreate")
+        self._report_ground_control_ports(simulation_config)
+
+    def _report_ground_control_ports(self, simulation_config: SimulationInstanceConfig) -> None:
+        services = ground_control_services(simulation_config)
+        if not services or self._on_ground_control_ports is None:
+            return
+        ports: Dict[str, int] = {}
+        for _ in range(GROUND_CONTROL_PORT_ATTEMPTS):
+            for agent_id, service in services.items():
+                if agent_id not in ports:
+                    port = self.project.published_port(service, GCS_CONTAINER_PORT)
+                    if port is not None:
+                        ports[agent_id] = port
+            if len(ports) == len(services) or self._shutdown.wait(1.0):
+                break
+        if ports and not self._shutdown.is_set():
+            self._on_ground_control_ports(ports)
 
     def _verify_gen_files(self, pending_writes: list[tuple[str, str]]) -> None:
         missing = [path for path, _ in pending_writes if not os.path.isfile(path)]
@@ -171,6 +209,17 @@ class SimulationSessionStack:
         )
 
 
+def ground_control_services(simulation_config: SimulationInstanceConfig) -> Dict[str, str]:
+    """The MAVProxy service of every Mission Planner vessel on its ground control station port, by agent id."""
+    resolver = default_resolver()
+    services = {}
+    for agent_id, vessel in simulation_config.simulated_vessels.items():
+        adapter = resolver.resolve(vessel.stack, vessel.adapter_ids).asv_adapter
+        if adapter is not None and adapter.id == MISSION_PLANNER_GCS_PORT.id:
+            services[agent_id] = gcs_mavproxy_service_name(vessel.require_connection().agent_name)
+    return services
+
+
 def build_unified_compose(
     stack_compose: dict,
     mqtt_connection: MQttConnectionInfo,
@@ -186,7 +235,7 @@ def build_unified_compose(
         "image": subsystem_image(Subsystem.SCENARIO_EXECUTION),
         "container_name": SERVICE_NAME,
         "hostname": SERVICE_NAME,
-        "depends_on": agent_service_names,
+        **({"depends_on": agent_service_names} if agent_service_names else {}),
         "environment": {
             **subsystem_environment(mqtt_connection, reference_geofence),
             "SIMULATION_CONFIG_JSON_B64": simulation_config_b64,
@@ -197,7 +246,8 @@ def build_unified_compose(
         "restart": "unless-stopped",
         "extra_hosts": ["host.docker.internal:host-gateway"],
         "volumes": [runtime_assets_volume_mount(read_only=True)],
-        "networks": ["scenario_execution_net"],
+        # The vessel stack's network too: the lockstep runners reach SITL and Gazebo there.
+        "networks": ["scenario_execution_net", *stack_compose.get("networks", {})],
     }
 
     return merge_compose_volumes(

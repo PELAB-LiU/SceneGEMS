@@ -7,19 +7,13 @@ import type {
 } from "../../../domain/simulation/types";
 import { renderActorName, renderRelationId } from "./actorNameFormat";
 import { PersistedDetails } from "./monitorPrimitives";
+import { sortEvaluations } from "./ruleEvaluationOrder";
 
 interface RuleResultsPanelProps {
   persistKey: string;
   ruleResults: RuleResultData[];
   situationContexts: SituationContextData[];
 }
-
-/** FAILED first, then not-yet-evaluated, then satisfied. */
-const RESULT_RANK: Record<RuleResult, number> = {
-  FAILED: 0,
-  UNKNOWN: 1,
-  PASSED: 2,
-};
 
 const RESULT_META: Record<RuleResult, { label: string; className: string; title: string }> = {
   FAILED: { label: "Fail", className: "rule-pill--fail", title: "Rule violated" },
@@ -30,21 +24,6 @@ const RESULT_META: Record<RuleResult, { label: string; className: string; title:
     title: "Not applicable yet in the current state",
   },
 };
-
-function sortEvaluations(evaluations: RuleEvaluation[]): RuleEvaluation[] {
-  return [...evaluations].sort((a, b) => {
-    if (RESULT_RANK[a.result] !== RESULT_RANK[b.result]) {
-      return RESULT_RANK[a.result] - RESULT_RANK[b.result];
-    }
-    if (a.kind !== b.kind) {
-      return a.kind === "rule" ? -1 : 1;
-    }
-    if (a.ruleNumber !== b.ruleNumber) {
-      return a.ruleNumber.localeCompare(b.ruleNumber, undefined, { numeric: true });
-    }
-    return a.title.localeCompare(b.title);
-  });
-}
 
 function RuleRow({ evaluation }: { evaluation: RuleEvaluation }) {
   const meta = RESULT_META[evaluation.result];

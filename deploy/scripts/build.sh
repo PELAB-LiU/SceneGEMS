@@ -138,7 +138,8 @@ build_simulation_images() {
     # Gazebo and SITL declare the upstream pins of deploy/images/upstream_pins.env as build
     # arguments, so the helpers pass them and add the pins file to both fingerprints.
     build_subsystem_if_stale "scenegems-gazebo-harmonic:latest" "$SCRIPT_DIR/deploy/images/gazebo/Dockerfile" \
-        "$SCRIPT_DIR/deploy/images/gazebo"
+        "$SCRIPT_DIR/deploy/images/gazebo" \
+        "$SCRIPT_DIR/backend/src/scenegems_tool/vessel_stack/simulation_layers/gazebo/gz_transport_actuator.py"
     build_subsystem_if_stale "scenegems-ardupilot-sitl:latest" "$SCRIPT_DIR/deploy/images/sitl/Dockerfile" \
         "$SCRIPT_DIR/deploy/images/sitl/Dockerfile" "$SCRIPT_DIR/deploy/images/sitl" "$SCRIPT_DIR/deploy/images/gazebo/sitl_entrypoint.sh"
     build_if_stale "scenegems-mavproxy:latest" "$SCRIPT_DIR/deploy/images/mavproxy/Dockerfile" "$SCRIPT_DIR/deploy/images/mavproxy"

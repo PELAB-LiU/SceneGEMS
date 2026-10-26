@@ -6,8 +6,10 @@ Replace `build_stub_frame` with serializers from your `MonitoredTrajectory` / mo
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
+from concrete_level.colregs_monitoring.colregs_rules.colregs_rule_results import COLREGSRuleResultMap
+from concrete_level.colregs_monitoring.colregs_rules.colregs_rules import RULE_KIND, COLREGSRule
 from concrete_level.colregs_monitoring.monitored_trajectory import MonitoredSceneWithResults, MonitoredTrajectory
 from concrete_level.colregs_monitoring.situation_context import SituationContext
 from concrete_level.models.concrete_actors import ConcreteActor, ConcreteVessel
@@ -127,6 +129,29 @@ def _effective_avoidance_direction(monitored_scene: MonitoredSceneWithResults, r
     return direction.name
 
 
+def rule_display_order(rule: COLREGSRule) -> Tuple[int, int, str, int, str]:
+    """The order rules are listed in: rules before suggestions, by rule number, then by vessel and title.
+
+    The same order as compareRules in the frontend's rule timeline, so every list of one
+    encounter shows its rules in one fixed order from frame to frame.
+    """
+    number = int(rule.rule_number) if rule.rule_number.isdigit() else 10**6
+    return (0 if rule.kind == RULE_KIND else 1, number, rule.subject_actor_name, rule.subject_actor_id, rule.name)
+
+
+def _encounter_rule_results(monitored_scene: MonitoredSceneWithResults, relation: Relation) -> COLREGSRuleResultMap:
+    """The encounter's rules and the per-vessel rules of both its vessels.
+
+    Per-vessel rules (Rule 8 on readily apparent manoeuvres, Rule 17 for the stand-on vessel)
+    are kept under the vessel related to itself, which is never an encounter, so the frames
+    carried none of them: the stand-on vessel of a crossing had no Rule 17 in any frame.
+    """
+    results = COLREGSRuleResultMap(dict(monitored_scene.monitor_result_map_set.get_result(relation)))
+    for actor in (relation.actor1, relation.actor2):
+        results.update(monitored_scene.monitor_result_map_set.get_result(Relation(actor, actor)))
+    return results
+
+
 def monitor_payload_from_scene(monitored_scene: MonitoredSceneWithResults) -> Dict[str, Any]:
     situation_contexts: List[Dict[str, Any]] = []
     colregs_states: List[Dict[str, Any]] = []
@@ -212,9 +237,9 @@ def monitor_payload_from_scene(monitored_scene: MonitoredSceneWithResults) -> Di
                 }
             )
 
-        relation_rule_result = monitored_scene.monitor_result_map_set.get_result(relation)
+        relation_rule_result = _encounter_rule_results(monitored_scene, relation)
         rules = []
-        for rule, result in relation_rule_result.items():
+        for rule, result in sorted(relation_rule_result.items(), key=lambda item: rule_display_order(item[0])):
             rules.append(
                 {
                     "name": rule.name,
@@ -231,7 +256,7 @@ def monitor_payload_from_scene(monitored_scene: MonitoredSceneWithResults) -> Di
             {
                 "relationId": relation_id,
                 "isFailed": relation_rule_result.is_failed(),
-                "failedRuleNames": [rule.name for rule in relation_rule_result.get_failed_rules()],
+                "failedRuleNames": [rule.name for rule in sorted(relation_rule_result.get_failed_rules(), key=rule_display_order)],
                 "rules": rules,
             }
         )

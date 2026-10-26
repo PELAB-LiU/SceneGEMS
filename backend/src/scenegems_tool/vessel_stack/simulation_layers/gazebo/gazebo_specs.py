@@ -1,4 +1,4 @@
-"""Specs of the Gazebo simulation layer and of the ArduPilot link into it."""
+"""Specs of the Gazebo simulation layer and of the ArduPilot and custom controller links into it."""
 
 from typing import Optional
 
@@ -9,10 +9,11 @@ from scenegems_tool.vessel_stack.contracts.roles import ControlLayerId, LayerRef
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import EnvironmentConfig
 from utils.file_system_utils import GAZEBO_ENTRYPOINT_CONTAINER_PATH
 
-# True once the Gazebo image includes asv_wave_sim (gz-waves1). Then a world with waves replaces
-# the flat Buoyancy system by a wave field, and each vessel model carries the wave-aware
-# buoyancy system. Until then the waves capability stays unsupported and this stays False.
-GAZEBO_WAVE_FORCES_AVAILABLE = False
+# The Gazebo image builds asv_wave_sim (gz-waves1, ASV_WAVE_SIM_COMMIT in upstream_pins.env), so a
+# world with waves replaces the flat Buoyancy system by a wave field and each vessel model carries
+# the wave-aware buoyancy system on finer cells. Set it False for an image without asv_wave_sim:
+# waves then leave the world flat, and the waves capability must say unsupported.
+GAZEBO_WAVE_FORCES_AVAILABLE = True
 
 
 def wave_forces_enabled(environment: Optional[EnvironmentConfig]) -> bool:
@@ -20,18 +21,21 @@ def wave_forces_enabled(environment: Optional[EnvironmentConfig]) -> bool:
     return GAZEBO_WAVE_FORCES_AVAILABLE and environment is not None and environment.waves_requested
 
 
+GZ_TRANSPORT_ACTUATOR_SOURCE = "backend/src/scenegems_tool/vessel_stack/simulation_layers/gazebo/gz_transport_actuator.py"  # copied into the image
+
 GAZEBO_CONTAINER = ContainerSpec(
     image="${GAZEBO_IMAGE:-scenegems-gazebo-harmonic:latest}",
     build_fingerprint_source="deploy/images/gazebo",
     entrypoint=GAZEBO_ENTRYPOINT_CONTAINER_PATH,
     upstream_pins_file=UPSTREAM_PINS_FILE,
+    extra_fingerprint_sources=(GZ_TRANSPORT_ACTUATOR_SOURCE,),
 )
 
 GAZEBO_LAYER = LayerSpec(
     layer=LayerRef.of(SimulationLayerId.GAZEBO),
     description="Gazebo Harmonic with a generated ocean world and one parametric twin-thrust SDF model per vessel (buoyancy, hydrodynamics, thrusters, WindEffects wind on a windage link).",
-    capabilities=Capabilities(wind=EnvironmentSupport.SUPPORTED, waves=EnvironmentSupport.UNSUPPORTED),
-    restriction_notes=(("waves", "Gazebo Harmonic has no wave force system; waves need asv_wave_sim in the Gazebo image (WP2 spike)"),),
+    # Waves come from asv_wave_sim (GAZEBO_WAVE_FORCES_AVAILABLE); whether they are supported is a measurement.
+    capabilities=Capabilities(wind=EnvironmentSupport.SUPPORTED, waves=EnvironmentSupport.UNMEASURED),
     provides_ports=frozenset({Port.VESSEL_STATE, Port.CLOCK}),
     requires_ports=frozenset({Port.ACTUATOR_CMD, Port.ENVIRONMENT}),
     containers=(GAZEBO_CONTAINER,),
@@ -48,3 +52,25 @@ ARDUPILOT_GAZEBO_PLUGIN = AdapterSpec(
     provides_ports=frozenset({Port.ACTUATOR_CMD}),
     requires_ports=frozenset({Port.VESSEL_STATE, Port.CLOCK}),
 )
+
+GZ_TRANSPORT_ACTUATOR = AdapterSpec(
+    id="gz_transport_actuator",
+    source=LayerRef.of(ControlLayerId.CUSTOM),
+    target=LayerRef.of(SimulationLayerId.GAZEBO),
+    description=(
+        "gz-transport actuator adapter in the Gazebo container (gz_transport_actuator.py): thrust as gz.msgs.Double on "
+        "/model/<model>/joint/<joint>/cmd_thrust, odometry back, and the paused world stepped through its world control "
+        "service, so controller and physics share one clock."
+    ),
+    # Unmeasured until measured; registry/measured_capabilities.yaml holds the values.
+    capabilities=Capabilities(repeatability_tier=RepeatabilityTier.BOUNDED, max_speedup=None),
+    provides_ports=frozenset({Port.ACTUATOR_CMD}),
+    requires_ports=frozenset({Port.VESSEL_STATE, Port.CLOCK}),
+)
+
+
+def gz_lockstep_link_runtime():
+    """Runtime of GZ_TRANSPORT_ACTUATOR on the runner's side, imported on first use."""
+    from scenegems_tool.vessel_stack.simulation_layers.gazebo.gz_lockstep_link import GzLockstepLink
+
+    return GzLockstepLink

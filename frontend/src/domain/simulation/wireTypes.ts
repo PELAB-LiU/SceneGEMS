@@ -1,10 +1,21 @@
 import type { GeneratedSceneData, SimulationFrame } from "./types";
 
-/** Per-agent connection info for `initialize_simulation` (matches server TypedDict). */
+/** ASV software of a vessel stack (backend `AsvSoftwareId`). */
+export type AsvSoftwareWire = "replay" | "usv_navigation" | "mission_planner";
+/** Control layer of a vessel stack (backend `ControlLayerId`). */
+export type ControlLayerWire = "ardupilot" | "custom" | "none";
+
+/**
+ * Per-agent connection info for `initialize_simulation` (matches server TypedDict).
+ * `asvSoftware` and `controlLayer` choose the vessel's stack; `controlMode` is ArduAgent's mode
+ * for the same ASV software (absent for USV Navigation, which ArduAgent cannot drive).
+ */
 export type SimulationConnectionInfo =
   | {
       context: "simulation";
-      controlMode: "autonomous" | "external";
+      asvSoftware?: AsvSoftwareWire;
+      controlLayer?: ControlLayerWire;
+      controlMode?: "autonomous" | "external";
       agentName: string;
       topic: string;
       port: number;
@@ -16,7 +27,9 @@ export type SimulationConnectionInfo =
     }
   | {
       context: "real";
-      controlMode: "autonomous" | "external";
+      asvSoftware?: AsvSoftwareWire;
+      controlLayer?: ControlLayerWire;
+      controlMode?: "autonomous" | "external";
       agentName: string;
       topic: string;
       /**
@@ -55,6 +68,33 @@ export interface SimulationModelsPayload {
   connectionsByAgentId: Record<string, SimulationConnectionInfo>;
 }
 
+/** One (simulator, ASV software, control layer) combination of the backend's stack resolver. */
+export interface StackOptionWire {
+  simulatorType: string;
+  asvSoftware: AsvSoftwareWire;
+  controlLayer: ControlLayerWire;
+  available: boolean;
+  /** "available", "planned (phase n)" or "unavailable". */
+  status: string;
+  /** Why the combination cannot be used; empty when available. */
+  reason: string;
+  /** An operator drives the vessel (Mission Planner). */
+  interactiveOnly: boolean;
+  repeatabilityTier: "exact" | "bounded" | "none" | null;
+  /** Highest measured speedup; null when unmeasured or, with `speedupUnlimited`, when there is no limit. */
+  maxSpeedup: number | null;
+  speedupUnlimited: boolean;
+  wind: "supported" | "unmeasured" | "unsupported" | null;
+  waves: "supported" | "unmeasured" | "unsupported" | null;
+}
+
+export interface StackOptionsPayload {
+  simulatorTypes: string[];
+  asvSoftware: AsvSoftwareWire[];
+  controlLayers: ControlLayerWire[];
+  combinations: StackOptionWire[];
+}
+
 /** The trajectory generators a pipeline chooses from (backend `TrajectoryGeneratorId`). */
 export type TrajectoryGeneratorWire = "monitor_driven_rrt" | "straight";
 
@@ -90,6 +130,7 @@ export type ClientToServerMessage =
       fileContent: string;
     }
   | { type: "start_simulation" }
+  | { type: "query_stack_options" }
   | ({ type: "initialize_simulation" } & SimulationModelsPayload)
   | ({ type: "generate_simulation_models" } & SimulationModelsPayload)
   | { type: "reset_simulation" }
@@ -208,7 +249,10 @@ export type ServerToClientMessage =
         | "initializing"
         | "not initialized"
         | "offline";
+      /** Host port (TCP on localhost) of each Mission Planner vessel's ground control station, by agent id. */
+      groundControlPortsByAgentId?: Record<string, number>;
     }
+  | ({ type: "stack_options" } & StackOptionsPayload)
   | { type: "waraps_status"; status: "connected" | "disconnected" }
   | { type: "monitor_status"; status: "connected" | "disconnected" }
   /**

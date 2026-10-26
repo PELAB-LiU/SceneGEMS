@@ -7,13 +7,14 @@
   gz.msgs.Odometry on /model/<name>/odometry.
 """
 
-from typing import Mapping, Optional
+import math
+from typing import Mapping, Optional, Tuple
 
 import numpy as np
 
 from concrete_level.models.concrete_actors import ConcreteVessel
 from scenegems_tool.vessel_stack.contracts.roles import ControlLayerId
-from scenegems_tool.vessel_stack.contracts.vessel_stack_config import EnvironmentConfig
+from scenegems_tool.vessel_stack.contracts.vessel_stack_config import EnvironmentConfig, WaveConfig
 from scenegems_tool.vessel_stack.simulation_layers.gazebo.gazebo_specs import wave_forces_enabled
 from scenegems_tool.vessel_stack.simulation_layers.gazebo.generators.thrust_calculation import ardupilot_thrust_multiplier
 from scenegems_tool.vessel_stack.simulation_layers.gazebo.generators.vessel_dynamics import BUOYANCY_GRID, VesselDynamics, derive_vessel_dynamics
@@ -21,11 +22,23 @@ from scenegems_tool.vessel_stack.simulation_layers.gazebo.generators.vessel_dyna
 
 GAZEBO_MODEL_CONTROL_LAYERS = (ControlLayerId.ARDUPILOT, ControlLayerId.CUSTOM)
 ODOMETRY_RATE_HZ = 50
+# Under waves the wave-aware buoyancy reads the wave height at the corners of each collision box's
+# faces, so a box as long as a wave sees a flat sea. Cells of at most 1/WAVE_CELLS_PER_WAVELENGTH of
+# the wavelength let the hull heave and pitch with the wave (the WP2 spike's 3 by 3 cells were too
+# coarse for the 30 and 100 m hulls in 5 s waves), up to MAX_WAVE_CELLS per side to bound the cost.
+WAVE_CELLS_PER_WAVELENGTH = 8
+MAX_WAVE_CELLS = 24
+GRAVITY = 9.81
 
 
 def _f(value: float) -> str:
     """Plain decimal with up to 6 significant digits (no exponent, which keeps the SDF readable)."""
     return np.format_float_positional(float(value), precision=6, unique=False, fractional=False, trim="-")
+
+
+def sdf_value(value: float) -> float:
+    """The value Gazebo reads back from the SDF: rounded as _f writes it."""
+    return float(_f(value))
 
 
 def _inertia(ixx: float, iyy: float, izz: float) -> str:
@@ -45,10 +58,28 @@ def generate_vessel_model(
         overrides = load_vessel_dynamics_overrides().for_vessel(vessel)
     wind_speed = float(np.linalg.norm(environment.wind_vector)) if environment is not None else 0.0
     dynamics = derive_vessel_dynamics(vessel, wind_speed, overrides)
-    return render_vessel_model(dynamics, agent_name, int(vessel.id), control_layer, wave_forces_enabled(environment))
+    wave = environment.wave if wave_forces_enabled(environment) else None
+    return render_vessel_model(dynamics, agent_name, int(vessel.id), control_layer, wave)
 
 
-def render_vessel_model(d: VesselDynamics, agent_name: str, vessel_id: int, control_layer: ControlLayerId, wave_forces: bool = False) -> str:
+def deep_water_wavelength(period: float) -> float:
+    return GRAVITY * period**2 / (2.0 * math.pi)
+
+
+def buoyancy_cells(d: VesselDynamics, wave: Optional[WaveConfig] = None) -> Tuple[int, int]:
+    """Buoyancy cells along and across the hull: BUOYANCY_GRID each in flat water, finer under waves."""
+    if wave is None:
+        return BUOYANCY_GRID, BUOYANCY_GRID
+    cell = deep_water_wavelength(wave.period) / WAVE_CELLS_PER_WAVELENGTH
+
+    def count(extent: float) -> int:
+        return int(min(max(math.ceil(extent / cell), BUOYANCY_GRID), MAX_WAVE_CELLS))
+
+    return count(d.collision_length), count(d.collision_breadth)
+
+
+def render_vessel_model(d: VesselDynamics, agent_name: str, vessel_id: int, control_layer: ControlLayerId, wave: Optional[WaveConfig] = None) -> str:
+    """wave: the wave field the hull floats in (wave forces on), None for flat water."""
     if control_layer not in GAZEBO_MODEL_CONTROL_LAYERS:
         raise ValueError(f"No Gazebo vessel model for control layer {control_layer.value}; supported: {[layer.value for layer in GAZEBO_MODEL_CONTROL_LAYERS]}")
     ardupilot = control_layer == ControlLayerId.ARDUPILOT
@@ -60,8 +91,10 @@ def render_vessel_model(d: VesselDynamics, agent_name: str, vessel_id: int, cont
     windage_iyy = d.windage_mass / 12.0 * (d.length**2 + freeboard**2)
     windage_izz = d.windage_mass / 12.0 * (d.length**2 + d.breadth**2)
 
-    cell_length, cell_breadth = d.collision_length / BUOYANCY_GRID, d.collision_breadth / BUOYANCY_GRID
-    offsets = [(i - (BUOYANCY_GRID - 1) / 2.0) for i in range(BUOYANCY_GRID)]
+    cells_along, cells_across = buoyancy_cells(d, wave)
+    cell_length, cell_breadth = d.collision_length / cells_along, d.collision_breadth / cells_across
+    along = [(i - (cells_along - 1) / 2.0) for i in range(cells_along)]
+    across = [(j - (cells_across - 1) / 2.0) for j in range(cells_across)]
     collisions = "".join(f"""
       <collision name="collision_hull_{i}_{j}">
         <pose>{_f(dx * cell_length)} {_f(dy * cell_breadth)} {_f(d.collision_z)} 0 0 0</pose>
@@ -70,7 +103,7 @@ def render_vessel_model(d: VesselDynamics, agent_name: str, vessel_id: int, cont
             <size>{_f(cell_length)} {_f(cell_breadth)} {_f(d.collision_height)}</size>
           </box>
         </geometry>
-      </collision>""" for i, dx in enumerate(offsets) for j, dy in enumerate(offsets))
+      </collision>""" for i, dx in enumerate(along) for j, dy in enumerate(across))
 
     imu_sensor = (
         """
@@ -104,7 +137,10 @@ def render_vessel_model(d: VesselDynamics, agent_name: str, vessel_id: int, cont
       <thrust_coefficient>{_f(d.thrust_coefficient)}</thrust_coefficient>
       <fluid_density>1025</fluid_density>
       <propeller_diameter>{_f(d.propeller_diameter)}</propeller_diameter>
-      <velocity_control>0</velocity_control>
+      <!-- The propeller turns at the speed of the thrust (no propeller PID torque on the hull), and the
+           system publishes that speed on .../ang_vel every iteration: the gz-transport actuator checks
+           with it that a thrust command was in effect from the step's first iteration. -->
+      <velocity_control>1</velocity_control>
       <use_angvel_cmd>0</use_angvel_cmd>
       <max_thrust_cmd>{_f(d.max_thrust)}</max_thrust_cmd>
       <min_thrust_cmd>{_f(-d.max_thrust)}</min_thrust_cmd>
@@ -123,7 +159,7 @@ def render_vessel_model(d: VesselDynamics, agent_name: str, vessel_id: int, cont
         <pressure_drag_on>0</pressure_drag_on>
       </hydrodynamics>
     </plugin>"""
-        if wave_forces
+        if wave is not None
         else ""
     )
 

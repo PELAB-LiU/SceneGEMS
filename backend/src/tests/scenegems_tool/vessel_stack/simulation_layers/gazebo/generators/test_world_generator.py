@@ -12,9 +12,11 @@ CENTER = np.array([57.0, 16.0])
 INCLUDES = [("/models/a.sdf", ActorState(1.0, 2.0, 3.0, 0.5))]
 
 
-def world(*, wind=None, wave=None, speed_factor=1, headless=True, wave_forces=False):
+def world(*, wind=None, wave=None, speed_factor=1, headless=True, wave_forces=False, externally_stepped=False):
     calm = EnvironmentConfig.calm()
-    return parse_sdf(generate_world(CENTER, INCLUDES, calm.wind_vector if wind is None else wind, calm.wave if wave is None else wave, speed_factor, headless, wave_forces))
+    return parse_sdf(
+        generate_world(CENTER, INCLUDES, calm.wind_vector if wind is None else wind, calm.wave if wave is None else wave, speed_factor, headless, wave_forces, externally_stepped=externally_stepped)
+    )
 
 
 def regular_waves() -> WaveConfig:
@@ -43,6 +45,13 @@ def test_headless_has_no_scene_broadcaster_and_gui_has_one():
 @pytest.mark.parametrize("factor", [1, 2, 8])
 def test_speed_factor_sets_the_real_time_factor(factor):
     assert child_float(world(speed_factor=factor).find("world/physics"), "real_time_factor") == factor
+
+
+def test_an_externally_stepped_world_runs_without_a_real_time_factor():
+    """The runner paces the world through the actuator; gz sim must not hold its iterations back to a wall clock."""
+    root = world(speed_factor=8, externally_stepped=True)
+    assert child_float(root.find("world/physics"), "real_time_factor") == 0.0
+    assert child_float(root.find("world/physics"), "max_step_size") == 0.005
 
 
 def test_wind_vector_is_written_verbatim():

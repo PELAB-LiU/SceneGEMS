@@ -36,6 +36,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     protobuf-compiler \
     # asv_wave_sim specific dependencies
     libcgal-dev \
+    libeigen3-dev \
     libfftw3-dev \
     libboost-all-dev \
     libboost-iostreams-dev \
@@ -53,6 +54,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgz-msgs10-dev \
     libgz-plugin2-dev \
     libgz-transport13-dev \
+    # Python bindings of the gz-transport actuator (custom control layer)
+    python3-gz-transport13 \
+    python3-gz-msgs10 \
     && rm -rf /var/lib/apt/lists/*
 
 # 4. Build ArduPilot Gazebo Plugin at the pinned commit: the head of
@@ -98,7 +102,44 @@ RUN : "${ASV_SIM_REPO:?missing build arg, see deploy/images/upstream_pins.env}" 
     cmake --install build && \
     rm -rf /opt/asv_sim/.git
 
-# 6. Environment Configuration
+# 6. asv_wave_sim (gz-waves1) at the pinned commit: the wave field (gz-waves1-waves-model-system) and the
+# wave-aware buoyancy (gz-waves1-hydrodynamics-system) of worlds with waves. Its hydrodynamics system is
+# named gz::sim::systems::Hydrodynamics like gz-sim's own, which the vessel models load for damping and
+# added mass, and two systems of one name cannot load together; it is renamed WavesHydrodynamics
+# (class, constructor, destructor, private data and plugin registration only, so the waves library's
+# own waves::Hydrodynamics keeps its name). The models folder stays for GZ_SIM_RESOURCE_PATH.
+ARG ASV_WAVE_SIM_REPO
+ARG ASV_WAVE_SIM_COMMIT
+WORKDIR /opt/asv_wave_sim
+RUN : "${ASV_WAVE_SIM_REPO:?missing build arg, see deploy/images/upstream_pins.env}" && \
+    : "${ASV_WAVE_SIM_COMMIT:?missing build arg, see deploy/images/upstream_pins.env}" && \
+    git init -q && \
+    git remote add origin "$ASV_WAVE_SIM_REPO" && \
+    git fetch -q --depth 1 origin "$ASV_WAVE_SIM_COMMIT" && \
+    git checkout -q FETCH_HEAD && \
+    test "$(git rev-parse HEAD)" = "$ASV_WAVE_SIM_COMMIT" && \
+    cd gz-waves/src/systems/hydrodynamics && \
+    sed -E -i \
+      -e 's/\bHydrodynamicsPrivate\b/WavesHydrodynamicsPrivate/g' \
+      -e 's/\bHydrodynamics::(~?)Hydrodynamics\(/WavesHydrodynamics::\1WavesHydrodynamics(/g' \
+      -e 's/\bHydrodynamics::(Configure|PreUpdate)\b/WavesHydrodynamics::\1/g' \
+      -e 's/systems::Hydrodynamics\b/systems::WavesHydrodynamics/g' \
+      -e 's/^class Hydrodynamics$/class WavesHydrodynamics/' \
+      -e 's/public: Hydrodynamics\(\)/public: WavesHydrodynamics()/' \
+      -e 's/~Hydrodynamics\(\)/~WavesHydrodynamics()/' \
+      Hydrodynamics.cc Hydrodynamics.hh && \
+    grep -q "systems::WavesHydrodynamics" Hydrodynamics.cc && \
+    cd /opt/asv_wave_sim/gz-waves && \
+    GZ_VERSION=harmonic cmake -S . -B build \
+      -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+      -DCMAKE_INSTALL_PREFIX=/usr/local \
+      -DBUILD_TESTING=OFF && \
+    cmake --build build -j"$(nproc)" && \
+    cmake --install build && \
+    ldconfig && \
+    rm -rf /opt/asv_wave_sim/.git /opt/asv_wave_sim/gz-waves/build
+
+# 7. Environment Configuration
 ENV GZ_VERSION=harmonic
 ENV GZ_PARTITION=scenegems
 ENV GZ_SIM_SYSTEM_PLUGIN_PATH=/usr/local/lib:/usr/local/lib/ardupilot_gazebo
@@ -107,8 +148,11 @@ ENV LC_NUMERIC=C
 
 COPY deploy/images/gazebo/gazebo_entrypoint_prod.sh /scripts/entrypoint.sh
 RUN chmod +x /scripts/entrypoint.sh
+# The gz-transport actuator of the custom control layer runs next to gz sim (the entrypoint starts
+# it when GZ_ACTUATOR_PORT is set). It imports only the standard library and the gz bindings.
+COPY backend/src/scenegems_tool/vessel_stack/simulation_layers/gazebo/gz_transport_actuator.py /scripts/gz_transport_actuator.py
 
-# 7. apt and Python packages are not pinned: record the installed versions so a node can report them.
+# 8. apt and Python packages are not pinned: record the installed versions so a node can report them.
 RUN mkdir -p /etc/scenegems/package_versions && \
     dpkg-query -W -f='${Package}=${Version}\n' | LC_ALL=C sort > /etc/scenegems/package_versions/dpkg.txt && \
     python3 -c "import importlib.metadata as m; print(*sorted({'%s==%s' % (d.metadata.get('Name'), d.version) for d in m.distributions() if d.metadata.get('Name')}), sep=chr(10))" \
@@ -119,6 +163,7 @@ LABEL org.scenegems.base_image="${UBUNTU_BASE_IMAGE}" \
       org.scenegems.upstream.ardupilot_gazebo="${ARDUPILOT_GAZEBO_COMMIT}" \
       org.scenegems.upstream.ardupilot_gazebo.base="${ARDUPILOT_GAZEBO_BASE_COMMIT}" \
       org.scenegems.upstream.asv_sim="${ASV_SIM_COMMIT}" \
+      org.scenegems.upstream.asv_wave_sim="${ASV_WAVE_SIM_COMMIT}" \
       org.scenegems.package_versions="/etc/scenegems/package_versions"
 
 WORKDIR /worlds

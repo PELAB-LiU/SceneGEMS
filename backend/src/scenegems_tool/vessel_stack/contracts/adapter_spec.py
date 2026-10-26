@@ -33,11 +33,12 @@ class ContainerSpec:
     entrypoint: str
     cpus: Optional[float] = None
     upstream_pins_file: Optional[str] = None  # repo path of the upstream pins the image builds from, also part of the stamp
+    extra_fingerprint_sources: Tuple[str, ...] = ()  # further repo paths the image copies in, also part of the stamp
 
     @property
     def build_fingerprint_sources(self) -> Tuple[str, ...]:
         """Every repo path whose content stamps the image build."""
-        return tuple(source for source in (self.build_fingerprint_source, self.upstream_pins_file) if source)
+        return tuple(source for source in (self.build_fingerprint_source, self.upstream_pins_file, *self.extra_fingerprint_sources) if source)
 
 
 @dataclass(frozen=True)

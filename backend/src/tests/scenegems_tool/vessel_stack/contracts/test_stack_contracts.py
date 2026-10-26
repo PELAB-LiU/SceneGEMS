@@ -72,6 +72,11 @@ class TestSpecs:
         container = ContainerSpec(image="img", build_fingerprint_source="deploy/images/sitl", entrypoint="/x", upstream_pins_file=UPSTREAM_PINS_FILE)
         assert container.build_fingerprint_sources == ("deploy/images/sitl", UPSTREAM_PINS_FILE)
 
+    def test_container_fingerprint_sources_include_extra_sources(self):
+        """The Gazebo image copies the actuator script from the backend, so a change to it rebuilds the image."""
+        container = ContainerSpec(image="img", build_fingerprint_source="deploy/images/gazebo", entrypoint="/x", upstream_pins_file=UPSTREAM_PINS_FILE, extra_fingerprint_sources=("backend/a.py",))
+        assert container.build_fingerprint_sources == ("deploy/images/gazebo", UPSTREAM_PINS_FILE, "backend/a.py")
+
     def test_container_without_pins_fingerprints_only_its_folder(self):
         container = ContainerSpec(image="img", build_fingerprint_source="deploy/images/mavproxy", entrypoint="/x")
         assert container.build_fingerprint_sources == ("deploy/images/mavproxy",)

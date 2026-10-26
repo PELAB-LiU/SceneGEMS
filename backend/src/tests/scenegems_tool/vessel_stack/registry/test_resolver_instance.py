@@ -3,8 +3,9 @@
 import numpy as np
 import pytest
 
+from scenegems_tool.vessel_stack.contracts.adapter_spec import AdapterSpec, SpecStatus
 from scenegems_tool.vessel_stack.contracts.capabilities import RepeatabilityTier
-from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, SimulationLayerId
+from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, LayerRef, SimulationLayerId
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import AgentContext, EnvironmentConfig, SimulationInstanceConfig, VesselConfig, VesselStackConfig, WaveConfig
 from scenegems_tool.vessel_stack.registry.catalog import build_registry, default_resolver
 from scenegems_tool.vessel_stack.registry.resolver import StackResolver, StackUnavailableError
@@ -15,6 +16,7 @@ GAZEBO = SimulationLayerId.GAZEBO
 ARDUPILOT_SIM = SimulationLayerId.ARDUPILOT_SIM
 NONE = ControlLayerId.NONE
 ARDUPILOT = ControlLayerId.ARDUPILOT
+CUSTOM = ControlLayerId.CUSTOM
 
 
 def waves_environment() -> EnvironmentConfig:
@@ -43,10 +45,23 @@ class TestInstanceShape:
         assert "vessel 0 (replay, none, gazebo)" in resolution.reason
         assert "Gazebo needs actuator commands" in resolution.reason
 
-    def test_planned_stack_is_rejected_as_not_implemented(self, resolver):
-        resolution = resolver.resolve_instance(stack_instance(GAZEBO, [0], asv_software=AsvSoftwareId.USV_NAVIGATION))
+    def test_planned_stack_is_rejected_as_not_implemented(self):
+        """No catalog spec is planned since Phase 2, so a planned alternative is registered as the default here."""
+        registry = build_registry({})
+        registry.register_adapter(
+            AdapterSpec(
+                id="planned_probe",
+                source=LayerRef.of(AsvSoftwareId.USV_NAVIGATION),
+                target=LayerRef.of(ControlLayerId.ARDUPILOT),
+                description="A planned adapter for this test.",
+                status=SpecStatus.PLANNED,
+                planned_phase=3,
+            ),
+            default=True,
+        )
+        resolution = StackResolver(registry).resolve_instance(stack_instance(GAZEBO, [0], asv_software=AsvSoftwareId.USV_NAVIGATION))
         assert not resolution.accepted
-        assert "usv_navigation_mavlink_guided is planned for phase 2 and not implemented yet" in resolution.reason
+        assert "planned_probe is planned for phase 3 and not implemented yet" in resolution.reason
 
     def test_vessels_must_share_the_instance_simulation_layer(self, resolver):
         instance = stack_instance(ARDUPILOT_SIM, [0])
@@ -140,10 +155,11 @@ class TestEnvironment:
         resolution = resolver.resolve_instance(stack_instance(GAZEBO, [0], environment=wind_environment()))
         assert resolution.accepted
 
-    def test_waves_are_rejected_on_gazebo_with_the_measured_reason(self, resolver):
-        resolution = resolver.resolve_instance(stack_instance(GAZEBO, [0], environment=waves_environment()))
-        assert not resolution.accepted
-        assert "waves requested, but simulation_layer/gazebo does not support waves: Gazebo Harmonic has no wave force system" in resolution.reason
+    def test_waves_are_accepted_on_gazebo_without_a_warning_now_that_asv_wave_sim_is_measured(self, resolver):
+        for control in (ARDUPILOT, CUSTOM):
+            resolution = resolver.resolve_instance(stack_instance(GAZEBO, [0], control_layer=control, environment=waves_environment()))
+            assert resolution.accepted
+            assert resolution.warnings == ()
 
     def test_wind_and_waves_together_give_both_errors(self, resolver):
         environment = waves_environment()

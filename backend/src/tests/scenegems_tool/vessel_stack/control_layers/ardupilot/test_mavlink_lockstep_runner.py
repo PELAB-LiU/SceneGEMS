@@ -5,14 +5,15 @@ import pytest
 
 from scenegems_tool.vessel_stack.asv_software.replay.replay_follower import ReplayFollower
 from scenegems_tool.vessel_stack.contracts.clock import derive_seed
-from scenegems_tool.vessel_stack.contracts.roles import SimulationLayerId
+from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, SimulationLayerId
 from scenegems_tool.vessel_stack.control_layers.ardupilot.mavlink_link import MavlinkLinkError
 from scenegems_tool.vessel_stack.control_layers.ardupilot.mavlink_lockstep_runner import (
     GUIDED_CHECK_MS,
     START_QUANTUM_S,
+    mavlink_instance,
     mavlink_replay_instance,
     run_mavlink_lockstep,
-    run_mavlink_replay,
+    run_mavlink_stack,
 )
 from scenegems_tool.vessel_stack.registry.catalog import build_registry
 from scenegems_tool.vessel_stack.registry.resolver import StackResolver, StackUnavailableError
@@ -162,6 +163,41 @@ class TestRunMavlinkLockstep:
         assert result.achieved_speedup is None or result.achieved_speedup > 0
 
 
+class TestPassiveVessels:
+    def test_a_passive_vessel_is_observed_but_never_armed_or_commanded(self):
+        trajectories = encounter_trajectories("head_on", 40)
+        links, followers, vessels = build_run(trajectories)
+        del followers[1]
+        result = run_mavlink_lockstep(links, followers, vessels, 1.0, 10, run_seed=3, passive=frozenset({1}))
+        own, operated = FakeLink.connections
+        assert all(len(step) == 2 for step in result.states), "both vessels are recorded"
+        assert own.armed and own.mav.named("set_position_target_local_ned_send")
+        assert not operated.armed
+        assert not operated.mav.named("set_mode_send") and not operated.mav.named("set_position_target_local_ned_send")
+        assert [seed for seed, _ in result.participant_seeds] == ["replay/0"]
+
+    def test_the_active_vessels_observe_the_passive_one(self):
+        trajectories = encounter_trajectories("head_on", 40)
+        links, followers, vessels = build_run(trajectories)
+        del followers[1]
+        seen = []
+
+        class Watching(type(followers[0])):
+            def on_step(self, request, observation):
+                seen.append(set(observation.target_states))
+                return super().on_step(request, observation)
+
+        follower = followers[0]
+        watching = Watching(follower.vessel, trajectories.state_list(follower.vessel), trajectories.time_step)
+        run_mavlink_lockstep(links, {0: watching}, vessels, 1.0, 3, run_seed=3, passive=frozenset({1}))
+        assert seen and all(targets == {1} for targets in seen)
+
+    def test_a_passive_vessel_may_not_also_have_a_participant(self):
+        links, followers, vessels = build_run(encounter_trajectories("head_on", 10))
+        with pytest.raises(ValueError, match="must name the same vessels"):
+            run_mavlink_lockstep(links, followers, vessels, 1.0, 3, run_seed=0, passive=frozenset({1}))
+
+
 class TestValidation:
     def test_links_participants_and_vessels_must_name_the_same_vessels(self):
         trajectories = encounter_trajectories("head_on", 10)
@@ -202,17 +238,40 @@ class TestMavlinkReplayInstance:
         assert instance.vessels["0"].connection.agent_name == "vessel_0"
 
 
+class TestMavlinkInstance:
+    def test_usv_navigation_vessels_run_through_their_lockstep_adapter(self):
+        instance = mavlink_instance(encounter_trajectories("head_on", 10), SimulationLayerId.GAZEBO, {0: AsvSoftwareId.USV_NAVIGATION})
+        assert str(instance.vessels["0"].stack) == "usv_navigation, ardupilot, gazebo"
+        assert instance.vessels["0"].adapter_ids == ("usv_navigation_mavlink_lockstep",)
+        assert instance.vessels["1"].adapter_ids == ("replay_mavlink_lockstep",)
+
+    def test_asv_software_without_a_lockstep_link_is_refused(self):
+        with pytest.raises(ValueError, match="mission_planner has no lockstep MAVLink adapter"):
+            mavlink_instance(encounter_trajectories("head_on", 10), SimulationLayerId.ARDUPILOT_SIM, {0: AsvSoftwareId.MISSION_PLANNER})
+
+
 class TestRunMavlinkReplay:
     @pytest.fixture
     def resolver(self):
         registry = build_registry()
         registry.bind_runtime("replay_mavlink_lockstep", lambda: FakeLink)
+        registry.bind_runtime("usv_navigation_mavlink_lockstep", lambda: FakeLink)
         return StackResolver(registry)
+
+    def test_usv_navigation_steers_its_vessel_against_a_replaying_target(self, resolver):
+        trajectories = encounter_trajectories("head_on", 30)
+        instance = mavlink_instance(trajectories, SimulationLayerId.ARDUPILOT_SIM, {0: AsvSoftwareId.USV_NAVIGATION})
+        result = run_mavlink_stack(trajectories, instance, GEOFENCE, resolver=resolver, steps=30)
+        record = result.run_record
+        assert set(record["participant_seeds"]) == {"usv_navigation/0", "replay/1"}
+        assert {"usv_navigation_mavlink_lockstep", "replay_mavlink_lockstep"} <= set(record["specs"])
+        assert record["usv_navigation"]["0"]["goal"] == [trajectories.state_list(trajectories.initial_scene.vessels[0])[-1].x, 0.0]
+        assert result.states[-1][0].state.x > 100.0, "the own ship heads for its goal"
 
     def test_run_record_describes_the_chain_and_the_run(self, resolver, straight):
         FakeLink.start_positions = {0: (0.0, 0.0)}
         instance = mavlink_replay_instance(straight, SimulationLayerId.ARDUPILOT_SIM)
-        result = run_mavlink_replay(straight, instance, GEOFENCE, resolver=resolver, steps=20)
+        result = run_mavlink_stack(straight, instance, GEOFENCE, resolver=resolver, steps=20)
         record = result.run_record
         assert record["stack"] == ["replay, ardupilot, ardupilot_sim"]
         assert record["repeatability_tier"] == "bounded"
@@ -226,19 +285,19 @@ class TestRunMavlinkReplay:
 
     def test_default_steps_cover_the_trajectory(self, resolver, straight):
         FakeLink.start_positions = {0: (0.0, 0.0)}
-        result = run_mavlink_replay(straight, mavlink_replay_instance(straight, SimulationLayerId.ARDUPILOT_SIM), GEOFENCE, resolver=resolver)
+        result = run_mavlink_stack(straight, mavlink_replay_instance(straight, SimulationLayerId.ARDUPILOT_SIM), GEOFENCE, resolver=resolver)
         assert result.steps == 60
 
     def test_links_are_closed_afterwards(self, resolver, straight):
         FakeLink.start_positions = {0: (0.0, 0.0)}
-        run_mavlink_replay(straight, mavlink_replay_instance(straight, SimulationLayerId.ARDUPILOT_SIM), GEOFENCE, resolver=resolver, steps=5)
+        run_mavlink_stack(straight, mavlink_replay_instance(straight, SimulationLayerId.ARDUPILOT_SIM), GEOFENCE, resolver=resolver, steps=5)
         assert all(connection.closed for connection in FakeLink.connections)
 
     def test_links_are_closed_when_the_run_fails(self, resolver, straight):
         FakeLink.start_positions = {0: (0.0, 0.0)}
         instance = mavlink_replay_instance(straight, SimulationLayerId.ARDUPILOT_SIM)
         with pytest.raises(MavlinkLinkError):
-            run_mavlink_replay(straight, instance, GEOFENCE, resolver=resolver, steps=5, start_boot_s=1.0)
+            run_mavlink_stack(straight, instance, GEOFENCE, resolver=resolver, steps=5, start_boot_s=1.0)
         assert FakeLink.connections and all(connection.closed for connection in FakeLink.connections)
 
     def test_endpoints_default_to_the_sitl_service_of_each_vessel(self, resolver, straight):
@@ -251,23 +310,34 @@ class TestRunMavlinkReplay:
 
         resolver.registry.bind_runtime("replay_mavlink_lockstep", lambda: Recording)
         FakeLink.start_positions = {0: (0.0, 0.0)}
-        run_mavlink_replay(straight, mavlink_replay_instance(straight, SimulationLayerId.ARDUPILOT_SIM), GEOFENCE, resolver=resolver, steps=3)
+        run_mavlink_stack(straight, mavlink_replay_instance(straight, SimulationLayerId.ARDUPILOT_SIM), GEOFENCE, resolver=resolver, steps=3)
         assert endpoints_seen == ["tcp:vessel_0:5760"]
         endpoints_seen.clear()
-        run_mavlink_replay(straight, mavlink_replay_instance(straight, SimulationLayerId.ARDUPILOT_SIM), GEOFENCE, resolver=resolver, steps=3, endpoints={"0": "tcp:localhost:5760"})
+        run_mavlink_stack(straight, mavlink_replay_instance(straight, SimulationLayerId.ARDUPILOT_SIM), GEOFENCE, resolver=resolver, steps=3, endpoints={"0": "tcp:localhost:5760"})
         assert endpoints_seen == ["tcp:localhost:5760"]
 
     def test_other_asv_adapters_are_rejected(self, resolver, straight):
         instance = mavlink_replay_instance(straight, SimulationLayerId.ARDUPILOT_SIM)
         for vessel in instance.vessels.values():
             vessel.adapter_ids = ("replay_arduagent_follower",)
-        with pytest.raises(StackUnavailableError, match="run_mavlink_replay needs replay_mavlink_lockstep for every simulated vessel"):
-            run_mavlink_replay(straight, instance, GEOFENCE, resolver=resolver)
+        with pytest.raises(StackUnavailableError, match="run_mavlink_stack needs replay_mavlink_lockstep or usv_navigation_mavlink_lockstep for every simulated vessel"):
+            run_mavlink_stack(straight, instance, GEOFENCE, resolver=resolver)
 
     def test_speedup_above_the_measured_limit_is_rejected(self, resolver, straight):
         instance = mavlink_replay_instance(straight, SimulationLayerId.ARDUPILOT_SIM, speedup=100)
         with pytest.raises(StackUnavailableError, match="exceeds the measured max_speedup 50"):
-            run_mavlink_replay(straight, instance, GEOFENCE, resolver=resolver)
+            run_mavlink_stack(straight, instance, GEOFENCE, resolver=resolver)
+
+    def test_an_attended_run_leaves_mission_planner_vessels_to_the_operator(self, resolver):
+        trajectories = encounter_trajectories("head_on", 30)
+        instance = mavlink_instance(trajectories, SimulationLayerId.ARDUPILOT_SIM)
+        operated = instance.vessels["1"]
+        operated.stack = type(operated.stack)(AsvSoftwareId.MISSION_PLANNER, operated.stack.control_layer, operated.stack.simulation_layer)
+        operated.adapter_ids = ()
+        result = run_mavlink_stack(trajectories, instance, GEOFENCE, resolver=resolver, steps=5, attended=True)
+        assert result.run_record["operator_vessels"] == [1]
+        assert set(result.run_record["participant_seeds"]) == {"replay/0"}
+        assert not FakeLink.connections[1].armed
 
     def test_the_run_is_validated_as_unattended(self, resolver, straight):
         from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId
@@ -277,4 +347,4 @@ class TestRunMavlinkReplay:
             vessel.stack = type(vessel.stack)(AsvSoftwareId.MISSION_PLANNER, vessel.stack.control_layer, vessel.stack.simulation_layer)
             vessel.adapter_ids = ()
         with pytest.raises(StackUnavailableError, match="interactive only"):
-            run_mavlink_replay(straight, instance, GEOFENCE, resolver=resolver)
+            run_mavlink_stack(straight, instance, GEOFENCE, resolver=resolver)

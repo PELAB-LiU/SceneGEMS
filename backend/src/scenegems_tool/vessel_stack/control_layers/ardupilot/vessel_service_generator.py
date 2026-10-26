@@ -1,6 +1,9 @@
+import shlex
+
 import numpy as np
 
 from scenegems_tool.messaging.mqtt_agent_client import MqttAgentClient
+from scenegems_tool.vessel_stack.asv_software.mission_planner.mission_planner_specs import GCS_CONTAINER_PORT
 from scenegems_tool.vessel_stack.contracts.sim_utils import to_true_north
 from scenegems_tool.vessel_stack.control_layers.ardupilot.ardupilot_specs import ARDUAGENT_CONTAINER, MAVPROXY_CONTAINER, SITL_CONTAINER
 from utils.file_system_utils import SITL_ENTRYPOINT_CONTAINER_PATH, docker_volume_path, runtime_assets_volume_mount
@@ -120,3 +123,44 @@ def generate_vessel_service(
         },
     }
     return docker_services
+
+
+SITL_SERIAL1_BASE_PORT = 5762  # SITL's SERIAL1 (MAVLink) of instance 0; each instance adds 10
+GCS_MAVPROXY_RETRY_S = 2  # seconds between MAVProxy starts while SITL boots
+
+
+def gcs_mavproxy_service_name(agent_name: str) -> str:
+    return f"{agent_name}_mavproxy"
+
+
+def generate_gcs_mavproxy_service(agent_name: str, vessel_id: int) -> dict:
+    """MAVProxy for a Mission Planner vessel (mission_planner_gcs_port): SITL's SERIAL1 to one TCP endpoint for the ground station.
+
+    SERIAL0 stays free for the lockstep runner, which watches the vessel there and whose
+    connection is what lets SITL boot. The endpoint's container port is published on a host
+    port Docker assigns (no fixed host port, so stacks and vessels never collide); the
+    session reads it back and reports it in the simulation status. MAVProxy exits while SITL
+    does not listen on SERIAL1 yet (until it has booted), and Docker gives a restarted container
+    a new host port, so a shell loop restarts MAVProxy inside the container instead: the port
+    the session reported stays the vessel's for the whole run.
+    """
+    mavproxy = [
+        "python3",
+        "-m",
+        "MAVProxy.mavproxy",
+        "--non-interactive",
+        f"--default-modules={_MAVPROXY_DEFAULT_MODULES}",
+        f"--master=tcp:{agent_name}:{SITL_SERIAL1_BASE_PORT + 10 * int(vessel_id)}",
+        f"--out=tcpin:0.0.0.0:{GCS_CONTAINER_PORT}",
+    ]
+    return {
+        gcs_mavproxy_service_name(agent_name): {
+            "image": MAVPROXY_CONTAINER.image,
+            "tty": True,
+            "stdin_open": True,
+            "restart": "unless-stopped",
+            "networks": ["maritime_net"],
+            "ports": [str(GCS_CONTAINER_PORT)],
+            "command": ["sh", "-c", f"while true; do {shlex.join(mavproxy)}; sleep {GCS_MAVPROXY_RETRY_S}; done"],
+        }
+    }

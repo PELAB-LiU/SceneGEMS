@@ -2,7 +2,12 @@
 
 import pytest
 
+from scenegems_tool.vessel_stack.contracts.roles import ControlLayerId, SimulationLayerId
+from scenegems_tool.vessel_stack.contracts.vessel_stack_config import VesselStackConfig
+from scenegems_tool.vessel_stack.registry.resolver import StackUnavailableError
+from scenegems_tool.vessel_stack.simulation_docker_stack import build_simulation_docker_stack_artifacts
 from scenegems_tool.vessel_stack.simulation_layers.gazebo.generators.hydrodynamics import RHO_WATER
+from tests.scenegems_tool.vessel_stack.scenarios import GEOFENCE, encounter_trajectories, mqtt_connection, stack_instance
 from tests.scenegems_tool.vessel_stack.sdf import child_float, parse_params, parse_sdf, plugins
 from tests.scenegems_tool.vessel_stack.stack_cases import generate_stack
 
@@ -135,11 +140,56 @@ class TestVesselModel:
 class TestParams:
     def test_vessel_limits_become_ardupilot_limits(self, gazebo_stack):
         params = parse_params(gazebo_stack.files["params-agent_0.params"])
-        assert params["SPEED_MAX"] == pytest.approx(20.57778)
-        assert params["WP_SPEED"] == 8.0
+        assert params["SPEED_MAX"] == pytest.approx(1.2 * 20.57778), "full thrust of the generated hull"
+        assert params["WP_SPEED"] == pytest.approx(20.57778), "the lockstep link's GUIDED targets are capped at the vessel's max speed"
+        assert params["CRUISE_SPEED"] == 8.0
         assert params["ATC_ACCEL_MAX"] == 0.4
+
+    def test_the_hull_is_skid_steered(self, gazebo_stack):
+        params = parse_params(gazebo_stack.files["params-agent_0.params"])
+        assert (params["SERVO1_FUNCTION"], params["SERVO3_FUNCTION"]) == (73, 74)
+        assert params["ATC_STR_RAT_FF"] > 0
 
     def test_wind_reaches_ardupilot_as_speed_and_direction(self, gazebo_stack):
         params = parse_params(gazebo_stack.files["params-agent_0.params"])
         assert params["SIM_WIND_SPD"] == pytest.approx(5.0)
         assert params["SIM_WAVE_ENABLE"] == 0
+
+
+def build(instance):
+    writes, compose = build_simulation_docker_stack_artifacts(instance, encounter_trajectories("head_on", 60), mqtt_connection(), GEOFENCE, headless=True)
+    return {path.rsplit("/", 1)[-1]: content for path, content in writes}, compose
+
+
+@pytest.fixture(scope="module")
+def custom_stack():
+    return build(stack_instance(SimulationLayerId.GAZEBO, [0, 1], control_layer=ControlLayerId.CUSTOM))
+
+
+class TestCustomControlLayer:
+    def test_gazebo_is_the_only_service(self, custom_stack):
+        assert list(custom_stack[1]["services"]) == ["gazebo"]
+
+    def test_the_world_starts_paused_for_the_actuator_and_waits_for_no_agent(self, custom_stack):
+        gazebo = custom_stack[1]["services"]["gazebo"]
+        assert gazebo["environment"]["GZ_START_PAUSED"] == "1"
+        assert gazebo["environment"]["GZ_ACTUATOR_PORT"] == "11400"
+        assert "depends_on" not in gazebo
+
+    def test_the_world_is_stepped_without_a_real_time_factor(self, custom_stack):
+        world = parse_sdf(custom_stack[0]["ocean_world.sdf"])
+        assert child_float(world.find("world/physics"), "real_time_factor") == 0.0
+
+    def test_the_models_have_no_ardupilot_plugin(self, custom_stack):
+        for name in ("agent_0_model.sdf", "agent_1_model.sdf"):
+            assert plugins(parse_sdf(custom_stack[0][name]), "ArduPilotPlugin") == [], name
+
+    def test_an_ardupilot_world_still_waits_for_its_agents(self, gazebo_stack):
+        gazebo = gazebo_stack.compose["services"]["gazebo"]
+        assert "GZ_START_PAUSED" not in gazebo["environment"] and gazebo["depends_on"] == ["agent_0", "agent_1"]
+
+    def test_custom_and_ardupilot_vessels_cannot_share_a_world(self):
+        instance = stack_instance(SimulationLayerId.GAZEBO, [0, 1], control_layer=ControlLayerId.CUSTOM)
+        instance.vessels["1"].stack = VesselStackConfig(instance.vessels["1"].stack.asv_software, ControlLayerId.ARDUPILOT, SimulationLayerId.GAZEBO)
+        with pytest.raises(StackUnavailableError, match="mixes"):
+            build(instance)

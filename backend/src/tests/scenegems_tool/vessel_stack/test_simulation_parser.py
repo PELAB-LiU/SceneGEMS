@@ -82,8 +82,15 @@ def test_replay_vessels_run_the_autonomous_control_mode():
 
 
 def test_mission_planner_vessels_run_the_external_control_mode():
-    instance = stack_instance(SimulationLayerId.ARDUPILOT_SIM, [0, 1], asv_software=AsvSoftwareId.MISSION_PLANNER)
+    instance = stack_instance(SimulationLayerId.ARDUPILOT_SIM, [0, 1], asv_software=AsvSoftwareId.MISSION_PLANNER, adapter_ids=["mission_planner_mavlink_port"])
     assert {client.control_mode for client in parser_for(instance).clients} == {"external"}
+
+
+def test_mission_planner_on_its_ground_station_port_is_not_an_arduagent_vessel():
+    """The default Mission Planner adapter has no ArduAgent; the lockstep driver runs those instances."""
+    instance = stack_instance(SimulationLayerId.ARDUPILOT_SIM, [0], asv_software=AsvSoftwareId.MISSION_PLANNER)
+    with pytest.raises(StackUnavailableError, match="vessel 0 uses mission_planner_gcs_port"):
+        parser_for(instance)
 
 
 def test_the_trajectory_is_published_as_latitude_longitude_pairs():

@@ -11,20 +11,23 @@ from scenegems_tool.vessel_stack.calibration.reference_scenarios import straight
 from scenegems_tool.vessel_stack.calibration.repeat_analysis import DeviationSummary, TrackSamples
 from scenegems_tool.vessel_stack.calibration.sitl_stack_runs import (
     CONTAINER_ASSETS,
+    HullMotion,
     RepeatResult,
     StackMeasurement,
     StackRunSpec,
+    compose_project_name,
     host_assets_replacements,
     measure_stack,
     prepare_run_folder,
     uncapped_generation,
 )
-from scenegems_tool.vessel_stack.contracts.roles import SimulationLayerId
+from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, SimulationLayerId
 from scenegems_tool.vessel_stack.registry.catalog import default_resolver
 from utils.file_system_utils import RUNTIME_ASSETS_FOLDER
 
 ARDUPILOT_SIM = SimulationLayerId.ARDUPILOT_SIM
 GAZEBO = SimulationLayerId.GAZEBO
+CUSTOM = ControlLayerId.CUSTOM
 
 
 def track() -> TrackSamples:
@@ -162,6 +165,21 @@ class TestMeasurementEntries:
         assert gazebo_entry.spec_id == "ardupilot_gazebo_plugin"
         assert gazebo_entry.fields["host_max_speedup"] == {host_label(): 2.0}
 
+    def test_a_usv_navigation_drive_gives_the_entry_of_its_lockstep_adapter(self):
+        (entry,) = measurement(drive="usv_navigation").entries()
+        assert entry.spec_id == "usv_navigation_mavlink_lockstep"
+        assert entry.fields["deviation_bounds_m_by_layer"] == {"simulation_layer/ardupilot_sim": {5: 0.07}}
+        assert entry.fields["max_speedup"] == 5.0
+        entry.parsed()
+
+    def test_a_usv_navigation_drive_runs_usv_navigation_on_every_sitl(self, tmp_path):
+        spec = StackRunSpec(ARDUPILOT_SIM, "straight", "5m", 20, 1, 1, "usv_navigation")
+        with uncapped_generation():
+            _, endpoints, instance = prepare_run_folder(spec, straight_run("5m", 20), str(tmp_path), 16420)
+        assert instance.vessels["0"].stack.asv_software == AsvSoftwareId.USV_NAVIGATION
+        assert instance.vessels["0"].adapter_ids == ("usv_navigation_mavlink_lockstep",)
+        assert endpoints == {"0": "tcp:127.0.0.1:16420"}
+
     def test_the_evidence_names_the_method_and_the_numbers(self):
         (entry,) = measurement().entries()
         evidence = entry.fields["evidence"]
@@ -195,6 +213,84 @@ class TestMeasurementEntries:
         assert StackRunSpec(GAZEBO, "turning", "30m", 90, 4, 3, "target").label() == "gazebo-target-turning-30m-4x"
 
 
+class TestCustomController:
+    def custom(self, drive="replay", digests=("a", "a"), late=(0, 0), achieved=7.5, dev=0.0):
+        spec = StackRunSpec(GAZEBO, "straight", "5m", 30, 1, 2, drive, control_layer=CUSTOM)
+        results = [RepeatResult(index=index, track=track(), achieved_speedup=achieved, state_digest=digest, late_commands=count) for index, (digest, count) in enumerate(zip(digests, late))]
+        return StackMeasurement(spec, results, deviation(dev))
+
+    def test_the_stack_is_gazebo_alone_with_the_actuator_port_published(self, tmp_path):
+        spec = StackRunSpec(GAZEBO, "straight", "5m", 20, 1, 1, control_layer=CUSTOM)
+        with uncapped_generation():
+            compose_file, endpoints, instance = prepare_run_folder(spec, straight_run("5m", 20), str(tmp_path), 16400)
+        services = yaml.safe_load(open(compose_file, encoding="utf-8"))["services"]
+        assert list(services) == ["gazebo"]
+        assert services["gazebo"]["ports"] == ["127.0.0.1:16400:11400"]
+        assert endpoints == {"actuator": "127.0.0.1:16400"}
+        assert instance.vessels["0"].stack.asv_software == AsvSoftwareId.REPLAY
+
+    def test_the_usv_navigation_drive_puts_usv_navigation_on_every_vessel(self, tmp_path):
+        spec = StackRunSpec(GAZEBO, "straight", "5m", 20, 1, 1, "usv_navigation", control_layer=CUSTOM)
+        with uncapped_generation():
+            _, _, instance = prepare_run_folder(spec, straight_run("5m", 20), str(tmp_path), 16410)
+        assert instance.vessels["0"].stack.asv_software == AsvSoftwareId.USV_NAVIGATION
+        assert spec.label() == "gazebo-custom-usv_navigation-straight-5m-1x"
+
+    def test_identical_digests_without_late_thrust_are_the_exact_tier(self):
+        (entry,) = self.custom().entries()
+        assert entry.spec_id == "gz_transport_actuator"
+        assert entry.fields["repeatability_tier"] == "exact"
+        assert "deviation_bounds_m" not in entry.fields
+        assert entry.fields["host_max_speedup"] == {host_label(): 7.5}
+        entry.parsed()
+
+    def test_a_late_thrust_makes_the_tier_bounded_by_the_measured_deviation(self):
+        (entry,) = self.custom(late=(1, 0), dev=0.003).entries()
+        assert entry.fields["repeatability_tier"] == "bounded"
+        assert entry.fields["deviation_bounds_m"] == {1: 0.003}
+        assert "late commands 1" in entry.fields["evidence"]
+
+    def test_differing_digests_make_the_tier_bounded(self):
+        (entry,) = self.custom(digests=("a", "b"), dev=0.01).entries()
+        assert entry.fields["repeatability_tier"] == "bounded"
+
+    def test_waves_reach_the_world_and_the_hull(self, tmp_path):
+        spec = StackRunSpec(GAZEBO, "straight", "5m", 20, 1, 1, control_layer=CUSTOM, waves=(0.5, 5.0))
+        with uncapped_generation():
+            _, _, instance = prepare_run_folder(spec, straight_run("5m", 20), str(tmp_path), 16430)
+        assert instance.environment.wave.amplitude == 0.5 and instance.environment.wave.period == 5.0
+        assets = os.path.join(str(tmp_path), "runtime_assets")
+        texts = [open(os.path.join(root, name), encoding="utf-8").read() for root, _, names in os.walk(assets) for name in names if name.endswith(".sdf")]
+        assert any("gz-waves1-waves-model-system" in text for text in texts)
+        assert any("gz-waves1-hydrodynamics-system" in text for text in texts)
+        assert spec.label() == "gazebo-custom-replay-straight-waves-0.5m-5s-5m-1x"
+
+    def test_the_compose_project_of_a_waves_run_has_only_the_characters_compose_allows(self):
+        spec = StackRunSpec(GAZEBO, "straight", "5m", 20, 1, 1, "usv_navigation", control_layer=CUSTOM, waves=(0.5, 5.0))
+        assert compose_project_name(spec, 1) == "calib-gazebo-custom-usv-navigation-straight-waves-0-5m-5s-5m-1x-1"
+
+    def test_hull_motion_is_peak_to_peak_heave_roll_and_pitch(self):
+        def hull(z, pitch_deg):
+            half = np.radians(pitch_deg) / 2
+            return type("Hull", (), {"z": z, "qx": 0.0, "qy": float(np.sin(half)), "qz": 0.0, "qw": float(np.cos(half))})()
+
+        motion = HullMotion.from_odometry([hull(-0.1, -2.0), hull(0.3, 3.0), hull(0.0, 0.0)])
+        assert motion.heave_m == pytest.approx(0.4)
+        assert motion.pitch_deg == pytest.approx(5.0)
+        assert motion.roll_deg == pytest.approx(0.0)
+
+    def test_the_evidence_names_the_hull_motion(self):
+        run = self.custom()
+        for repeat in run.repeats:
+            repeat.motion = HullMotion(heave_m=0.9, roll_deg=0.5, pitch_deg=8.5)
+        (entry,) = run.entries()
+        assert "heave m 0.900, pitch deg 8.50, roll deg 0.50" in entry.fields["evidence"]
+
+    def test_the_evidence_names_the_drive(self):
+        (entry,) = self.custom(drive="usv_navigation").entries()
+        assert "usv_navigation drive" in entry.fields["evidence"]
+
+
 class TestValidation:
     @pytest.mark.parametrize(
         "spec,message",
@@ -202,6 +298,8 @@ class TestValidation:
             (StackRunSpec(ARDUPILOT_SIM, reference="loop"), "Unknown reference run 'loop'"),
             (StackRunSpec(ARDUPILOT_SIM, drive="fly"), "Unknown drive 'fly'"),
             (StackRunSpec(SimulationLayerId.KINEMATIC), "Docker measurements need ardupilot_sim or gazebo"),
+            (StackRunSpec(ARDUPILOT_SIM, control_layer=CUSTOM), "the custom controller runs on gazebo"),
+            (StackRunSpec(GAZEBO, drive="target", control_layer=CUSTOM), "the custom controller runs on gazebo with the replay or usv_navigation drive"),
         ],
     )
     def test_invalid_specs_are_rejected_before_anything_starts(self, spec, message, tmp_path):
