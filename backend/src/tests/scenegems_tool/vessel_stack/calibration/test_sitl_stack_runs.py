@@ -19,12 +19,13 @@ from scenegems_tool.vessel_stack.calibration.sitl_stack_runs import (
     prepare_run_folder,
     uncapped_generation,
 )
-from scenegems_tool.vessel_stack.contracts.roles import SimulationLayerId
+from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, SimulationLayerId
 from scenegems_tool.vessel_stack.registry.catalog import default_resolver
 from utils.file_system_utils import RUNTIME_ASSETS_FOLDER
 
 ARDUPILOT_SIM = SimulationLayerId.ARDUPILOT_SIM
 GAZEBO = SimulationLayerId.GAZEBO
+CUSTOM = ControlLayerId.CUSTOM
 
 
 def track() -> TrackSamples:
@@ -195,6 +196,52 @@ class TestMeasurementEntries:
         assert StackRunSpec(GAZEBO, "turning", "30m", 90, 4, 3, "target").label() == "gazebo-target-turning-30m-4x"
 
 
+class TestCustomController:
+    def custom(self, drive="replay", digests=("a", "a"), late=(0, 0), achieved=7.5, dev=0.0):
+        spec = StackRunSpec(GAZEBO, "straight", "5m", 30, 1, 2, drive, control_layer=CUSTOM)
+        results = [RepeatResult(index=index, track=track(), achieved_speedup=achieved, state_digest=digest, late_commands=count) for index, (digest, count) in enumerate(zip(digests, late))]
+        return StackMeasurement(spec, results, deviation(dev))
+
+    def test_the_stack_is_gazebo_alone_with_the_actuator_port_published(self, tmp_path):
+        spec = StackRunSpec(GAZEBO, "straight", "5m", 20, 1, 1, control_layer=CUSTOM)
+        with uncapped_generation():
+            compose_file, endpoints, instance = prepare_run_folder(spec, straight_run("5m", 20), str(tmp_path), 16400)
+        services = yaml.safe_load(open(compose_file, encoding="utf-8"))["services"]
+        assert list(services) == ["gazebo"]
+        assert services["gazebo"]["ports"] == ["127.0.0.1:16400:11400"]
+        assert endpoints == {"actuator": "127.0.0.1:16400"}
+        assert instance.vessels["0"].stack.asv_software == AsvSoftwareId.REPLAY
+
+    def test_the_usv_navigation_drive_puts_usv_navigation_on_every_vessel(self, tmp_path):
+        spec = StackRunSpec(GAZEBO, "straight", "5m", 20, 1, 1, "usv_navigation", control_layer=CUSTOM)
+        with uncapped_generation():
+            _, _, instance = prepare_run_folder(spec, straight_run("5m", 20), str(tmp_path), 16410)
+        assert instance.vessels["0"].stack.asv_software == AsvSoftwareId.USV_NAVIGATION
+        assert spec.label() == "gazebo-custom-usv_navigation-straight-5m-1x"
+
+    def test_identical_digests_without_late_thrust_are_the_exact_tier(self):
+        (entry,) = self.custom().entries()
+        assert entry.spec_id == "gz_transport_actuator"
+        assert entry.fields["repeatability_tier"] == "exact"
+        assert "deviation_bounds_m" not in entry.fields
+        assert entry.fields["host_max_speedup"] == {host_label(): 7.5}
+        entry.parsed()
+
+    def test_a_late_thrust_makes_the_tier_bounded_by_the_measured_deviation(self):
+        (entry,) = self.custom(late=(1, 0), dev=0.003).entries()
+        assert entry.fields["repeatability_tier"] == "bounded"
+        assert entry.fields["deviation_bounds_m"] == {1: 0.003}
+        assert "late commands 1" in entry.fields["evidence"]
+
+    def test_differing_digests_make_the_tier_bounded(self):
+        (entry,) = self.custom(digests=("a", "b"), dev=0.01).entries()
+        assert entry.fields["repeatability_tier"] == "bounded"
+
+    def test_the_evidence_names_the_drive(self):
+        (entry,) = self.custom(drive="usv_navigation").entries()
+        assert "usv_navigation drive" in entry.fields["evidence"]
+
+
 class TestValidation:
     @pytest.mark.parametrize(
         "spec,message",
@@ -202,6 +249,9 @@ class TestValidation:
             (StackRunSpec(ARDUPILOT_SIM, reference="loop"), "Unknown reference run 'loop'"),
             (StackRunSpec(ARDUPILOT_SIM, drive="fly"), "Unknown drive 'fly'"),
             (StackRunSpec(SimulationLayerId.KINEMATIC), "Docker measurements need ardupilot_sim or gazebo"),
+            (StackRunSpec(ARDUPILOT_SIM, control_layer=CUSTOM), "the custom controller runs on gazebo"),
+            (StackRunSpec(GAZEBO, drive="target", control_layer=CUSTOM), "the custom controller runs on gazebo with the replay or usv_navigation drive"),
+            (StackRunSpec(ARDUPILOT_SIM, drive="usv_navigation"), "the usv_navigation drive needs the custom control layer"),
         ],
     )
     def test_invalid_specs_are_rejected_before_anything_starts(self, spec, message, tmp_path):

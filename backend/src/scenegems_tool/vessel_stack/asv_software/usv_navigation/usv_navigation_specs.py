@@ -1,9 +1,10 @@
-"""Specs of the USV Navigation ASV software and its in-process adapter to the kinematic route.
+"""Specs of the USV Navigation ASV software and its adapters.
 
 USV Navigation is colav_automaton (github.com/michaelstolberger27/usv-navigation, MIT),
 pinned to COLAV_AUTOMATON_COMMIT in backend/pyproject.toml and in the scenario execution
-image. The MAVLink route (WP5b) and the custom controller route (WP5c) stay planned in the
-catalog.
+image. Every route runs the same in-process participant (usv_navigation_participant.py),
+stepped by the simulation clock; the adapters differ in what takes its heading and speed:
+the kinematic layer itself, or the custom controller's autopilot on Gazebo (WP5c).
 """
 
 from scenegems_tool.vessel_stack.contracts.adapter_spec import AdapterSpec, LayerSpec
@@ -23,6 +24,15 @@ USV_NAVIGATION_IN_PROCESS = AdapterSpec(
     source=LayerRef.of(AsvSoftwareId.USV_NAVIGATION),
     target=LayerRef.of(ControlLayerId.NONE),
     description="In-process USV Navigation adapter: SyncColavRuntime.step_external every step, output as heading_speed_cmd.",
+    provides_ports=frozenset({Port.HEADING_SPEED_CMD}),
+    requires_ports=frozenset({Port.VESSEL_STATE, Port.CLOCK}),
+)
+
+CUSTOM_CONTROLLER_HEADING_SPEED_INPUT = AdapterSpec(
+    id="custom_controller_heading_speed_input",
+    source=LayerRef.of(AsvSoftwareId.USV_NAVIGATION),
+    target=LayerRef.of(ControlLayerId.CUSTOM),
+    description="USV Navigation stepped in the runner next to the custom controller: its heading and speed commands are the twin-thrust autopilot's setpoints (gz_lockstep_runner.py).",
     provides_ports=frozenset({Port.HEADING_SPEED_CMD}),
     requires_ports=frozenset({Port.VESSEL_STATE, Port.CLOCK}),
 )

@@ -8,6 +8,7 @@ and merge them into the shipped file by hand; nothing here edits it.
     python -m scripts.calibrate monitor --timespan 600
     python -m scripts.calibrate stack --layer ardupilot_sim --drive replay --speedups 1 5 20 --repeats 3 --out sitl.yaml
     python -m scripts.calibrate stack --layer gazebo --drive target --speedups 1 2 --repeats 2 --out gazebo.yaml
+    python -m scripts.calibrate stack --layer gazebo --control custom --drive usv_navigation --reference straight --scale 30m --repeats 2
 
 The stack subcommand needs Docker and the SITL and Gazebo images. The others run in process.
 The library is scenegems_tool/vessel_stack/calibration/, which explains each measurement.
@@ -24,7 +25,7 @@ from scenegems_tool.vessel_stack.calibration.kinematic_measurement import DEFAUL
 from scenegems_tool.vessel_stack.calibration.measured_entry import MeasuredEntry, render_yaml, write_yaml
 from scenegems_tool.vessel_stack.calibration.monitor_measurement import DEFAULT_CONSTANTS_FILE, measure_monitor
 from scenegems_tool.vessel_stack.calibration.reference_scenarios import ENCOUNTER_TARGETS, REFERENCE_RUNS, VESSEL_SCALES, default_duration
-from scenegems_tool.vessel_stack.calibration.sitl_stack_runs import BASE_HOST_PORT, CONTROL_LAYERS, LAYERS, StackMeasurement, StackRunSpec, measure_stack
+from scenegems_tool.vessel_stack.calibration.sitl_stack_runs import BASE_HOST_PORT, CONTROL_LAYERS, DRIVES, LAYERS, StackMeasurement, StackRunSpec, measure_stack
 
 HEADER = "Measured by scripts/calibrate.py. Review the entries and merge them into registry/measured_capabilities.yaml."
 
@@ -56,7 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     stack = commands.add_parser("stack", help="repeat envelope and pace of ArduPilot Sim or Gazebo in Docker")
     stack.add_argument("--layer", choices=sorted(LAYERS), required=True)
-    stack.add_argument("--drive", choices=["replay", "target"], default="replay")
+    stack.add_argument("--drive", choices=list(DRIVES), default="replay", help="replay the reference, one far target, or USV Navigation toward the reference's end")
     stack.add_argument("--reference", choices=list(REFERENCE_RUNS), nargs="+", default=["straight"])
     stack.add_argument("--scale", choices=sorted(VESSEL_SCALES), nargs="+", default=["5m"], help="vessel scales, measured one after the other")
     stack.add_argument("--duration", type=int, help="simulated seconds (default: per reference run and scale, reference_scenarios.default_duration)")

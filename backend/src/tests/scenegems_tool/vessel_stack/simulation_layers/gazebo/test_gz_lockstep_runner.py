@@ -182,3 +182,13 @@ class TestGzCustom:
         monkeypatch.setattr(gz_lockstep_runner, "GzLockstepLink", lambda host, port: pytest.fail("no link before the stack is valid"))
         with pytest.raises(StackUnavailableError):
             run_gz_custom(trajectories, stack_instance(SimulationLayerId.GAZEBO, [0], control_layer=ControlLayerId.ARDUPILOT))
+
+    def test_usv_navigation_drives_the_custom_controller(self, monkeypatch):
+        trajectories, vessel = straight_run()
+        monkeypatch.setattr(gz_lockstep_runner, "GzLockstepLink", lambda host, port: setup_run(trajectories, vessel)[0])
+        result = run_gz_custom(trajectories, gz_custom_instance(trajectories, {0: AsvSoftwareId.USV_NAVIGATION}), steps=20)
+        record = result.run_record
+        assert "custom_controller_heading_speed_input" in record["specs"]
+        assert dict(result.participant_seeds).keys() == {"usv_navigation/0"}
+        assert record["usv_navigation"]["0"]["goal"] == [trajectories.state_list(vessel)[-1].x, 0.0]
+        assert result.states[-1][0].x > 10.0, "the vessel heads for its goal east"

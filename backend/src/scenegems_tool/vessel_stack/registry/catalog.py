@@ -10,7 +10,7 @@ from typing import Mapping, Optional
 
 from scenegems_tool.vessel_stack.asv_software.mission_planner.mission_planner_specs import MISSION_PLANNER_LAYER, MISSION_PLANNER_MAVLINK_PORT
 from scenegems_tool.vessel_stack.asv_software.replay.replay_specs import REPLAY_ARDUAGENT_FOLLOWER, REPLAY_LAYER, REPLAY_MAVLINK_LOCKSTEP, REPLAY_STATE_FOLLOWER, mavlink_link_runtime
-from scenegems_tool.vessel_stack.asv_software.usv_navigation.usv_navigation_specs import USV_NAVIGATION_IN_PROCESS, USV_NAVIGATION_LAYER
+from scenegems_tool.vessel_stack.asv_software.usv_navigation.usv_navigation_specs import CUSTOM_CONTROLLER_HEADING_SPEED_INPUT, USV_NAVIGATION_IN_PROCESS, USV_NAVIGATION_LAYER
 from scenegems_tool.vessel_stack.contracts.adapter_spec import AdapterSpec, LayerSpec, SpecStatus, UnsupportedConnection
 from scenegems_tool.vessel_stack.contracts.ports import Port
 from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, LayerRef, SimulationLayerId
@@ -47,15 +47,6 @@ USV_NAVIGATION_MAVLINK_GUIDED = AdapterSpec(
     description="Heading and speed of USV Navigation as MAVLink guided commands.",
     provides_ports=frozenset({Port.MAVLINK}),
     requires_ports=frozenset({Port.VESSEL_STATE}),
-    status=SpecStatus.PLANNED,
-    planned_phase=2,
-)
-CUSTOM_CONTROLLER_HEADING_SPEED_INPUT = AdapterSpec(
-    id="custom_controller_heading_speed_input",
-    source=_USV_NAVIGATION,
-    target=_CUSTOM,
-    description="heading_speed_cmd of USV Navigation into the custom controller.",
-    provides_ports=frozenset({Port.HEADING_SPEED_CMD}),
     status=SpecStatus.PLANNED,
     planned_phase=2,
 )
@@ -138,8 +129,8 @@ def build_registry(measurements: Optional[Mapping[str, CapabilityMeasurement]] =
     registry.register_adapter(ARDUPILOT_GAZEBO_PLUGIN)
     registry.register_adapter(CUSTOM_CONTROLLER_WAYPOINT_FOLLOWER, runtime=los_waypoint_follower_runtime)
     registry.register_adapter(GZ_TRANSPORT_ACTUATOR, runtime=gz_lockstep_link_runtime)
-    for planned in (USV_NAVIGATION_MAVLINK_GUIDED, CUSTOM_CONTROLLER_HEADING_SPEED_INPUT):
-        registry.register_adapter(planned)
+    registry.register_adapter(CUSTOM_CONTROLLER_HEADING_SPEED_INPUT, runtime=_usv_navigation_participant)
+    registry.register_adapter(USV_NAVIGATION_MAVLINK_GUIDED)
 
     for connection in UNSUPPORTED_CONNECTIONS:
         registry.declare_unsupported(connection)

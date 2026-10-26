@@ -21,7 +21,8 @@ Two ways of driving an ArduPilot repeat are measured:
   compared from the movement onset. This isolates the simulator and ArduPilot from the follower.
 
 A custom controller repeat is driven by run_gz_custom (gz_lockstep_runner.py) and compared at equal scenario time; its
-track is the odometry of every control step.
+track is the odometry of every control step. Its drive is replay (the line-of-sight waypoint follower) or usv_navigation
+(USV Navigation toward the end of the reference, with nothing to avoid).
 
 The resolver used for the run knows no stored measurements, so a speedup above today's measured limit is not refused
 before it is measured.
@@ -47,7 +48,7 @@ from scenegems_tool.vessel_stack.asv_software.replay.replay_specs import REPLAY_
 from scenegems_tool.vessel_stack.calibration.measured_entry import MeasuredEntry, evidence, host_label
 from scenegems_tool.vessel_stack.calibration.reference_scenarios import REFERENCE_RUNS, reference_run
 from scenegems_tool.vessel_stack.calibration.repeat_analysis import DeviationSummary, TrackingSummary, TrackSamples, achieved_speedup, repeat_deviation, tracking_error
-from scenegems_tool.vessel_stack.contracts.roles import ControlLayerId, SimulationLayerId
+from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, SimulationLayerId
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 from scenegems_tool.vessel_stack.control_layers.ardupilot.mavlink_link import MavlinkLink
 from scenegems_tool.vessel_stack.control_layers.ardupilot.mavlink_lockstep_runner import MavlinkRunResult, mavlink_replay_instance, run_mavlink_replay
@@ -74,6 +75,9 @@ _LAYER_SPEC_ID = {SimulationLayerId.ARDUPILOT_SIM: ARDUPILOT_SIM_LAYER.id, Simul
 _PAIR_SPEC_ID = {SimulationLayerId.ARDUPILOT_SIM: SITL_INTERNAL_PHYSICS.id, SimulationLayerId.GAZEBO: ARDUPILOT_GAZEBO_PLUGIN.id}
 
 
+DRIVES = ("replay", "target", "usv_navigation")
+
+
 @dataclass(frozen=True)
 class StackRunSpec:
     simulation_layer: SimulationLayerId
@@ -82,7 +86,7 @@ class StackRunSpec:
     duration_s: int = 90
     speedup: int = 1
     repeats: int = 3
-    drive: str = "replay"  # replay or target
+    drive: str = "replay"  # one of DRIVES
     wind: Optional[Tuple[float, float]] = None  # east, north in m/s
     from_rest: bool = False  # the reference starts at rest like the simulated vessel (tracking measurements)
     control_layer: ControlLayerId = ControlLayerId.ARDUPILOT
@@ -245,7 +249,8 @@ def prepare_run_folder(
     if spec.wind is not None:
         environment.wind_vector = np.array([spec.wind[0], spec.wind[1], 0.0])
     if spec.custom:
-        instance = gz_custom_instance(trajectories, environment=environment, speedup=spec.speedup)
+        asv_software = {vessel.id: AsvSoftwareId.USV_NAVIGATION for vessel in trajectories.initial_scene.vessels} if spec.drive == "usv_navigation" else None
+        instance = gz_custom_instance(trajectories, asv_software, environment=environment, speedup=spec.speedup)
     else:
         instance = mavlink_replay_instance(trajectories, spec.simulation_layer, environment=environment, speedup=spec.speedup)
     connection = MQttConnectionInfo(user="", password="", agent_broker="broker", client_broker="broker", port=1883, tls_connection=False, allow_certificates=False)
@@ -396,12 +401,14 @@ def _drive_target(spec: StackRunSpec, endpoint: str) -> RepeatResult:
 def _validate(spec: StackRunSpec) -> None:
     if spec.reference not in REFERENCE_RUNS:
         raise ValueError(f"Unknown reference run '{spec.reference}'; expected one of {', '.join(REFERENCE_RUNS)}")
-    if spec.drive not in ("replay", "target"):
-        raise ValueError(f"Unknown drive '{spec.drive}'; expected replay or target")
+    if spec.drive not in DRIVES:
+        raise ValueError(f"Unknown drive '{spec.drive}'; expected one of {', '.join(DRIVES)}")
     if spec.simulation_layer not in (SimulationLayerId.ARDUPILOT_SIM, SimulationLayerId.GAZEBO):
         raise ValueError(f"Docker measurements need ardupilot_sim or gazebo, got {spec.simulation_layer.value}")
-    if spec.custom and (spec.simulation_layer != SimulationLayerId.GAZEBO or spec.drive != "replay"):
-        raise ValueError("the custom controller runs on gazebo with the replay drive")
+    if spec.custom and (spec.simulation_layer != SimulationLayerId.GAZEBO or spec.drive == "target"):
+        raise ValueError("the custom controller runs on gazebo with the replay or usv_navigation drive")
+    if spec.drive == "usv_navigation" and not spec.custom:
+        raise ValueError("the usv_navigation drive needs the custom control layer")
 
 
 def _run_repeat(spec: StackRunSpec, trajectories: Trajectories, prepared: Tuple[str, Dict[str, str], Any], index: int, resolver: StackResolver, keep_stacks: bool) -> RepeatResult:
