@@ -60,6 +60,18 @@ def test_list_campaigns_newest_first(stores, clock):
     assert [c.name for c in stores.campaigns.unfinished_campaigns()] == ["first", "second"]
 
 
+def test_count_campaigns_takes_the_filter_of_list_campaigns(stores, clock):
+    first = stores.campaigns.create_campaign("first", {}, CONFIG_HASH, [make_class_spec()])
+    clock.advance(1)
+    stores.campaigns.create_campaign("second", {}, CONFIG_HASH, [make_class_spec()])
+    stores.campaigns.set_actual_state(first.campaign_id, CampaignActualState.RUNNING)
+    assert stores.campaigns.count_campaigns() == 2
+    assert stores.campaigns.count_campaigns([CampaignActualState.RUNNING]) == 1
+    assert stores.campaigns.count_campaigns([CampaignActualState.RUNNING, CampaignActualState.CREATED]) == 2
+    assert stores.campaigns.count_campaigns([CampaignActualState.COMPLETED]) == 0
+    assert len(stores.campaigns.list_campaigns(limit=1)) == 1 and stores.campaigns.count_campaigns() == 2
+
+
 def test_desired_state_changes_are_recorded(stores, campaign, clock):
     clock.advance(5)
     running = stores.campaigns.set_desired_state(campaign.campaign_id, CampaignDesiredState.RUNNING)
@@ -108,6 +120,18 @@ def test_events_in_order_with_paging(stores, campaign):
     assert [event.kind for event in events] == [CampaignEventKind.CREATED, CampaignEventKind.STARTED, CampaignEventKind.CLASS_COMPLETE]
     assert (events[2].class_id, events[2].detail) == (CLASS_A, {"verdicts": 3})
     assert stores.campaigns.list_events(campaign.campaign_id, after_event_id=events[0].event_id, limit=1) == [events[1]]
+
+
+def test_count_events_takes_the_filters_of_list_events(stores, campaign):
+    stores.campaigns.append_event(campaign.campaign_id, CampaignEventKind.STARTED)
+    stores.campaigns.append_event(campaign.campaign_id, CampaignEventKind.CLASS_COMPLETE, class_id=CLASS_A)
+    other = stores.campaigns.create_campaign("other", {}, CONFIG_HASH, [make_class_spec()])
+    events = stores.campaigns.list_events(campaign.campaign_id)
+    assert stores.campaigns.count_events(campaign.campaign_id) == len(events) == 3
+    assert stores.campaigns.count_events(campaign.campaign_id, after_event_id=events[0].event_id) == 2
+    assert stores.campaigns.count_events(campaign.campaign_id, kinds=[CampaignEventKind.CLASS_COMPLETE]) == 1
+    assert stores.campaigns.count_events(campaign.campaign_id, after_event_id=events[2].event_id) == 0
+    assert stores.campaigns.count_events(other.campaign_id) == 1
 
 
 def test_unknown_campaign(stores):

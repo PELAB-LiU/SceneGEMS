@@ -49,6 +49,17 @@ def test_a_complete_configuration_parses():
     assert configuration.docker_name == "scenegems-node-lab-master-worker-1"
 
 
+def test_the_machine_is_optional_and_trimmed():
+    assert NodeConfiguration.from_values(VALID).machine is None
+    assert NodeConfiguration.from_values(values(SCENEGEMS_NODE_MACHINE="")).machine is None
+    assert NodeConfiguration.from_values(values(SCENEGEMS_NODE_MACHINE=" lab-pc-3 ")).machine == "lab-pc-3"
+
+
+def test_a_machine_name_longer_than_the_registry_column_is_refused():
+    with pytest.raises(ConfigurationError, match="SCENEGEMS_NODE_MACHINE"):
+        NodeConfiguration.from_values(values(SCENEGEMS_NODE_MACHINE="m" * 257))
+
+
 def test_the_token_is_hidden_from_repr():
     assert "token-value" not in repr(NodeConfiguration.from_values(VALID))
 

@@ -71,6 +71,25 @@ def test_cluster_ids_and_names_are_single_scope_names():
     assert not pattern.fullmatch("Master_1") and not pattern.fullmatch("a/b")
 
 
+def test_the_node_reports_its_machine_from_the_machine_name():
+    from scenegems_tool.cluster.node.daemon.configuration.node_configuration import NodeConfiguration
+
+    node = scenegems_roles()["node"]
+    assert node["env"]["SCENEGEMS_NODE_MACHINE"] == "{machine.name}"
+    values = {"SCENEGEMS_MASTER_URL": "https://10.88.0.2:8443", "SCENEGEMS_MASTER_ID": "lab", "SCENEGEMS_MASTER_CA_SHA256": "0" * 64}
+    values.update({"SCENEGEMS_NODE_NAME": "worker-1", "SCENEGEMS_NODE_CAPABILITIES": node["parameters"]["SCENEGEMS_NODE_CAPABILITIES"]["default"], "SCENEGEMS_NODE_STATE_DIR": "/state"})
+    values["SCENEGEMS_NODE_MACHINE"] = node["env"]["SCENEGEMS_NODE_MACHINE"].replace("{machine.name}", "lab-pc-3")
+    assert NodeConfiguration.from_values(values).machine == "lab-pc-3"
+
+
+def test_the_allowed_origins_are_a_master_parameter_with_the_code_s_defaults():
+    from scenegems_tool.cluster.master.settings import DEFAULT_OPERATOR_ALLOWED_ORIGINS, parse_allowed_origins
+
+    parameter = scenegems_roles()["master"]["parameters"]["SCENEGEMS_OPERATOR_ALLOWED_ORIGINS"]
+    assert parse_allowed_origins(parameter["default"]) == DEFAULT_OPERATOR_ALLOWED_ORIGINS
+    assert "items" not in parameter and parameter["description"]
+
+
 def test_the_artifact_settings_are_parameters_with_the_code_s_defaults():
     from scenegems_tool.cluster.master.settings import ArtifactSettings
     from scenegems_tool.cluster.node.daemon.configuration.node_configuration import DEFAULT_ARTIFACT_CACHE_MAX_BYTES

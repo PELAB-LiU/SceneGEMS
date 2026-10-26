@@ -6,7 +6,7 @@ and fingerprints are replaced as a whole on every Hello.
 
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from sqlalchemy import CheckConstraint, Float, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB
@@ -30,6 +30,7 @@ class NodeRow(Base):
     status: Mapped[NodeStatus] = mapped_column(enum_column(NodeStatus, "status"))
     labels: Mapped[Dict[str, str]] = mapped_column(JSONB)
     software_revision: Mapped[str] = mapped_column(String(64))
+    machine: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)  # the machine the node runs on, as the deployment tool names it
     # Last reported resources, columns so the job claim filters on them in SQL
     cpus: Mapped[float] = mapped_column(Float)
     memory_mb: Mapped[int] = mapped_column(Integer)

@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Optional
 
 from scenegems_tool.cluster.protocol.jobs import JobType
 from scenegems_tool.cluster.protocol.node_description import NodeResources
@@ -27,6 +27,7 @@ class NodeRecord:
     fingerprints: Dict[str, str]  # image name to build fingerprint
     registered_at: datetime
     last_seen_at: datetime
+    machine: Optional[str] = None  # the machine the node runs on, as it reported in its Hello
 
     @classmethod
     def from_row(cls, row: NodeRow) -> "NodeRecord":
@@ -41,4 +42,5 @@ class NodeRecord:
             fingerprints={fingerprint.image: fingerprint.fingerprint for fingerprint in row.fingerprints},
             registered_at=row.registered_at,
             last_seen_at=row.last_seen_at,
+            machine=row.machine,
         )

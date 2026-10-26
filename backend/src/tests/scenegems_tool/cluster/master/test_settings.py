@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from scenegems_tool.cluster.master.settings import ArtifactSettings, Listener, MasterSettings, SettingMissing
+from scenegems_tool.cluster.master.settings import DEFAULT_OPERATOR_ALLOWED_ORIGINS, ArtifactSettings, Listener, MasterSettings, SettingMissing, parse_allowed_origins
 
 REQUIRED = {
     "SCENEGEMS_SECURITY_DIR": "/etc/scenegems/security",
@@ -17,6 +17,18 @@ def test_defaults():
     assert (settings.node_api, settings.operator, settings.broker_hook) == (Listener("0.0.0.0", 8443), Listener("127.0.0.1", 5174), Listener("127.0.0.1", 8090))
     assert settings.release_manifest is None
     assert settings.artifacts == ArtifactSettings(Path("/var/lib/scenegems/artifacts"), 256 * 1024 * 1024, 600.0, 3600.0)
+
+
+def test_the_operator_allows_the_ui_dev_server_by_default():
+    assert MasterSettings.from_environment(REQUIRED).operator_allowed_origins == ("http://localhost:5173", "http://127.0.0.1:5173") == DEFAULT_OPERATOR_ALLOWED_ORIGINS
+    assert MasterSettings.from_environment(dict(REQUIRED, SCENEGEMS_OPERATOR_ALLOWED_ORIGINS="  ")).operator_allowed_origins == DEFAULT_OPERATOR_ALLOWED_ORIGINS
+
+
+def test_the_allowed_origins_are_a_comma_separated_list():
+    environ = dict(REQUIRED, SCENEGEMS_OPERATOR_ALLOWED_ORIGINS="https://ui.lab.example, http://10.88.0.9:8080/ ,,https://ui.lab.example")
+    assert MasterSettings.from_environment(environ).operator_allowed_origins == ("https://ui.lab.example", "http://10.88.0.9:8080")
+    assert parse_allowed_origins("") == DEFAULT_OPERATOR_ALLOWED_ORIGINS
+    assert parse_allowed_origins("http://a, http://b") == ("http://a", "http://b")
 
 
 def test_artifact_settings():

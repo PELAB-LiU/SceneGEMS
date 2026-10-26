@@ -28,6 +28,7 @@ class Hello(ProtocolFrame):
     node_id: str
     node_name: str
     software_revision: str  # git commit of the checkout the node runs
+    machine: Optional[str] = None  # the machine the node runs on, as the deployment tool names it
     capabilities: List[CapabilityOffer]
     labels: Dict[str, str] = Field(default_factory=dict)
     resources: NodeResources

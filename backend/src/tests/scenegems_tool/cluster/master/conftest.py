@@ -98,10 +98,12 @@ def make_node(client, security) -> Iterator[Callable[..., FakeNode]]:
     """Pairs a node with the master (one-time token to credential) and returns it as a scripted node."""
     nodes = []
 
-    def make(name: str, slots: Optional[Dict[JobType, int]] = None, labels=None, fingerprints: Optional[Dict[str, str]] = None, resources=None) -> FakeNode:
+    def make(name: str, slots: Optional[Dict[JobType, int]] = None, labels=None, fingerprints: Optional[Dict[str, str]] = None, resources=None, machine: Optional[str] = None) -> FakeNode:
         token = create_pairing_token(security.store).token
         response = pair_node(security, PairingRequest(token=token, node_name=name, labels=labels or {}))
-        hello = make_hello(response.node_id, slots=slots or {SCENE: 2}, labels=labels, fingerprints=dict(EXPECTED) if fingerprints is None else fingerprints, resources=resources, name=name)
+        hello = make_hello(
+            response.node_id, slots=slots or {SCENE: 2}, labels=labels, fingerprints=dict(EXPECTED) if fingerprints is None else fingerprints, resources=resources, name=name, machine=machine
+        )
         nodes.append(FakeNode(client, response.node_credential, hello))
         return nodes[-1]
 

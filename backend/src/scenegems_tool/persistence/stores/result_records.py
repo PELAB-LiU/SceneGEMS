@@ -51,9 +51,10 @@ class RunRecord:
     fingerprints: Dict[str, str]
     durations_s: Dict[str, float]
     created_at: datetime
+    case_index: Optional[int] = None  # the case's index in its class, joined in by the store
 
     @classmethod
-    def from_row(cls, row: RunRecordRow) -> "RunRecord":
+    def from_row(cls, row: RunRecordRow, case_index: Optional[int] = None) -> "RunRecord":
         return cls(
             run_record_id=row.id,
             case_id=row.case_id,
@@ -76,6 +77,7 @@ class RunRecord:
             fingerprints=dict(row.fingerprints),
             durations_s=dict(row.durations_s),
             created_at=row.created_at,
+            case_index=case_index,
         )
 
 
@@ -111,9 +113,10 @@ class VerdictRecord:
     sensitive: bool
     early_stop_time_s: Optional[float]
     created_at: datetime
+    case_index: Optional[int] = None  # the case's index in its class, joined in by the store
 
     @classmethod
-    def from_row(cls, row: VerdictRow) -> "VerdictRecord":
+    def from_row(cls, row: VerdictRow, case_index: Optional[int] = None) -> "VerdictRecord":
         return cls(
             verdict_id=row.id,
             case_id=row.case_id,
@@ -130,6 +133,7 @@ class VerdictRecord:
             sensitive=row.sensitive,
             early_stop_time_s=row.early_stop_time_s,
             created_at=row.created_at,
+            case_index=case_index,
         )
 
 

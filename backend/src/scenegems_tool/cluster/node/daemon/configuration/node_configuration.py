@@ -9,6 +9,7 @@ Variables (deploy/node/.env.example is the template):
     SCENEGEMS_NODE_NAME           this node's name on the master and in Docker names
     SCENEGEMS_NODE_CAPABILITIES   job types with slots, for example simulation.kinematic:4,scene_generation:1
     SCENEGEMS_NODE_LABELS         optional key=value pairs, for example gpu=true,site=lab
+    SCENEGEMS_NODE_MACHINE        optional, the name of the machine the node runs on (the deployment tool writes it); shown in the UI
     SCENEGEMS_NODE_STATE_DIR      folder on the node's volume for the pairing state
     SCENEGEMS_NODE_TRUST_DIR      optional, folder the CA file is written to for job containers (<state>/trust)
     SCENEGEMS_NODE_TRUST_SOURCE   optional, the Docker volume or host folder behind the trust folder
@@ -40,6 +41,7 @@ DEFAULT_ENV_FILE = ".env"
 DEFAULT_REFERENCE_GEOFENCE = (57.76080082972655, 16.680965995056, 20.0)
 DEFAULT_ARTIFACT_CACHE_MAX_BYTES = 2 * 1024 * 1024 * 1024
 ARTIFACT_CACHE_FOLDER = "artifacts"  # under the state folder
+MAX_MACHINE_LENGTH = 256  # the registry column
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _LABEL_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
@@ -67,6 +69,7 @@ class NodeConfiguration:
     docker_network: Optional[str] = None
     reference_geofence: Tuple[float, float, float] = DEFAULT_REFERENCE_GEOFENCE
     software_revision: Optional[str] = None
+    machine: Optional[str] = None  # reported in the Hello
     artifact_cache_dir: Optional[Path] = None  # <state_dir>/artifacts when None
     artifact_cache_max_bytes: int = DEFAULT_ARTIFACT_CACHE_MAX_BYTES
 
@@ -132,6 +135,7 @@ class NodeConfiguration:
         state_text = required("SCENEGEMS_NODE_STATE_DIR")
         geofence_text = get("SCENEGEMS_NODE_REFERENCE_GEOFENCE")
         geofence = parsed("SCENEGEMS_NODE_REFERENCE_GEOFENCE", parse_geofence, geofence_text, DEFAULT_REFERENCE_GEOFENCE) if geofence_text else DEFAULT_REFERENCE_GEOFENCE
+        machine = parsed("SCENEGEMS_NODE_MACHINE", parse_machine, get("SCENEGEMS_NODE_MACHINE"))
         cache_text = get("SCENEGEMS_NODE_ARTIFACT_CACHE_MAX_BYTES")
         cache_max_bytes = parsed("SCENEGEMS_NODE_ARTIFACT_CACHE_MAX_BYTES", parse_byte_count, cache_text, DEFAULT_ARTIFACT_CACHE_MAX_BYTES) if cache_text else DEFAULT_ARTIFACT_CACHE_MAX_BYTES
         if problems:
@@ -153,6 +157,7 @@ class NodeConfiguration:
             docker_network=get("SCENEGEMS_DOCKER_NETWORK") or None,
             reference_geofence=geofence,
             software_revision=get("SCENEGEMS_SOFTWARE_REVISION") or None,
+            machine=machine or None,
             artifact_cache_dir=Path(get("SCENEGEMS_NODE_ARTIFACT_CACHE_DIR")) if get("SCENEGEMS_NODE_ARTIFACT_CACHE_DIR") else None,
             artifact_cache_max_bytes=cache_max_bytes,
         )
@@ -172,6 +177,12 @@ def parse_master_url(text: str) -> str:
         raise ValueError(f"{text!r} has an invalid port") from error
     host = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname
     return f"https://{host}" + (f":{port}" if port is not None else "")
+
+
+def parse_machine(text: str) -> str:
+    if len(text) > MAX_MACHINE_LENGTH:
+        raise ValueError(f"at most {MAX_MACHINE_LENGTH} characters")
+    return text
 
 
 def parse_sha256(text: str) -> str:

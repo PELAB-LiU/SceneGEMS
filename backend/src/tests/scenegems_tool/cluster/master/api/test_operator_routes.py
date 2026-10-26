@@ -125,6 +125,17 @@ def test_nodes_show_connection_and_fingerprint_state(client, make_node, schedule
     assert client.get(f"{NODES_PATH}/nobody").status_code == 404
 
 
+def test_nodes_show_the_machine_they_report(client, make_node):
+    named = make_node("lab 1", machine="lab-pc-3")
+    bare = make_node("lab 2")
+    named.connect()
+    bare.connect()
+    nodes = {node["node_id"]: node for node in client.get(NODES_PATH).json()}
+    assert nodes[named.node_id]["machine"] == "lab-pc-3" and nodes[bare.node_id]["machine"] is None
+    assert client.get(f"{NODES_PATH}/{named.node_id}").json()["machine"] == "lab-pc-3"
+    assert client.post(f"{NODES_PATH}/{named.node_id}/drain").json()["machine"] == "lab-pc-3"
+
+
 def test_drain_and_resume(client, make_node):
     node = make_node("lab 1")
     node.connect()

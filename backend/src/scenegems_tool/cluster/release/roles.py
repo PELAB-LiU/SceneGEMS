@@ -42,6 +42,8 @@ NODE_IMAGE = "scenegems-node:latest"
 # docker compose ... run of the master's one-off security tool (deploy/master/docker-compose.yml, profile tools)
 _SECURITY_TOOL = ["docker", "compose", "--profile", "tools", "run", "--rm", "-T", "security"]
 
+# Where the web UI is served from (cluster/master/settings.py)
+DEFAULT_OPERATOR_ALLOWED_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173"
 DEFAULT_NODE_CAPABILITIES = "simulation.kinematic:2,scene_generation:1,trajectory_generation:1,monitoring.post_hoc:1"
 # The artifact store on the master and the artifact cache on a node (cluster/master/settings.py, node_configuration.py)
 DEFAULT_ARTIFACT_MAX_BYTES = str(256 * 1024 * 1024)
@@ -78,6 +80,10 @@ def master_role() -> Dict[str, Any]:
             "SCENEGEMS_API_PORT": {"default": "8443", "description": "HTTPS port of the node API"},
             "SCENEGEMS_BROKER_TLS_PORT": {"default": "8883", "description": "TLS port of the cluster broker"},
             "SCENEGEMS_OPERATOR_PORT": {"default": "5174", "description": "operator API and workbench gateway, published on 127.0.0.1 only"},
+            "SCENEGEMS_OPERATOR_ALLOWED_ORIGINS": {
+                "default": DEFAULT_OPERATOR_ALLOWED_ORIGINS,
+                "description": "browser origins the operator API allows (CORS), comma separated: where the web UI is served from",
+            },
             "POSTGRES_HOST_PORT": {"default": "5432", "description": "Postgres, published on 127.0.0.1 only"},
             "SCENEGEMS_API_BIND_ADDRESS": {"default": "0.0.0.0", "description": "host address the node API is published on"},
             "SCENEGEMS_BROKER_BIND_ADDRESS": {"default": "0.0.0.0", "description": "host address the cluster broker is published on"},
@@ -106,6 +112,7 @@ def node_role() -> Dict[str, Any]:
         },
         "env": {
             "SCENEGEMS_NODE_NAME": "{name}",
+            "SCENEGEMS_NODE_MACHINE": "{machine.name}",
             "SCENEGEMS_SOFTWARE_REVISION": "{release.revision}",
         },
         "parameters": {

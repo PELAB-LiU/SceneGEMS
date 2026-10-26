@@ -50,10 +50,11 @@ def test_migrations_live_in_the_package():
 
 def test_revisions_form_one_line():
     scripts = _scripts()
-    assert scripts.get_heads() == ["0002"]
+    assert scripts.get_heads() == ["0003"]
     revisions = list(scripts.walk_revisions())
-    assert [revision.revision for revision in revisions] == ["0002", "0001"]
-    assert revisions[0].down_revision == "0001"
+    assert [revision.revision for revision in revisions] == ["0003", "0002", "0001"]
+    assert revisions[0].down_revision == "0002"
+    assert revisions[1].down_revision == "0001"
     assert revisions[-1].down_revision is None
     assert all(len(revision.revision) == 4 and revision.revision.isdigit() for revision in revisions)
 
@@ -98,6 +99,7 @@ def test_offline_upgrade_renders_the_tables(capsys):
     assert "ALTER TABLE job ADD COLUMN available_at" in sql
     assert "UPDATE job SET available_at = submitted_at" in sql
     assert "calibration.deviation" in sql
+    assert "ALTER TABLE node ADD COLUMN machine VARCHAR(256)" in sql
 
 
 @pytest.mark.postgres
@@ -107,7 +109,7 @@ def test_upgrade_on_an_empty_database(empty_database_url):
     try:
         assert set(inspect(engine).get_table_names()) == ALL_TABLES | {"alembic_version"}
         with engine.connect() as connection:
-            assert MigrationContext.configure(connection).get_current_revision() == "0002"
+            assert MigrationContext.configure(connection).get_current_revision() == "0003"
     finally:
         engine.dispose()
 
@@ -147,6 +149,38 @@ def test_upgrade_keeps_existing_jobs_available_since_their_submission(empty_data
             assert connection.execute(text("SELECT tx_id FROM job_event WHERE job_id = 'job-1'")).scalar_one() > 0
             # the new job type is accepted now
             connection.execute(text("UPDATE job SET job_type = 'calibration.deviation' WHERE id = 'job-1'"))
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.postgres
+def test_the_machine_column_comes_and_goes_with_revision_0003(empty_database_url):
+    config = alembic_config(empty_database_url)
+    command.upgrade(config, "0002")
+    engine = create_engine(empty_database_url)
+    registered = datetime(2026, 10, 26, 9, 30, tzinfo=timezone.utc)
+    try:
+        assert "machine" not in {column["name"] for column in inspect(engine).get_columns("node")}
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO node (id, name, status, labels, software_revision, cpus, memory_mb, free_memory_mb, free_disk_mb, load_average, registered_at, last_seen_at)"
+                    " VALUES ('node-1', 'worker-1', 'online', '{}', 'abc', 4, 1000, 500, 5000, 0.1, :at, :at)"
+                ),
+                {"at": registered},
+            )
+        command.upgrade(config, "0003")
+        columns = {column["name"]: column for column in inspect(engine).get_columns("node")}
+        assert columns["machine"]["nullable"] and str(columns["machine"]["type"]) == "VARCHAR(256)"
+        with engine.begin() as connection:
+            assert connection.execute(text("SELECT machine FROM node WHERE id = 'node-1'")).scalar_one() is None  # nodes of before say hello again
+            connection.execute(text("UPDATE node SET machine = 'lab-pc-3' WHERE id = 'node-1'"))
+        command.downgrade(config, "0002")
+        assert "machine" not in {column["name"] for column in inspect(engine).get_columns("node")}
+        with engine.connect() as connection:
+            assert connection.execute(text("SELECT name FROM node WHERE id = 'node-1'")).scalar_one() == "worker-1"  # the node stays
+        command.upgrade(config, "head")
+        assert "machine" in {column["name"] for column in inspect(engine).get_columns("node")}
     finally:
         engine.dispose()
 

@@ -5,6 +5,9 @@ served on the operator listener only. They are a thin layer on the AssuranceStor
 pipeline engine in the master (P4.4) converges a campaign onto the desired state these
 routes set. Without Postgres stores the master mounts unavailable_router instead.
 
+    POST CAMPAIGNS_PATH/validate           the same body as create, nothing is created: 200 with {"valid": true, "name", "config_hash",
+                                           "classes" (id, content hash, counts, quota, failure budget), "cases_planned" (the quotas' sum),
+                                           "runs" (index, name, repeatability tier, warnings)}, or the 422 create answers
     POST CAMPAIGNS_PATH?name=&start=       create from a config; 201 with the campaign. The body is the config as
                                            YAML text (Content-Type application/yaml, text/yaml or application/x-yaml;
                                            JSON is YAML too) or a JSON object {"config": {...}, "name": "...",
@@ -25,6 +28,9 @@ routes set. Without Postgres stores the master mounts unavailable_router instead
     POST <id>/pause                        desired state paused: queued jobs held, no new cases
     POST <id>/drain                        desired state draining: started cases finish, no new ones
     POST <id>/stop                         desired state stopped; final. 409 for any change of a stopped or finished campaign
+
+The lists (campaigns, cases, verdicts, run records, events) answer the number of entries that match their filters without the
+page in the X-Total-Count header. Verdicts and run records carry the case's index in its class (case_index).
 
 Control routes answer 200 with the campaign. The actual state follows when the engine has converged.
 """
@@ -49,6 +55,7 @@ from scenegems_tool.cluster.master.api.campaign_views import (
     config_version_view,
     event_view,
     run_record_view,
+    validated_campaign_view,
     verdict_row,
     verdict_view,
 )
@@ -58,6 +65,7 @@ from scenegems_tool.persistence.schema import CampaignActualState, CampaignDesir
 from scenegems_tool.persistence.stores import AssuranceStores, CampaignRecord, CampaignStateConflict, UnknownCampaign
 
 MAX_LISTED = 1000
+TOTAL_COUNT_HEADER = "X-Total-Count"
 CSV_PAGE = 1000
 YAML_TYPES = ("application/yaml", "text/yaml", "application/x-yaml", "text/x-yaml")
 CONTROLS = {
@@ -87,6 +95,10 @@ def _page(limit: int) -> int:
 
 async def _run(function: Callable[..., Any], *arguments: Any, **keywords: Any) -> Any:
     return await anyio.to_thread.run_sync(partial(function, *arguments, **keywords))
+
+
+def _with_total(response: Response, total: int) -> None:
+    response.headers[TOTAL_COUNT_HEADER] = str(total)
 
 
 def _config_problem(reasons: List[str]) -> HTTPException:
@@ -130,6 +142,17 @@ async def _request_config(request: Request, name: Optional[str], start: Optional
     return _json_body(text, name, start)
 
 
+def _validated_config(text: str) -> Any:
+    """The config text checked against the catalog and the resolver (a ValidatedCampaign); 422 with every reason when it does not pass."""
+    # Imported here: the config model pulls in numpy and the job type modules, which the master keeps out of its startup
+    from scenegems_tool.assurance.campaign import CampaignConfigError, parse_campaign_config, validate_campaign_config
+
+    try:
+        return validate_campaign_config(parse_campaign_config(text))
+    except CampaignConfigError as error:
+        raise _config_problem(error.reasons)
+
+
 async def _campaign_or_404(stores: AssuranceStores, campaign_id: str) -> CampaignRecord:
     campaign = await _run(stores.campaigns.get_campaign, campaign_id)
     if campaign is None:
@@ -154,13 +177,7 @@ def _campaign_routes(stores: AssuranceStores, plane: ControlPlane) -> APIRouter:
     router = APIRouter()
 
     def create(text: str, name: Optional[str], start: bool) -> CampaignRecord:
-        # Imported here: the config model pulls in numpy and the job type modules, which the master keeps out of its startup
-        from scenegems_tool.assurance.campaign import CampaignConfigError, parse_campaign_config, validate_campaign_config
-
-        try:
-            validated = validate_campaign_config(parse_campaign_config(text))
-        except CampaignConfigError as error:
-            raise _config_problem(error.reasons)
+        validated = _validated_config(text)
         # Pin what this master expects now. Without a listing yet the campaign has none and the engine pins it at start
         pinned = plane.expected.current() or {}
         return stores.campaigns.create_campaign(
@@ -172,6 +189,11 @@ def _campaign_routes(stores: AssuranceStores, plane: ControlPlane) -> APIRouter:
             desired_state=CampaignDesiredState.RUNNING if start else CampaignDesiredState.PAUSED,
         )
 
+    @router.post(CAMPAIGNS_PATH + "/validate")
+    async def validate_campaign(request: Request, name: Optional[str] = None, start: Optional[bool] = None) -> dict:
+        text, _name, _start = await _request_config(request, name, start)
+        return validated_campaign_view(await _run(_validated_config, text))
+
     @router.post(CAMPAIGNS_PATH)
     async def create_campaign(request: Request, response: Response, name: Optional[str] = None, start: Optional[bool] = None) -> dict:
         text, chosen_name, chosen_start = await _request_config(request, name, start)
@@ -180,8 +202,9 @@ def _campaign_routes(stores: AssuranceStores, plane: ControlPlane) -> APIRouter:
         return campaign_detail_view(campaign, await _run(_classes_of, stores, campaign.campaign_id))
 
     @router.get(CAMPAIGNS_PATH)
-    async def list_campaigns(state: Optional[List[CampaignActualState]] = Query(None), limit: int = 100, offset: int = 0) -> list:
+    async def list_campaigns(response: Response, state: Optional[List[CampaignActualState]] = Query(None), limit: int = 100, offset: int = 0) -> list:
         campaigns = await _run(stores.campaigns.list_campaigns, state, _page(limit), max(0, offset))
+        _with_total(response, await _run(stores.campaigns.count_campaigns, state))
         return [campaign_view(campaign) for campaign in campaigns]
 
     @router.get(CAMPAIGNS_PATH + "/{campaign_id}")
@@ -195,9 +218,10 @@ def _campaign_routes(stores: AssuranceStores, plane: ControlPlane) -> APIRouter:
         return await _run(_classes_of, stores, campaign_id)
 
     @router.get(CAMPAIGNS_PATH + "/{campaign_id}/events")
-    async def list_events(campaign_id: str, after: int = 0, limit: int = 100) -> list:
+    async def list_events(response: Response, campaign_id: str, after: int = 0, limit: int = 100) -> list:
         await _campaign_or_404(stores, campaign_id)
         events = await _run(stores.campaigns.list_events, campaign_id, max(0, after), _page(limit))
+        _with_total(response, await _run(stores.campaigns.count_events, campaign_id, max(0, after)))
         return [event_view(event) for event in events]
 
     @router.get(CAMPAIGNS_PATH + "/{campaign_id}/config")
@@ -214,6 +238,7 @@ def _case_routes(stores: AssuranceStores, plane: ControlPlane) -> APIRouter:
 
     @router.get(CAMPAIGNS_PATH + "/{campaign_id}/cases")
     async def list_cases(
+        response: Response,
         campaign_id: str,
         class_id: Optional[str] = None,
         state: Optional[List[CaseState]] = Query(None),
@@ -223,6 +248,7 @@ def _case_routes(stores: AssuranceStores, plane: ControlPlane) -> APIRouter:
     ) -> list:
         await _campaign_or_404(stores, campaign_id)
         cases = await _run(stores.cases.list_cases, campaign_id, class_id, state, stage, _page(limit), max(0, offset))
+        _with_total(response, await _run(stores.cases.count_cases, campaign_id, state, class_id=class_id, stages=stage))
         return [case_view(case) for case in cases]
 
     @router.get(CAMPAIGNS_PATH + "/{campaign_id}/cases/{case_id}")
@@ -271,6 +297,7 @@ def _result_routes(stores: AssuranceStores) -> APIRouter:
 
     @router.get(CAMPAIGNS_PATH + "/{campaign_id}/verdicts")
     async def list_verdicts(
+        response: Response,
         campaign_id: str,
         class_id: Optional[str] = None,
         state: Optional[VerdictState] = None,
@@ -284,16 +311,19 @@ def _result_routes(stores: AssuranceStores) -> APIRouter:
         if format not in ("json", "csv"):
             raise HTTPException(status_code=422, detail="format is json or csv")
         filters = (class_id, None, state, run_index, sensitive)  # class, case, state, run, sensitivity: the case filter is not offered here
+        total = await _run(partial(stores.results.count_verdicts, campaign_id, state, class_id=class_id, run_index=run_index, sensitive=sensitive))
+        _with_total(response, total)
         if format == "json":
             verdicts = await _run(stores.results.list_verdicts, campaign_id, *filters, _page(100 if limit is None else limit), max(0, offset))
             return [verdict_view(verdict) for verdict in verdicts]
-        headers = {"Content-Disposition": f'attachment; filename="verdicts-{campaign_id}.csv"'}
+        headers = {"Content-Disposition": f'attachment; filename="verdicts-{campaign_id}.csv"', TOTAL_COUNT_HEADER: str(total)}
         return StreamingResponse(csv_rows(campaign_id, filters, limit, max(0, offset)), media_type="text/csv", headers=headers)
 
     @router.get(CAMPAIGNS_PATH + "/{campaign_id}/run-records")
-    async def list_run_records(campaign_id: str, class_id: Optional[str] = None, run_index: Optional[int] = None, limit: int = 100, offset: int = 0) -> list:
+    async def list_run_records(response: Response, campaign_id: str, class_id: Optional[str] = None, run_index: Optional[int] = None, limit: int = 100, offset: int = 0) -> list:
         await _campaign_or_404(stores, campaign_id)
         records = await _run(stores.results.list_run_records, campaign_id, class_id, None, run_index, _page(limit), max(0, offset))
+        _with_total(response, await _run(stores.results.count_run_records, campaign_id, class_id, None, run_index))
         return [run_record_view(record) for record in records]
 
     return router

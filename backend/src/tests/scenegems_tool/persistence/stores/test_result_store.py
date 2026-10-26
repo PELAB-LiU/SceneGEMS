@@ -101,6 +101,48 @@ def test_verdicts_by_state_class_and_case(stores, campaign):
     assert stores.results.count_verdicts(campaign.campaign_id, VerdictState.FAILED) == 1
 
 
+def test_count_verdicts_takes_the_filters_of_list_verdicts(stores, campaign):
+    a0, a1, a2 = _cases(stores, campaign, CLASS_A, 3)
+    (b0,) = _cases(stores, campaign, CLASS_B, 1)
+    stores.results.add_verdict(_verdict(a0))
+    stores.results.add_verdict(_verdict(a0, VerdictState.FAILED, run_index=1, sensitive=True))
+    stores.results.add_verdict(_verdict(a1, VerdictState.FAILED))
+    stores.results.add_verdict(_verdict(a2))
+    stores.results.add_verdict(_verdict(b0, VerdictState.UNMONITORED))
+    filters = [
+        {},
+        {"class_id": CLASS_A},
+        {"class_id": CLASS_B},
+        {"case_id": a0.case_id},
+        {"state": VerdictState.FAILED},
+        {"state": VerdictState.PASSED, "class_id": CLASS_A},
+        {"run_index": 1},
+        {"sensitive": True},
+        {"sensitive": False, "state": VerdictState.FAILED},
+    ]
+    for keywords in filters:
+        assert stores.results.count_verdicts(campaign.campaign_id, **keywords) == len(stores.results.list_verdicts(campaign.campaign_id, **keywords)), keywords
+    assert stores.results.count_verdicts(campaign.campaign_id, run_index=0, class_id=CLASS_A) == 3
+    assert stores.results.count_verdicts(campaign.campaign_id, state=VerdictState.FAILED, sensitive=True) == 1
+    assert len(stores.results.list_verdicts(campaign.campaign_id, limit=1)) == 1 and stores.results.count_verdicts(campaign.campaign_id) == 5
+
+
+def test_verdicts_and_run_records_carry_the_index_of_their_case(stores, campaign):
+    cases = _cases(stores, campaign, CLASS_A, 3)
+    (b0,) = _cases(stores, campaign, CLASS_B, 1)
+    for case in (cases[2], b0, cases[0]):
+        run = stores.results.add_run_record(_run(case))
+        stored = stores.results.add_verdict(_verdict(case, run_record_id=run.run_record_id))
+        assert stored.case_index == case.case_index
+        assert run.case_index == case.case_index
+    assert [(verdict.class_id, verdict.case_index) for verdict in stores.results.list_verdicts(campaign.campaign_id)] == [(CLASS_A, 0), (CLASS_A, 2), (CLASS_B, 0)]
+    assert [record.case_index for record in stores.results.list_run_records(campaign.campaign_id)] == [0, 2, 0]
+    found = stores.results.get_run_record(stores.results.list_run_records(campaign.campaign_id)[1].run_record_id)
+    assert found.case_index == 2
+    # storing the same verdict again returns the stored one, with its index
+    assert stores.results.add_verdict(_verdict(cases[2])).case_index == 2
+
+
 def test_one_verdict_per_case_and_run(stores, campaign):
     (case,) = _cases(stores, campaign, CLASS_A, 1)
     first = stores.results.add_verdict(_verdict(case))
@@ -161,6 +203,19 @@ def test_run_records_by_class_and_case(stores, campaign):
     assert listed() == [(a0.case_id, 0), (a0.case_id, 1), (a1.case_id, 0), (b0.case_id, 0)]
     assert listed(class_id=CLASS_B) == [(b0.case_id, 0)]
     assert listed(case_id=a0.case_id, run_index=1) == [(a0.case_id, 1)]
+    assert listed(limit=2, offset=1) == [(a0.case_id, 1), (a1.case_id, 0)]
+
+
+def test_count_run_records_takes_the_filters_of_list_run_records(stores, campaign):
+    a0, a1 = _cases(stores, campaign, CLASS_A, 2)
+    (b0,) = _cases(stores, campaign, CLASS_B, 1)
+    for case in (b0, a1, a0):
+        stores.results.add_run_record(_run(case))
+    stores.results.add_run_record(_run(a0, run_index=1))
+    stores.results.add_run_record(_run(a0, repeat_index=1))
+    for keywords in ({}, {"class_id": CLASS_A}, {"class_id": CLASS_B}, {"case_id": a0.case_id}, {"run_index": 1}, {"case_id": a0.case_id, "run_index": 0}, {"class_id": CLASS_B, "run_index": 1}):
+        assert stores.results.count_run_records(campaign.campaign_id, **keywords) == len(stores.results.list_run_records(campaign.campaign_id, **keywords)), keywords
+    assert stores.results.count_run_records(campaign.campaign_id) == 5
 
 
 def test_coverage_per_class(stores, campaign):

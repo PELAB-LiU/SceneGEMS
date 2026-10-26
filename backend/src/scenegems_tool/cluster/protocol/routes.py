@@ -13,6 +13,8 @@ JOBS_PATH = "/cluster/jobs"  # POST JobSubmission; GET lists jobs, GET <JOBS_PAT
 ARTIFACTS_PATH = "/cluster/artifacts"
 CAMPAIGNS_PATH = "/cluster/campaigns"  # operator API: POST a campaign config; GET lists campaigns, GET <CAMPAIGNS_PATH>/<campaign id> one (campaign_routes.py)
 
+CATALOG_PATH = "/cluster/catalog"  # operator API: GET <CATALOG_PATH>/classes the class catalog, GET <CATALOG_PATH>/stacks what a campaign run may use (catalog_routes.py)
+
 AUTHORIZATION_HEADER = "Authorization"
 BEARER_SCHEME = "Bearer"  # the node credential from PairingResponse.node_credential, which names the node
 

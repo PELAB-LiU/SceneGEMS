@@ -8,6 +8,8 @@ The compose service sets the listeners and folders itself; the secrets come from
     SCENEGEMS_API_LISTEN_HOST, _PORT          node API, HTTPS (default 0.0.0.0:8443)
     SCENEGEMS_OPERATOR_LISTEN_HOST, _PORT     workbench gateway and operator API (default 127.0.0.1:5174)
     SCENEGEMS_BROKER_HOOK_LISTEN_HOST, _PORT  broker login hook (default 127.0.0.1:8090)
+    SCENEGEMS_OPERATOR_ALLOWED_ORIGINS  browser origins the operator API allows (CORS), comma separated; the web UI's
+                                      dev server by default (http://localhost:5173,http://127.0.0.1:5173)
     SCENEGEMS_RELEASE_MANIFEST        release.json of the release the master runs (cluster/release); its
                                       image fingerprints are the ones the master requires of nodes and jobs
     SCENEGEMS_ARTIFACT_DIR            the artifact store's folder (default /var/lib/scenegems/artifacts)
@@ -19,11 +21,12 @@ The compose service sets the listeners and folders itself; the secrets come from
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Mapping, Optional, Tuple
 
 from scenegems_tool.persistence.database import DATABASE_URL_ENV
 
 DEFAULT_ARTIFACT_DIR = Path("/var/lib/scenegems/artifacts")
+DEFAULT_OPERATOR_ALLOWED_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173")
 
 
 class SettingMissing(ValueError):
@@ -45,6 +48,7 @@ class MasterSettings:
     operator: Listener = Listener("127.0.0.1", 5174)
     broker_hook: Listener = Listener("127.0.0.1", 8090)
     release_manifest: Optional[Path] = None
+    operator_allowed_origins: Tuple[str, ...] = DEFAULT_OPERATOR_ALLOWED_ORIGINS
     artifacts: "ArtifactSettings" = field(default_factory=lambda: ArtifactSettings())
 
     @classmethod
@@ -63,6 +67,7 @@ class MasterSettings:
             operator=_listener(environ, "SCENEGEMS_OPERATOR", cls.operator),
             broker_hook=_listener(environ, "SCENEGEMS_BROKER_HOOK", cls.broker_hook),
             release_manifest=Path(release_manifest) if release_manifest else None,
+            operator_allowed_origins=parse_allowed_origins(environ.get("SCENEGEMS_OPERATOR_ALLOWED_ORIGINS", "")),
             artifacts=ArtifactSettings.from_environment(environ),
         )
 
@@ -89,6 +94,12 @@ class ArtifactSettings:
             sweep_interval_s=_number(environ, "SCENEGEMS_ARTIFACT_SWEEP_INTERVAL_S", cls.sweep_interval_s, float),
             sweep_grace_s=_number(environ, "SCENEGEMS_ARTIFACT_SWEEP_GRACE_S", cls.sweep_grace_s, float),
         )
+
+
+def parse_allowed_origins(text: str) -> Tuple[str, ...]:
+    """The origins of a comma separated list, without blanks and trailing slashes; the defaults for an empty list."""
+    origins = tuple(dict.fromkeys(item.strip().rstrip("/") for item in text.split(",") if item.strip()))
+    return origins or DEFAULT_OPERATOR_ALLOWED_ORIGINS
 
 
 def _number(environ: Mapping[str, str], name: str, default, parse):

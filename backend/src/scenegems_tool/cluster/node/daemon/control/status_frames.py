@@ -1,6 +1,6 @@
 """Hello and Heartbeat: what the node tells its master about itself.
 
-Hello opens every connection: identity, capabilities with slots, labels, resources, the
+Hello opens every connection: identity, the machine, capabilities with slots, labels, resources, the
 fingerprints of the local images and the leases still running from before a reconnect.
 Heartbeats repeat the changing part at the interval the master's Welcome sets.
 """
@@ -34,12 +34,14 @@ class StatusFrames:
     resources: Callable[[], NodeResources]
     fingerprints: Callable[[], Dict[str, str]]
     leases: LeaseState
+    machine: Optional[str] = None
 
     def hello(self) -> Hello:
         return Hello(
             node_id=self.node_id,
             node_name=self.node_name,
             software_revision=self.software_revision,
+            machine=self.machine,
             capabilities=[CapabilityOffer(job_type=job_type, slots=slots) for job_type, slots in sorted(self.capabilities.items(), key=lambda item: item[0].value)],
             labels=dict(self.labels),
             resources=self.resources(),

@@ -35,6 +35,16 @@ def test_register_again_replaces_capabilities_and_fingerprints(node_store, clock
     assert node.last_seen_at == clock.now
 
 
+def test_register_stores_the_machine_and_the_latest_hello_wins(node_store):
+    assert node_store.register(make_hello("node-a")).machine is None
+    assert node_store.register(make_hello("node-a", machine="lab-pc-3")).machine == "lab-pc-3"
+    assert node_store.get("node-a").machine == "lab-pc-3"
+    assert node_store.list_nodes()[0].machine == "lab-pc-3"
+    assert node_store.heartbeat("node-a", Heartbeat(resources=make_resources())).machine == "lab-pc-3"
+    assert node_store.register(make_hello("node-a", machine="lab-pc-4")).machine == "lab-pc-4"
+    assert node_store.register(make_hello("node-a")).machine is None
+
+
 def test_register_keeps_a_drain(node_store):
     node_store.register(make_hello("node-a"))
     node_store.set_status("node-a", NodeStatus.DRAINING)
