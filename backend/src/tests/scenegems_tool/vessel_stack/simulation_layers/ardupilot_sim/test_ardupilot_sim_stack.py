@@ -88,8 +88,15 @@ class TestMissionPlannerGroundStation:
         assert sorted(services) == ["agent_0", "agent_0_mavproxy", "agent_1", "agent_1_mavproxy"]
 
     def test_mavproxy_takes_serial1_and_leaves_serial0_to_the_runner(self, services):
-        assert "--master=tcp:agent_1:5772" in services["agent_1_mavproxy"]["command"]
+        assert "--master=tcp:agent_1:5772" in services["agent_1_mavproxy"]["command"][-1]
 
     def test_the_ground_station_endpoint_is_published_on_a_port_docker_assigns(self, services):
-        assert "--out=tcpin:0.0.0.0:5770" in services["agent_0_mavproxy"]["command"]
+        assert "--out=tcpin:0.0.0.0:5770" in services["agent_0_mavproxy"]["command"][-1]
         assert services["agent_0_mavproxy"]["ports"] == ["5770"]
+
+    def test_mavproxy_restarts_inside_its_container_so_the_published_port_stays(self, services):
+        """Docker gives a restarted container a new host port; MAVProxy exits until SITL has booted."""
+        shell, flag, loop = services["agent_0_mavproxy"]["command"]
+        assert (shell, flag) == ("sh", "-c")
+        assert loop.startswith("while true; do python3 -m MAVProxy.mavproxy --non-interactive ")
+        assert loop.endswith("; sleep 2; done")
