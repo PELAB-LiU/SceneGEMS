@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { useUiStore } from "../../app/uiStore";
 import { describeOperatorError } from "../../domain/cluster/operatorApi";
 import type { CampaignDetail as CampaignDetailView } from "../../domain/cluster/schemas";
 import { formatDateTime, plural, runDuration } from "./campaignFormat";
@@ -9,6 +8,7 @@ import { ConfigPanel } from "./ConfigPanel";
 import { ControlsBar } from "./ControlsBar";
 import { CoverageTable } from "./CoverageTable";
 import { EventsFeed } from "./EventsFeed";
+import { showCampaignResults } from "../results/showResults";
 import { useCampaignConfig, useCampaignEvents, useCampaignFeed } from "./useCampaignData";
 
 function useNow(intervalMs: number): number {
@@ -62,7 +62,6 @@ export function CampaignDetail({ campaignId, onBack }: CampaignDetailProps) {
   const feed = useCampaignFeed(campaignId);
   const events = useCampaignEvents(campaignId, feed.lastEventId, feed.pushedEvents, feed.source === "poll");
   const config = useCampaignConfig(campaignId);
-  const setSection = useUiStore((state) => state.setSection);
   const now = useNow(1_000);
   const { detail } = feed;
 
@@ -146,7 +145,7 @@ export function CampaignDetail({ campaignId, onBack }: CampaignDetailProps) {
           </div>
         </dl>
         <div className="camp-results-link">
-          <button type="button" className="primary-btn accent" onClick={() => setSection("results")}>
+          <button type="button" className="primary-btn accent" onClick={() => showCampaignResults(campaignId)}>
             Open the results
           </button>
           <span className="meta">Verdicts, cases and recorded runs of this master's campaigns are in the Results section.</span>

@@ -4,8 +4,7 @@ import { createOperatorClient } from "../../domain/cluster/operatorApi";
 import type { RunRecord, Verdict } from "../../domain/cluster/schemas";
 import { describeFramesPhase } from "./framesText";
 import { formatTime, runLabel } from "./resultsFormat";
-// The wave 2 merge swaps this import for `../encounter/EncounterView` (same props).
-import { RunFramesStandIn as EncounterView } from "./RunFramesStandIn";
+import { EncounterView } from "../encounter/EncounterView";
 
 interface RecordedRunProps {
   operatorUrl: string;
