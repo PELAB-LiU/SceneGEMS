@@ -23,6 +23,9 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from scenegems_tool.cluster.master.api.master_apps import MasterApps, create_master_apps
 from scenegems_tool.cluster.master.control_plane import ControlPlane
+from scenegems_tool.cluster.master.live.live_channel import LiveChannel
+from scenegems_tool.cluster.master.live.observation_hub import paho_broker
+from scenegems_tool.cluster.master.live.topics import create_live_channel
 from scenegems_tool.cluster.master.master_artifacts import MasterArtifacts
 from scenegems_tool.cluster.master.scheduling.fingerprint_policy import ExpectedFingerprints
 from scenegems_tool.cluster.master.settings import MasterSettings, SettingMissing
@@ -63,7 +66,19 @@ def build_master(settings: MasterSettings, with_gateway: bool = True) -> MasterA
     if with_gateway:
         from scenegems_tool.gateway.websocket_app import app as gateway
 
-    return create_master_apps(plane, security, settings.broker_hook_secret, gateway=gateway, artifacts=build_artifacts(settings, sessions), assurance=assurance)
+    live = build_live_channel(settings, security, plane, assurance)
+    return create_master_apps(plane, security, settings.broker_hook_secret, gateway=gateway, artifacts=build_artifacts(settings, sessions), assurance=assurance, live=live)
+
+
+def build_live_channel(settings: MasterSettings, security: MasterSecurity, plane: ControlPlane, assurance: AssuranceStores) -> LiveChannel:
+    """The browsers' live channel; it observes pools on the cluster broker when the master has its broker login."""
+    broker = None
+    if settings.broker is not None:
+        username = settings.broker.username or security.identity.master_broker_username
+        broker = paho_broker(settings.broker.host, settings.broker.port, username, settings.broker.password, str(security.layout.ca_certificate))
+    else:
+        logger.info("No broker login for the master (SCENEGEMS_BROKER_HOST, SCENEGEMS_BROKER_MASTER_PASSWORD): the live channel observes jobs, not pools")
+    return create_live_channel(plane, assurance, broker)
 
 
 def build_artifacts(settings: MasterSettings, sessions) -> MasterArtifacts:

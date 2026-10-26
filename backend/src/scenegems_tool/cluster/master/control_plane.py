@@ -100,7 +100,7 @@ class ControlPlane:
         self.registry = NodeRegistry(node_store, timing.node_offline_after_s)
         self.backoff = RejectBackoff(clock=clock)
         self.activity = JobActivity(clock)
-        self.scheduler = Scheduler(job_store, self.registry, expected, self.backoff, timing, guard)
+        self.scheduler = Scheduler(job_store, self.registry, expected, self.backoff, timing, guard, self.activity)
         self.leases = LeaseManager(job_store, self.registry, self.backoff, self.activity, timing, on_change=self.scheduler.wake)
         self._clock = clock
         self._tasks: List[asyncio.Task] = []
@@ -201,12 +201,14 @@ class ControlPlane:
         if expected is not None:
             submission = with_required_fingerprints(submission, expected)
         outcome = await anyio.to_thread.run_sync(self.jobs.submit, submission)
+        self.activity.changed(outcome.job.job_id)
         self.scheduler.wake()
         return outcome
 
     async def cancel(self, job_id: str, reason: str) -> CancelOutcome:
         outcome = await anyio.to_thread.run_sync(self.jobs.cancel, job_id, reason)
         self.backoff.job_ended(job_id)
+        self.activity.changed(job_id)
         if outcome.cancelled and outcome.lease_id is not None:
             session = self.registry.session(outcome.node_id)
             if session is not None:

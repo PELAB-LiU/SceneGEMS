@@ -8,9 +8,10 @@ All three run in the master process on one event loop (server.py) and share one 
                  plane and the artifact sweep.
     operator     plain HTTP bound to the local machine: the workbench WebSocket gateway,
                  mounted unchanged with its own lifespan, the job and node routes
-                 (operator_routes.py, and campaign_routes.py with the campaign stores) and
-                 artifact reads. Neither has authentication yet, which is why they are
-                 not on the node API's listener.
+                 (operator_routes.py, and campaign_routes.py with the campaign stores),
+                 artifact reads, the browsers' live channel (live_routes.py) and frames on
+                 demand (run_frames_routes.py). None has authentication yet, which is why
+                 they are not on the node API's listener.
     broker hook  plain HTTP on the compose network only: the cluster broker's login check
                  (cluster/security/broker/auth_hook.py).
 """
@@ -22,9 +23,13 @@ from typing import Optional
 from fastapi import FastAPI
 
 from scenegems_tool.cluster.master.api.artifact_routes import lease_holder_of, node_artifact_router, operator_artifact_router
+from scenegems_tool.cluster.master.api.live_routes import live_router
 from scenegems_tool.cluster.master.api.node_routes import node_router
 from scenegems_tool.cluster.master.api.operator_routes import operator_router
+from scenegems_tool.cluster.master.api.run_frames_routes import run_frames_router
 from scenegems_tool.cluster.master.control_plane import ControlPlane
+from scenegems_tool.cluster.master.live.live_channel import LiveChannel
+from scenegems_tool.cluster.master.live.topics import create_live_channel
 from scenegems_tool.cluster.master.master_artifacts import MasterArtifacts
 from scenegems_tool.cluster.security.broker.auth_hook import create_broker_auth_app
 from scenegems_tool.cluster.security.master_security import MasterSecurity
@@ -58,21 +63,33 @@ def create_node_api_app(plane: ControlPlane, security: MasterSecurity, run_timer
     return app
 
 
-def create_operator_app(plane: ControlPlane, gateway: Optional[FastAPI] = None, artifacts: Optional[MasterArtifacts] = None, assurance: Optional[AssuranceStores] = None) -> FastAPI:
+def create_operator_app(
+    plane: ControlPlane,
+    gateway: Optional[FastAPI] = None,
+    artifacts: Optional[MasterArtifacts] = None,
+    assurance: Optional[AssuranceStores] = None,
+    live: Optional[LiveChannel] = None,
+) -> FastAPI:
     """The operator routes, with the workbench gateway mounted behind them when given.
 
     The campaign routes need the campaign stores (assurance); without them they answer 503.
+    Without a live channel one is made on the control plane, observing jobs but no pools.
     """
+    live = live if live is not None else create_live_channel(plane, assurance)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         async with AsyncExitStack() as stack:
+            stack.push_async_callback(live.close)
             if gateway is not None:
                 await stack.enter_async_context(gateway.router.lifespan_context(gateway))
             yield
 
     app = FastAPI(title=f"SceneGEMS master {plane.master_id}: operator API", lifespan=lifespan)
     app.include_router(operator_router(plane, assurance))
+    app.include_router(live_router(live))
+    if assurance is not None:
+        app.include_router(run_frames_router(assurance, plane))
     if artifacts is not None:
         app.include_router(operator_artifact_router(artifacts.artifacts))
     if gateway is not None:
@@ -88,9 +105,10 @@ def create_master_apps(
     run_timers: bool = True,
     artifacts: Optional[MasterArtifacts] = None,
     assurance: Optional[AssuranceStores] = None,
+    live: Optional[LiveChannel] = None,
 ) -> MasterApps:
     return MasterApps(
         node_api=create_node_api_app(plane, security, run_timers, artifacts),
-        operator=create_operator_app(plane, gateway, artifacts, assurance),
+        operator=create_operator_app(plane, gateway, artifacts, assurance, live),
         broker_hook=create_broker_auth_app(security.store, broker_hook_secret),
     )

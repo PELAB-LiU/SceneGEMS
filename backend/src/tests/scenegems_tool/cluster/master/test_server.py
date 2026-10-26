@@ -11,8 +11,8 @@ import pytest
 from websockets.asyncio.client import connect
 
 from scenegems_tool.cluster.master.api.master_apps import create_master_apps
-from scenegems_tool.cluster.master.server import MAX_NODE_FRAME_BYTES, build_assurance_stores, listeners
-from scenegems_tool.cluster.master.settings import Listener, MasterSettings
+from scenegems_tool.cluster.master.server import MAX_NODE_FRAME_BYTES, build_assurance_stores, build_live_channel, listeners
+from scenegems_tool.cluster.master.settings import BrokerClientSettings, Listener, MasterSettings
 from scenegems_tool.cluster.protocol.codec import decode_master_message, encode
 from scenegems_tool.cluster.protocol.jobs import JobSubmission
 from scenegems_tool.cluster.protocol.messages import LeaseOffer, Welcome
@@ -102,3 +102,16 @@ def test_the_master_has_one_assurance_stores_shared_with_its_pipeline_engine(pla
     stores = build_assurance_stores(sessions)
     plane.attach_pipeline(stores)
     assert stores.session_factory is sessions and plane.pipeline.stores is stores
+
+
+def test_the_live_channel_observes_pools_with_the_masters_broker_login(plane, security):
+    without = build_live_channel(_settings(security.layout.root), security, plane, None)
+    assert not without.producers.hub.broker_configured
+    settings = _settings(security.layout.root)
+    settings = MasterSettings(**{**settings.__dict__, "broker": BrokerClientSettings("cluster-broker", 8883, "", "broker-secret-0123456789")})
+    channel = build_live_channel(settings, security, plane, None)
+    hub = channel.producers.hub
+    assert hub.broker_configured
+    client = hub._broker_factory()
+    assert (client.host, client.port, client._username) == ("cluster-broker", 8883, security.identity.master_broker_username)
+    assert client._ca_certificate == str(security.layout.ca_certificate)

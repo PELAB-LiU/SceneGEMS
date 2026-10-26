@@ -12,7 +12,8 @@ instant), and this module answers the node:
     reconnect          the Hello's running leases are reconciled with the store
 
 A frame about a lease the session does not hold is answered with Cancel (lease frames) or
-ProtocolError (results): a node can only act on its own leases.
+ProtocolError (results): a node can only act on its own leases. Every step that may change
+a job's state is reported to JobActivity.changed, which the live channel listens to.
 """
 
 import logging
@@ -58,6 +59,8 @@ class LeaseManager:
             return
         lease = await self._store(self._jobs.accept, frame.lease_id, self._timing.lease_timeout_s)
         await self._confirm(session, frame.lease_id, lease)
+        if lease is not None:
+            self._activity.changed(lease.job.job_id)
 
     async def renew(self, session: NodeSession, frame: LeaseRenew) -> None:
         if not session.owns(frame.lease_id):
@@ -74,13 +77,16 @@ class LeaseManager:
         if await self._store(self._jobs.reject, frame.lease_id, frame.reason) is not None:
             until = self._backoff.rejected(session.node_id, job_id)
             logger.info("Node %s rejected job %s (%s); not offered to it again before %s", session.node_id, job_id, frame.reason, until.isoformat(timespec="seconds"))
+        self._activity.changed(job_id)
         self._on_change()
 
     async def release(self, session: NodeSession, frame: LeaseRelease) -> None:
         if not session.owns(frame.lease_id):
             return
+        job_id = session.job_of(frame.lease_id)
         session.forget(frame.lease_id)
         await self._store(self._jobs.release, frame.lease_id, frame.reason)
+        self._activity.changed(job_id)
         self._on_change()
 
     async def result(self, session: NodeSession, frame: JobResult) -> None:
@@ -100,6 +106,7 @@ class LeaseManager:
             logger.info("Late result of job %s from node %s ignored: %s", frame.job_id, session.node_id, NOT_CURRENT)
         if report.job.state.is_terminal:
             self._backoff.job_ended(frame.job_id)
+        self._activity.changed(frame.job_id)
         self._on_change()
 
     async def status(self, session: NodeSession, frame: JobStatus) -> None:
@@ -128,10 +135,13 @@ class LeaseManager:
             else:
                 session.holds(current)
                 frames.append(LeaseRenewed(lease_id=current.lease_id, expires_at=current.expires_at))
+            self._activity.changed(lease.job.job_id)
         for lease in plan.withdraw:
             await self._store(self._jobs.reject, lease.lease_id, "offer lost when the node reconnected")
+            self._activity.changed(lease.job.job_id)
         for lease in plan.fail:
             await self._store(self._jobs.report_result, _lost_job(lease))
+            self._activity.changed(lease.job.job_id)
         frames.extend(Cancel(lease_id=lease_id, job_id="", reason=NOT_CURRENT) for lease_id in plan.cancel)
         if plan.withdraw or plan.fail:
             logger.info("Node %s reconnected: %d offers withdrawn, %d jobs it no longer runs requeued", session.node_id, len(plan.withdraw), len(plan.fail))
@@ -145,8 +155,10 @@ class LeaseManager:
         """
         pending = sorted(session.pending_offers)
         for lease_id in pending:
+            job_id = session.job_of(lease_id)
             session.forget(lease_id)
             await self._store(self._jobs.reject, lease_id, "the node disconnected before accepting")
+            self._activity.changed(job_id)
         if pending:
             self._on_change()
 
@@ -159,6 +171,7 @@ class LeaseManager:
             logger.warning("Lease %s of job %s on node %s expired; job now %s", lease.lease_id, lease.job.job_id, lease.node_id, lease.job.state.value)
             if lease.job.state.is_terminal:
                 self._backoff.job_ended(lease.job.job_id)
+            self._activity.changed(lease.job.job_id)
             session = self._registry.session(lease.node_id)
             if session is not None and session.owns(lease.lease_id):
                 await self._cancel(session, lease.lease_id, "the lease expired")

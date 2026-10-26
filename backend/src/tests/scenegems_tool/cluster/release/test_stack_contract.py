@@ -127,3 +127,11 @@ def test_the_node_caches_artifacts_in_its_state_volume():
     assert service["environment"]["SCENEGEMS_NODE_ARTIFACT_CACHE_DIR"].startswith(state + "/")
     default = scenegems_roles()["node"]["parameters"]["SCENEGEMS_NODE_ARTIFACT_CACHE_MAX_BYTES"]["default"]
     assert service["environment"]["SCENEGEMS_NODE_ARTIFACT_CACHE_MAX_BYTES"] == f"${{SCENEGEMS_NODE_ARTIFACT_CACHE_MAX_BYTES:-{default}}}"
+
+
+def test_the_master_logs_in_to_its_broker_with_its_own_account():
+    environment = _compose("master")["services"]["master-api"]["environment"]
+    assert (environment["SCENEGEMS_BROKER_HOST"], environment["SCENEGEMS_BROKER_PORT"]) == ("cluster-broker", "8883")
+    role = scenegems_roles()["master"]
+    assert environment["SCENEGEMS_BROKER_MASTER_USERNAME"] == "${SCENEGEMS_BROKER_MASTER_USERNAME:-" + role["env"]["SCENEGEMS_BROKER_MASTER_USERNAME"] + "}"
+    assert "SCENEGEMS_BROKER_MASTER_PASSWORD" in role["secrets"] and environment["SCENEGEMS_BROKER_MASTER_PASSWORD"] == "${SCENEGEMS_BROKER_MASTER_PASSWORD:-}"

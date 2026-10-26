@@ -5,11 +5,14 @@ operator's drain makes it draining, and the silence sweep makes a node offline a
 ControlTiming.node_offline_after_s without a heartbeat and closes its socket, so the node
 reconnects and reconciles its leases. The connected sessions live here, in memory: one
 per node, a newer connection of the same node replaces the older one.
+
+on_change hears the id of every node whose view may have changed (connect, disconnect,
+heartbeat, drain, resume, offline, out of date); the live channel's nodes topic sets it.
 """
 
 import logging
 from functools import partial
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 import anyio
 
@@ -30,6 +33,7 @@ class NodeRegistry:
         self._nodes = node_store
         self._offline_after_s = node_offline_after_s
         self._sessions: Dict[str, NodeSession] = {}
+        self.on_change: Callable[[str], None] = _ignore
 
     # Connections
 
@@ -51,12 +55,14 @@ class NodeRegistry:
             previous.hand_over()
             logger.info("Node %s reconnected; closing its previous connection", session.node_id)
             await previous.close(CLOSE_REPLACED, "replaced by a newer connection of this node")
+        self.on_change(session.node_id)
 
     def disconnect(self, session: NodeSession) -> bool:
         """Forgets the session unless a newer one replaced it; True when it was the node's connection."""
         session.closed = True
         if self._sessions.get(session.node_id) is session:
             del self._sessions[session.node_id]
+            self.on_change(session.node_id)
             return True
         return False
 
@@ -66,6 +72,7 @@ class NodeRegistry:
         record = await anyio.to_thread.run_sync(self._nodes.heartbeat, session.node_id, heartbeat)
         if record is not None:
             session.record = record
+            self.on_change(session.node_id)
 
     def refresh_out_of_date(self, session: NodeSession, expected: Optional[Dict[str, str]]) -> bool:
         """Compares the node's fingerprints with the expected ones; True when it is out of date."""
@@ -74,7 +81,9 @@ class NodeRegistry:
         mismatches = node_mismatches(session.record, expected)
         if mismatches and not session.out_of_date:
             logger.warning("Node %s is out of date and gets no jobs: %s", session.node_id, ", ".join(mismatch.image for mismatch in mismatches))
-        session.out_of_date = mismatches
+        if mismatches != session.out_of_date:
+            session.out_of_date = mismatches
+            self.on_change(session.node_id)
         return bool(mismatches)
 
     async def drain(self, node_id: str, reason: str) -> Optional[NodeRecord]:
@@ -83,6 +92,8 @@ class NodeRegistry:
         if record is not None and session is not None:
             session.record = record
             await session.send(Drain(reason=reason))
+        if record is not None:
+            self.on_change(node_id)
         return record
 
     async def resume(self, node_id: str) -> Optional[NodeRecord]:
@@ -94,6 +105,8 @@ class NodeRegistry:
         session = self._sessions.get(node_id)
         if record is not None and session is not None:
             session.record = record
+        if record is not None:
+            self.on_change(node_id)
         return record
 
     async def sweep_silent(self) -> List[str]:
@@ -104,6 +117,7 @@ class NodeRegistry:
             if session is not None:
                 logger.warning("Node %s sent no heartbeat for %.0f s; closing its connection", node_id, self._offline_after_s)
                 await session.close(CLOSE_SILENT, "no heartbeat")
+            self.on_change(node_id)
         return silent
 
     # Queries
@@ -113,3 +127,7 @@ class NodeRegistry:
 
     async def node(self, node_id: str) -> Optional[NodeRecord]:
         return await anyio.to_thread.run_sync(self._nodes.get, node_id)
+
+
+def _ignore(_node_id: str) -> None:
+    pass

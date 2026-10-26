@@ -495,3 +495,29 @@ def test_a_stop_condition_drains_the_campaign(harness):
     assert len(_cases(harness, campaign)) == 2
     (note,) = harness.stores.campaigns.list_events(campaign.campaign_id, kinds=[CampaignEventKind.NOTE])
     assert "max_cases" in note.detail["stop_condition"]
+
+
+def test_the_engine_tells_which_campaigns_each_committed_transaction_changed(harness):
+    heard = []
+    harness.engine.on_change = heard.append
+    running = create_campaign(harness.stores, config_dict(classes=(CLASS_A,), quota=1))
+    waiting = create_campaign(harness.stores, config_dict(classes=(CLASS_B,), quota=1), CampaignDesiredState.PAUSED)
+    harness.tick()
+    # The start appends engine_started to both; the tick then starts the running one and its first case
+    assert heard == [{running.campaign_id, waiting.campaign_id}, {running.campaign_id}]
+
+    heard.clear()
+    harness.settle()
+    assert heard == []  # nothing happened, nothing to tell
+    harness.executor.run()
+    harness.tick()
+    assert heard and all(changed == {running.campaign_id} for changed in heard)
+
+
+def test_a_failing_change_listener_does_not_stop_the_engine(harness):
+    def broken(_campaign_ids):
+        raise RuntimeError("the listener is broken")
+
+    harness.engine.on_change = broken
+    campaign = create_campaign(harness.stores, config_dict(classes=(CLASS_A,), quota=1))
+    assert harness.drive(campaign.campaign_id).actual_state == CampaignActualState.COMPLETED
