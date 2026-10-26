@@ -163,6 +163,21 @@ class TestMeasurementEntries:
         assert gazebo_entry.spec_id == "ardupilot_gazebo_plugin"
         assert gazebo_entry.fields["host_max_speedup"] == {host_label(): 2.0}
 
+    def test_a_usv_navigation_drive_gives_the_entry_of_its_lockstep_adapter(self):
+        (entry,) = measurement(drive="usv_navigation").entries()
+        assert entry.spec_id == "usv_navigation_mavlink_lockstep"
+        assert entry.fields["deviation_bounds_m_by_layer"] == {"simulation_layer/ardupilot_sim": {5: 0.07}}
+        assert entry.fields["max_speedup"] == 5.0
+        entry.parsed()
+
+    def test_a_usv_navigation_drive_runs_usv_navigation_on_every_sitl(self, tmp_path):
+        spec = StackRunSpec(ARDUPILOT_SIM, "straight", "5m", 20, 1, 1, "usv_navigation")
+        with uncapped_generation():
+            _, endpoints, instance = prepare_run_folder(spec, straight_run("5m", 20), str(tmp_path), 16420)
+        assert instance.vessels["0"].stack.asv_software == AsvSoftwareId.USV_NAVIGATION
+        assert instance.vessels["0"].adapter_ids == ("usv_navigation_mavlink_lockstep",)
+        assert endpoints == {"0": "tcp:127.0.0.1:16420"}
+
     def test_the_evidence_names_the_method_and_the_numbers(self):
         (entry,) = measurement().entries()
         evidence = entry.fields["evidence"]
@@ -251,7 +266,6 @@ class TestValidation:
             (StackRunSpec(SimulationLayerId.KINEMATIC), "Docker measurements need ardupilot_sim or gazebo"),
             (StackRunSpec(ARDUPILOT_SIM, control_layer=CUSTOM), "the custom controller runs on gazebo"),
             (StackRunSpec(GAZEBO, drive="target", control_layer=CUSTOM), "the custom controller runs on gazebo with the replay or usv_navigation drive"),
-            (StackRunSpec(ARDUPILOT_SIM, drive="usv_navigation"), "the usv_navigation drive needs the custom control layer"),
         ],
     )
     def test_invalid_specs_are_rejected_before_anything_starts(self, spec, message, tmp_path):

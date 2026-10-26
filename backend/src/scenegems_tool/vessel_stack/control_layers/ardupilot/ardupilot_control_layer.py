@@ -18,13 +18,16 @@ class ArduPilotControlLayer:
 
     def add_vessel(self, artifacts: DockerStackArtifacts, request: DockerStackRequest, vessel_config: VesselConfig, vessel: ConcreteVessel, state: ActorState) -> None:
         connection = vessel_config.require_connection()
+        asv_adapter = default_resolver().resolve(vessel_config.stack, vessel_config.adapter_ids).asv_adapter
+        arduagent = asv_adapter is not None and asv_adapter.id in ARDUAGENT_ADAPTER_IDS
         # The service generator reads the agent's name, broker and home pose from a client
-        # object; it is never connected.
+        # object; it is never connected. Only ArduAgent reads a control mode, and only ArduAgent
+        # vessels have one (USV Navigation has none).
         agent_stub = MqttAgentClient(
             vessel=vessel,
             mqtt_connection=request.mqtt_connection,
             topic=connection.topic,
-            control_mode=arduagent_control_mode(vessel_config.stack.asv_software),
+            control_mode=arduagent_control_mode(vessel_config.stack.asv_software) if arduagent else "",
             agent_name=connection.agent_name,
             reference_geofence=request.reference_geofence,
             initial_state=state,
@@ -33,8 +36,6 @@ class ArduPilotControlLayer:
         )
 
         environment = request.simulation.environment
-        asv_adapter = default_resolver().resolve(vessel_config.stack, vessel_config.adapter_ids).asv_adapter
-        arduagent = asv_adapter is not None and asv_adapter.id in ARDUAGENT_ADAPTER_IDS
         ardu_params = generate_ardu_params(
             vessel,
             request.trajectories.get_max_speed(vessel),

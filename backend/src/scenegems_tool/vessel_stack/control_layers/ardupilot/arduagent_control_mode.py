@@ -13,7 +13,8 @@ from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId
 
 # Adapters whose vessels ArduAgent drives: SITL, MAVProxy and ArduAgent per vessel, served by
 # the scenario execution worker over WARA-PS MQTT. Any other adapter into ardupilot talks
-# MAVLink to SITL itself (replay_mavlink_lockstep), so its vessel gets SITL only.
+# MAVLink to SITL itself (replay_mavlink_lockstep, usv_navigation_mavlink_lockstep), so its
+# vessel gets SITL only.
 ARDUAGENT_ADAPTER_IDS = frozenset({REPLAY_ARDUAGENT_FOLLOWER.id, MISSION_PLANNER_MAVLINK_PORT.id})
 
 _ARDUAGENT_CONTROL_MODES: Dict[AsvSoftwareId, str] = {

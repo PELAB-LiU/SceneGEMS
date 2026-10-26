@@ -4,7 +4,7 @@ The control layer is ardupilot (SITL per vessel) or, on Gazebo, the custom contr
 world is stepped by the gz-transport actuator in the Gazebo container.
 
 The stack of every repeat is generated with the project's own builder
-(simulation_docker_stack.build_simulation_docker_stack_artifacts) from a mavlink_replay_instance,
+(simulation_docker_stack.build_simulation_docker_stack_artifacts) from a mavlink_instance,
 so what is measured is what a campaign would start. This module only adapts the generated
 compose file to run several repeats side by side on one host:
 
@@ -13,10 +13,12 @@ compose file to run several repeats side by side on one host:
 - each SITL serial port, or the gz-transport actuator's port, is published on a host port of its own, which the run connects to;
 - fixed container names and the Gazebo host port are dropped, so repeats do not collide.
 
-Two ways of driving an ArduPilot repeat are measured:
+Three ways of driving an ArduPilot repeat are measured:
 
-- replay: run_mavlink_replay, the lockstep adapter that replays the trajectory (design doc 12.8). Repeats are compared
-  at equal scenario time. This is the number the resolver needs for replay_mavlink_lockstep.
+- replay: run_mavlink_stack with the lockstep adapter that replays the trajectory (design doc 12.8). Repeats are
+  compared at equal scenario time. This is the number the resolver needs for replay_mavlink_lockstep.
+- usv_navigation: run_mavlink_stack with USV Navigation toward the end of the reference over the same link
+  (usv_navigation_mavlink_lockstep), compared the same way.
 - target: one position target far ahead on an engaged vessel, sampled against SITL time (design doc 10.5). Repeats are
   compared from the movement onset. This isolates the simulator and ArduPilot from the follower.
 
@@ -45,13 +47,14 @@ import yaml
 from concrete_level.models.trajectories import Trajectories
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.vessel_stack.asv_software.replay.replay_specs import REPLAY_MAVLINK_LOCKSTEP
+from scenegems_tool.vessel_stack.asv_software.usv_navigation.usv_navigation_specs import USV_NAVIGATION_MAVLINK_LOCKSTEP
 from scenegems_tool.vessel_stack.calibration.measured_entry import MeasuredEntry, evidence, host_label
 from scenegems_tool.vessel_stack.calibration.reference_scenarios import REFERENCE_RUNS, reference_run
 from scenegems_tool.vessel_stack.calibration.repeat_analysis import DeviationSummary, TrackingSummary, TrackSamples, achieved_speedup, repeat_deviation, tracking_error
 from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, SimulationLayerId
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 from scenegems_tool.vessel_stack.control_layers.ardupilot.mavlink_link import MavlinkLink
-from scenegems_tool.vessel_stack.control_layers.ardupilot.mavlink_lockstep_runner import MavlinkRunResult, mavlink_replay_instance, run_mavlink_replay
+from scenegems_tool.vessel_stack.control_layers.ardupilot.mavlink_lockstep_runner import MavlinkRunResult, mavlink_instance, run_mavlink_stack
 from scenegems_tool.vessel_stack.registry.catalog import build_registry
 from scenegems_tool.vessel_stack.registry.resolver import StackResolver
 from scenegems_tool.vessel_stack.simulation_docker_stack import build_simulation_docker_stack_artifacts
@@ -109,7 +112,7 @@ class RepeatResult:
     wall_s: float = 0.0
     error: Optional[str] = None
     logs: str = ""
-    tracking: Optional[TrackingSummary] = None  # replay drive only: how closely the vessel followed its trajectory
+    tracking: Optional[TrackingSummary] = None  # replay and usv_navigation drives: how closely the vessel followed its reference
     late_commands: Optional[int] = None  # custom controller only: thrusts that missed their control step's first iteration
 
     @property
@@ -167,13 +170,13 @@ class StackMeasurement:
             identical_start=self.deviation.identical_prefix if self.deviation else "n/a",
         )
         entries: List[MeasuredEntry] = []
-        if spec.drive == "replay":
+        if spec.drive in ("replay", "usv_navigation"):
             fields: Dict[str, Any] = {"evidence": note}
             if self.deviation:
                 fields["deviation_bounds_m_by_layer"] = {_LAYER_SPEC_ID[layer]: {spec.speedup: self.deviation.max_m}}
             if layer == SimulationLayerId.ARDUPILOT_SIM and self.tracks_request:
                 fields["max_speedup"] = float(spec.speedup)
-            entries.append(MeasuredEntry(REPLAY_MAVLINK_LOCKSTEP.id, fields))
+            entries.append(MeasuredEntry(REPLAY_MAVLINK_LOCKSTEP.id if spec.drive == "replay" else USV_NAVIGATION_MAVLINK_LOCKSTEP.id, fields))
             if layer == SimulationLayerId.GAZEBO and self.tracks_request:
                 entries.append(MeasuredEntry(_PAIR_SPEC_ID[layer], {"host_max_speedup": {host_label(): float(spec.speedup)}, "evidence": note}))
         else:
@@ -248,11 +251,11 @@ def prepare_run_folder(
     environment = EnvironmentConfig.calm()
     if spec.wind is not None:
         environment.wind_vector = np.array([spec.wind[0], spec.wind[1], 0.0])
+    asv_software = {vessel.id: AsvSoftwareId.USV_NAVIGATION for vessel in trajectories.initial_scene.vessels} if spec.drive == "usv_navigation" else None
     if spec.custom:
-        asv_software = {vessel.id: AsvSoftwareId.USV_NAVIGATION for vessel in trajectories.initial_scene.vessels} if spec.drive == "usv_navigation" else None
         instance = gz_custom_instance(trajectories, asv_software, environment=environment, speedup=spec.speedup)
     else:
-        instance = mavlink_replay_instance(trajectories, spec.simulation_layer, environment=environment, speedup=spec.speedup)
+        instance = mavlink_instance(trajectories, spec.simulation_layer, asv_software, environment=environment, speedup=spec.speedup)
     connection = MQttConnectionInfo(user="", password="", agent_broker="broker", client_broker="broker", port=1883, tls_connection=False, allow_certificates=False)
     pending_writes, compose = build_simulation_docker_stack_artifacts(instance, trajectories, connection, GEOFENCE, embedded_in_subsystem=True)
 
@@ -326,8 +329,8 @@ def settle_time(trajectories: Trajectories) -> float:
     return max(20.0, (math.pi / 2) / vessel.max_angular_speed) if vessel.max_angular_speed > 0 else 20.0
 
 
-def _drive_replay(trajectories: Trajectories, instance, endpoints: Dict[str, str], resolver: StackResolver) -> Tuple[TrackSamples, RepeatResult]:
-    result: MavlinkRunResult = run_mavlink_replay(trajectories, instance, GEOFENCE, endpoints=endpoints, start_boot_s=START_BOOT_S, resolver=resolver)
+def _drive_mavlink(trajectories: Trajectories, instance, endpoints: Dict[str, str], resolver: StackResolver) -> Tuple[TrackSamples, RepeatResult]:
+    result: MavlinkRunResult = run_mavlink_stack(trajectories, instance, GEOFENCE, endpoints=endpoints, start_boot_s=START_BOOT_S, resolver=resolver)
     epoch = result.epoch_boot_ms[0]
     track = TrackSamples.from_stamped([sample for sample in result.samples[0] if sample.boot_ms >= epoch], epoch)  # the run itself, not the boot
     vessel = trajectories.initial_scene.vessels[0]
@@ -407,8 +410,6 @@ def _validate(spec: StackRunSpec) -> None:
         raise ValueError(f"Docker measurements need ardupilot_sim or gazebo, got {spec.simulation_layer.value}")
     if spec.custom and (spec.simulation_layer != SimulationLayerId.GAZEBO or spec.drive == "target"):
         raise ValueError("the custom controller runs on gazebo with the replay or usv_navigation drive")
-    if spec.drive == "usv_navigation" and not spec.custom:
-        raise ValueError("the usv_navigation drive needs the custom control layer")
 
 
 def _run_repeat(spec: StackRunSpec, trajectories: Trajectories, prepared: Tuple[str, Dict[str, str], Any], index: int, resolver: StackResolver, keep_stacks: bool) -> RepeatResult:
@@ -419,8 +420,8 @@ def _run_repeat(spec: StackRunSpec, trajectories: Trajectories, prepared: Tuple[
         compose.up()
         if spec.custom:
             outcome = _drive_gz_custom(trajectories, instance, endpoints, resolver)
-        elif spec.drive == "replay":
-            _, outcome = _drive_replay(trajectories, instance, endpoints, resolver)
+        elif spec.drive in ("replay", "usv_navigation"):
+            _, outcome = _drive_mavlink(trajectories, instance, endpoints, resolver)
         else:
             outcome = _drive_target(spec, endpoint=endpoints["0"])
     except Exception as error:
@@ -465,5 +466,5 @@ def measure_stack(
     measurement.repeats = [results[index] for index in sorted(results)]
     tracks = [repeat.track for repeat in measurement.ok_repeats if repeat.track is not None]
     if len(tracks) >= 2:
-        measurement.deviation = repeat_deviation(tracks, "scenario_time" if spec.drive == "replay" else "onset")
+        measurement.deviation = repeat_deviation(tracks, "onset" if spec.drive == "target" else "scenario_time")
     return measurement

@@ -1,8 +1,9 @@
 """Default registry: every layer, adapter and ruled-out connection of design section 3.3.
 
 New ASV software, controllers or simulators are added by implementing their specs and
-runtime and registering them here. Nothing else changes. Specs of Phase 2 adapters are
-registered as planned so the resolver answers the whole availability matrix today.
+runtime and registering them here. Nothing else changes. A spec can be registered as
+planned (SpecStatus.PLANNED) so the resolver answers its rows before it exists; since
+Phase 2 every "yes" row of the availability matrix is available.
 """
 
 from functools import lru_cache
@@ -10,9 +11,14 @@ from typing import Mapping, Optional
 
 from scenegems_tool.vessel_stack.asv_software.mission_planner.mission_planner_specs import MISSION_PLANNER_LAYER, MISSION_PLANNER_MAVLINK_PORT
 from scenegems_tool.vessel_stack.asv_software.replay.replay_specs import REPLAY_ARDUAGENT_FOLLOWER, REPLAY_LAYER, REPLAY_MAVLINK_LOCKSTEP, REPLAY_STATE_FOLLOWER, mavlink_link_runtime
-from scenegems_tool.vessel_stack.asv_software.usv_navigation.usv_navigation_specs import CUSTOM_CONTROLLER_HEADING_SPEED_INPUT, USV_NAVIGATION_IN_PROCESS, USV_NAVIGATION_LAYER
-from scenegems_tool.vessel_stack.contracts.adapter_spec import AdapterSpec, LayerSpec, SpecStatus, UnsupportedConnection
-from scenegems_tool.vessel_stack.contracts.ports import Port
+from scenegems_tool.vessel_stack.asv_software.usv_navigation.usv_navigation_specs import (
+    CUSTOM_CONTROLLER_HEADING_SPEED_INPUT,
+    USV_NAVIGATION_IN_PROCESS,
+    USV_NAVIGATION_LAYER,
+    USV_NAVIGATION_MAVLINK_LOCKSTEP,
+    usv_navigation_participant_runtime,
+)
+from scenegems_tool.vessel_stack.contracts.adapter_spec import LayerSpec, UnsupportedConnection
 from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, LayerRef, SimulationLayerId
 from scenegems_tool.vessel_stack.control_layers.ardupilot.ardupilot_specs import ARDUPILOT_CONTROL_LAYER
 from scenegems_tool.vessel_stack.control_layers.custom.custom_controller_specs import CUSTOM_CONTROL_LAYER, CUSTOM_CONTROLLER_WAYPOINT_FOLLOWER, los_waypoint_follower_runtime
@@ -24,7 +30,6 @@ from scenegems_tool.vessel_stack.simulation_layers.gazebo.gazebo_specs import AR
 from scenegems_tool.vessel_stack.simulation_layers.kinematic.kinematic_specs import KINEMATIC_COMMAND_INPUT, KINEMATIC_LAYER
 
 _REPLAY = LayerRef.of(AsvSoftwareId.REPLAY)
-_USV_NAVIGATION = LayerRef.of(AsvSoftwareId.USV_NAVIGATION)
 _MISSION_PLANNER = LayerRef.of(AsvSoftwareId.MISSION_PLANNER)
 _ARDUPILOT = LayerRef.of(ControlLayerId.ARDUPILOT)
 _CUSTOM = LayerRef.of(ControlLayerId.CUSTOM)
@@ -36,19 +41,6 @@ _ARDUPILOT_SIM = LayerRef.of(SimulationLayerId.ARDUPILOT_SIM)
 NONE_CONTROL_LAYER = LayerSpec(
     layer=_NONE,
     description="No separate controller: the simulation layer integrates control itself.",
-)
-
-# Planned for Phase 2 (design section 7).
-
-USV_NAVIGATION_MAVLINK_GUIDED = AdapterSpec(
-    id="usv_navigation_mavlink_guided",
-    source=_USV_NAVIGATION,
-    target=_ARDUPILOT,
-    description="Heading and speed of USV Navigation as MAVLink guided commands.",
-    provides_ports=frozenset({Port.MAVLINK}),
-    requires_ports=frozenset({Port.VESSEL_STATE}),
-    status=SpecStatus.PLANNED,
-    planned_phase=2,
 )
 
 # The "no" rows of the availability matrix, with the reasons the design gives.
@@ -74,12 +66,6 @@ def _replay_follower():
     from scenegems_tool.vessel_stack.asv_software.replay.replay_follower import ReplayFollower
 
     return ReplayFollower
-
-
-def _usv_navigation_participant():
-    from scenegems_tool.vessel_stack.asv_software.usv_navigation.usv_navigation_participant import UsvNavigationParticipant
-
-    return UsvNavigationParticipant
 
 
 def _ardupilot_control_layer():
@@ -120,7 +106,7 @@ def build_registry(measurements: Optional[Mapping[str, CapabilityMeasurement]] =
     registry.register_layer(ARDUPILOT_SIM_LAYER, runtime=_ardupilot_sim_layer)
 
     registry.register_adapter(REPLAY_STATE_FOLLOWER, runtime=_replay_follower)
-    registry.register_adapter(USV_NAVIGATION_IN_PROCESS, runtime=_usv_navigation_participant)
+    registry.register_adapter(USV_NAVIGATION_IN_PROCESS, runtime=usv_navigation_participant_runtime)
     registry.register_adapter(REPLAY_ARDUAGENT_FOLLOWER)
     registry.register_adapter(REPLAY_MAVLINK_LOCKSTEP, runtime=mavlink_link_runtime, default=True)
     registry.register_adapter(MISSION_PLANNER_MAVLINK_PORT)
@@ -129,8 +115,8 @@ def build_registry(measurements: Optional[Mapping[str, CapabilityMeasurement]] =
     registry.register_adapter(ARDUPILOT_GAZEBO_PLUGIN)
     registry.register_adapter(CUSTOM_CONTROLLER_WAYPOINT_FOLLOWER, runtime=los_waypoint_follower_runtime)
     registry.register_adapter(GZ_TRANSPORT_ACTUATOR, runtime=gz_lockstep_link_runtime)
-    registry.register_adapter(CUSTOM_CONTROLLER_HEADING_SPEED_INPUT, runtime=_usv_navigation_participant)
-    registry.register_adapter(USV_NAVIGATION_MAVLINK_GUIDED)
+    registry.register_adapter(CUSTOM_CONTROLLER_HEADING_SPEED_INPUT, runtime=usv_navigation_participant_runtime)
+    registry.register_adapter(USV_NAVIGATION_MAVLINK_LOCKSTEP, runtime=mavlink_link_runtime)
 
     for connection in UNSUPPORTED_CONNECTIONS:
         registry.declare_unsupported(connection)

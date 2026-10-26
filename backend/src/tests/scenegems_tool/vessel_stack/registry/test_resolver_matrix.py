@@ -4,9 +4,11 @@ from typing import Dict, List, Tuple
 
 import pytest
 
-from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, SimulationLayerId
+from scenegems_tool.vessel_stack.contracts.adapter_spec import AdapterSpec, SpecStatus
+from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, LayerRef, SimulationLayerId
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import VesselStackConfig
-from scenegems_tool.vessel_stack.registry.catalog import default_resolver
+from scenegems_tool.vessel_stack.registry.catalog import build_registry, default_resolver
+from scenegems_tool.vessel_stack.registry.resolver import StackResolver
 
 AVAILABLE = "available"
 PLANNED = "planned (phase 2)"
@@ -22,7 +24,7 @@ RULED_OUT = {
 }
 
 # (asv, control, simulation): (design status of section 3.3, status now, text every reason must contain)
-# Design status "yes" rows are available now or planned for Phase 2; the "no" rows are unavailable
+# Design status "yes" rows are available since Phase 2; the "no" rows are unavailable
 # with the design's reason. none with ardupilot_sim is a "no" added in Phase 1 (design doc 11.2).
 EXPECTED: Dict[Tuple[str, str, str], Tuple[str, str, List[str]]] = {
     ("replay", "none", "kinematic"): ("yes", AVAILABLE, []),
@@ -37,10 +39,10 @@ EXPECTED: Dict[Tuple[str, str, str], Tuple[str, str, List[str]]] = {
     ("usv_navigation", "none", "kinematic"): ("yes", AVAILABLE, []),
     ("usv_navigation", "ardupilot", "kinematic"): ("no", UNAVAILABLE, [RULED_OUT["kinematic"]]),
     ("usv_navigation", "custom", "kinematic"): ("no", UNAVAILABLE, [RULED_OUT["kinematic"]]),
-    ("usv_navigation", "ardupilot", "ardupilot_sim"): ("yes", PLANNED, ["usv_navigation_mavlink_guided is planned"]),
+    ("usv_navigation", "ardupilot", "ardupilot_sim"): ("yes", AVAILABLE, []),
     ("usv_navigation", "none", "ardupilot_sim"): ("no", UNAVAILABLE, [RULED_OUT["none_ardupilot_sim"]]),
     ("usv_navigation", "custom", "ardupilot_sim"): ("no", UNAVAILABLE, [RULED_OUT["custom_ardupilot_sim"]]),
-    ("usv_navigation", "ardupilot", "gazebo"): ("yes", PLANNED, ["usv_navigation_mavlink_guided is planned"]),
+    ("usv_navigation", "ardupilot", "gazebo"): ("yes", AVAILABLE, []),
     ("usv_navigation", "custom", "gazebo"): ("yes", AVAILABLE, []),
     ("usv_navigation", "none", "gazebo"): ("no", UNAVAILABLE, [RULED_OUT["none_gazebo"]]),
     ("mission_planner", "none", "kinematic"): ("no", UNAVAILABLE, [RULED_OUT["mission_planner_none"]]),
@@ -95,10 +97,10 @@ def test_triple_matches_design_table(matrix, key):
         assert chain.reasons == ()
 
 
-def test_matrix_counts_are_eight_available_two_planned_seventeen_unavailable(matrix):
+def test_matrix_counts_are_ten_available_none_planned_seventeen_unavailable(matrix):
     statuses = [chain.status for chain in matrix.values()]
-    assert statuses.count(AVAILABLE) == 8
-    assert statuses.count(PLANNED) == 2
+    assert statuses.count(AVAILABLE) == 10
+    assert statuses.count(PLANNED) == 0
     assert statuses.count(UNAVAILABLE) == 17
 
 
@@ -134,10 +136,30 @@ def test_mission_planner_rows_are_interactive_only(matrix):
         assert not capabilities.lockstep
 
 
-def test_planned_chain_lists_the_planned_specs(matrix):
-    chain = matrix[("usv_navigation", "ardupilot", "gazebo")]
-    planned_ids = {spec.id for spec in chain.planned_specs}
-    assert planned_ids == {"usv_navigation_mavlink_guided"}
+def test_planned_chain_lists_the_planned_specs():
+    """No catalog spec is planned since Phase 2, so a planned alternative is registered here to see the resolver report it."""
+    registry = build_registry({})
+    registry.register_adapter(
+        AdapterSpec(
+            id="planned_probe",
+            source=LayerRef.of(AsvSoftwareId.USV_NAVIGATION),
+            target=LayerRef.of(ControlLayerId.ARDUPILOT),
+            description="A planned adapter for this test.",
+            status=SpecStatus.PLANNED,
+            planned_phase=3,
+        ),
+        default=True,
+    )
+    chain = StackResolver(registry).resolve(VesselStackConfig(AsvSoftwareId.USV_NAVIGATION, ControlLayerId.ARDUPILOT, SimulationLayerId.GAZEBO))
+    assert chain.status == "planned (phase 3)"
+    assert {spec.id for spec in chain.planned_specs} == {"planned_probe"}
+
+
+def test_usv_navigation_on_ardupilot_runs_through_the_lockstep_mavlink_link(matrix):
+    for simulation in ("ardupilot_sim", "gazebo"):
+        chain = matrix[("usv_navigation", "ardupilot", simulation)]
+        assert chain.asv_adapter.id == "usv_navigation_mavlink_lockstep"
+        assert chain.capabilities.lockstep
 
 
 def test_usv_navigation_on_the_custom_controller_runs_through_its_heading_speed_input_and_the_gz_actuator(matrix):

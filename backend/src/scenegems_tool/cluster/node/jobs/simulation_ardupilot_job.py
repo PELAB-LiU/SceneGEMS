@@ -3,7 +3,7 @@
 The node resolves the instance (every vessel replay to ardupilot on ardupilot_sim or gazebo,
 through replay_mavlink_lockstep), generates the vessel stack into the job's folder and adds
 a runner from the scenario execution image on the stack network. The runner drives every
-vessel's SITL SERIAL0 (mavlink_lockstep_runner.run_mavlink_replay) and returns the run.
+vessel's SITL SERIAL0 (mavlink_lockstep_runner.run_mavlink_stack) and returns the run.
 
 Observed live, the runner forwards each step's observed states as frames, at most a bounded
 number a second at the stack's own pace: SITL runs free at the payload's speedup, so the run is
@@ -121,7 +121,7 @@ def frame_builder(scenario_id: str, trajectories, dt: float) -> Callable[[int, M
 
 def execute(job: JobSpec, status: StatusCallback, observation: Optional["ContainerObservation"] = None) -> JobResultData:
     """The in-container part: drive every vessel's SITL in lockstep and describe the run; observation forwards its states live."""
-    from scenegems_tool.vessel_stack.control_layers.ardupilot.mavlink_lockstep_runner import run_mavlink_replay
+    from scenegems_tool.vessel_stack.control_layers.ardupilot.mavlink_lockstep_runner import run_mavlink_stack
 
     payload = parse_payload(ArduPilotSimulationPayload, job)
     trajectories, instance = _instance(payload)
@@ -132,7 +132,7 @@ def execute(job: JobSpec, status: StatusCallback, observation: Optional["Contain
         observer = observation.observer(frame_builder(job.job_id, trajectories, dt), dt, last_index=steps, pace=False, stride_speed=float(payload.speedup))
         on_step = observer.step
     status("connecting to SITL")
-    result = run_mavlink_replay(trajectories, instance, payload.geofence.to_geofence(), dt=payload.dt, steps=payload.steps, start_boot_s=payload.start_boot_s, on_step=on_step)
+    result = run_mavlink_stack(trajectories, instance, payload.geofence.to_geofence(), dt=payload.dt, steps=payload.steps, start_boot_s=payload.start_boot_s, on_step=on_step)
     status("run finished", 1.0)
     data: JobResultData = {
         "run_record": dict(result.run_record),

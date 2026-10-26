@@ -1,7 +1,8 @@
 """Lockstep runner for ArduPilot stacks: in-process participants stepped by SITL time over MAVLink.
 
-Every vessel has a MavlinkLink to its SITL instance and an in-process participant (the
-ReplayFollower for replay). The runner keeps the step index in a LockstepClock and acts on
+Every vessel has a MavlinkLink to its SITL instance and an in-process participant: the
+ReplayFollower for replay (replay_mavlink_lockstep) or USV Navigation
+(usv_navigation_mavlink_lockstep). The runner keeps the step index in a LockstepClock and acts on
 step k once every vessel's SITL time has reached its boundary: the observation is the state
 interpolated to the boundary between the samples around it (MavlinkLink.state_at), each
 participant computes its command, acknowledges the step, and the command is sent.
@@ -28,6 +29,8 @@ from concrete_level.models.concrete_actors import ConcreteVessel
 from concrete_level.models.trajectories import Trajectories
 from scenegems_tool.vessel_stack.asv_software.replay.replay_follower import ReplayFollower
 from scenegems_tool.vessel_stack.asv_software.replay.replay_specs import REPLAY_MAVLINK_LOCKSTEP
+from scenegems_tool.vessel_stack.asv_software.usv_navigation.usv_navigation_parameters import UsvNavigationParameters
+from scenegems_tool.vessel_stack.asv_software.usv_navigation.usv_navigation_specs import USV_NAVIGATION_MAVLINK_LOCKSTEP, usv_navigation_participant_runtime
 from scenegems_tool.vessel_stack.contracts.clock import LockstepClock, LockstepParticipant, StepAck, derive_seed
 from scenegems_tool.vessel_stack.contracts.ports import HeadingSpeedCommand, VesselStateObservation
 from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, SimulationLayerId
@@ -40,6 +43,7 @@ from scenegems_tool.vessel_stack.registry.resolver import StackResolver, StackUn
 START_QUANTUM_S = 5.0  # scenario time 0 is put on a multiple of this SITL time, so repeats share it
 START_MARGIN_S = 1.0  # at least this much SITL time between arming and scenario time 0
 GUIDED_CHECK_MS = 2500  # scenario time by which every vessel must report GUIDED
+MAVLINK_LOCKSTEP_ADAPTERS = {AsvSoftwareId.REPLAY: REPLAY_MAVLINK_LOCKSTEP.id, AsvSoftwareId.USV_NAVIGATION: USV_NAVIGATION_MAVLINK_LOCKSTEP.id}
 
 StepObserver = Callable[[int, Mapping[int, StampedState]], None]  # (step index, the observed sample of each vessel id)
 
@@ -140,6 +144,35 @@ def run_mavlink_lockstep(
     )
 
 
+def mavlink_instance(
+    trajectories: Trajectories,
+    simulation_layer: SimulationLayerId,
+    asv_software: Optional[Mapping[int, AsvSoftwareId]] = None,
+    *,
+    environment: Optional[EnvironmentConfig] = None,
+    speedup: int = 1,
+) -> SimulationInstanceConfig:
+    """A simulation instance where every vessel runs its ASV software through a lockstep MAVLink adapter.
+
+    Replay unless asv_software names USV Navigation per vessel id. Agent names (and so SITL
+    service names) are vessel_<id>. Feed the instance to build_simulation_docker_stack_artifacts
+    for the stack and to run_mavlink_stack for the run.
+    """
+    asv_software = dict(asv_software or {})
+    vessels = {}
+    for vessel in trajectories.initial_scene.vessels:
+        software = asv_software.get(vessel.id, AsvSoftwareId.REPLAY)
+        if software not in MAVLINK_LOCKSTEP_ADAPTERS:
+            raise ValueError(f"Vessel {vessel.id}: {software.value} has no lockstep MAVLink adapter")
+        vessels[str(vessel.id)] = VesselConfig(
+            agent_id=str(vessel.id),
+            stack=VesselStackConfig(asv_software=software, control_layer=ControlLayerId.ARDUPILOT, simulation_layer=simulation_layer),
+            connection=AgentConnection(agent_name=f"vessel_{vessel.id}", topic="", port=None),
+            adapter_ids=(MAVLINK_LOCKSTEP_ADAPTERS[software],),
+        )
+    return SimulationInstanceConfig(simulation_layer=simulation_layer, environment=environment or EnvironmentConfig.calm(), speedup=speedup, vessels=vessels)
+
+
 def mavlink_replay_instance(
     trajectories: Trajectories,
     simulation_layer: SimulationLayerId,
@@ -147,29 +180,11 @@ def mavlink_replay_instance(
     environment: Optional[EnvironmentConfig] = None,
     speedup: int = 1,
 ) -> SimulationInstanceConfig:
-    """A simulation instance where every vessel replays its trajectory through the lockstep MAVLink adapter.
-
-    Agent names (and so SITL service names) are vessel_<id>. Feed the instance to
-    build_simulation_docker_stack_artifacts for the stack and to run_mavlink_replay for the run.
-    """
-    stack = VesselStackConfig(asv_software=AsvSoftwareId.REPLAY, control_layer=ControlLayerId.ARDUPILOT, simulation_layer=simulation_layer)
-    return SimulationInstanceConfig(
-        simulation_layer=simulation_layer,
-        environment=environment or EnvironmentConfig.calm(),
-        speedup=speedup,
-        vessels={
-            str(vessel.id): VesselConfig(
-                agent_id=str(vessel.id),
-                stack=stack,
-                connection=AgentConnection(agent_name=f"vessel_{vessel.id}", topic="", port=None),
-                adapter_ids=(REPLAY_MAVLINK_LOCKSTEP.id,),
-            )
-            for vessel in trajectories.initial_scene.vessels
-        },
-    )
+    """mavlink_instance with every vessel on replay."""
+    return mavlink_instance(trajectories, simulation_layer, environment=environment, speedup=speedup)
 
 
-def run_mavlink_replay(
+def run_mavlink_stack(
     trajectories: Trajectories,
     simulation: SimulationInstanceConfig,
     reference_geofence: Geofence,
@@ -181,41 +196,51 @@ def run_mavlink_replay(
     host: Optional[str] = None,
     resolver: Optional[StackResolver] = None,
     on_step: Optional[StepObserver] = None,
+    usv_navigation_parameters: Optional[Mapping[int, UsvNavigationParameters]] = None,
 ) -> MavlinkRunResult:
-    """Replay every simulated vessel on a running ArduPilot stack (ardupilot_sim or gazebo) through the registry.
+    """Run every simulated vessel on a running ArduPilot stack (ardupilot_sim or gazebo) through the registry.
 
-    The instance is validated as an unattended run, and every simulated vessel must resolve to
-    replay_mavlink_lockstep. endpoints maps agent ids to MAVLink endpoints; by default each is
-    SERIAL0 of the vessel's SITL service inside the stack network. dt defaults to the
-    trajectory time step and steps to its timespan. The run seed is environment.seed. on_step
-    sees every step's observed states.
+    The instance is validated as an unattended run, and every simulated vessel must resolve to a
+    lockstep MAVLink adapter: replay_mavlink_lockstep (the ReplayFollower on its trajectory) or
+    usv_navigation_mavlink_lockstep (USV Navigation, parameters from its trajectory unless
+    given). endpoints maps agent ids to MAVLink endpoints; by default each is SERIAL0 of the
+    vessel's SITL service inside the stack network. dt defaults to the trajectory time step and
+    steps to its timespan. The run seed is environment.seed. on_step sees every step's observed states.
     """
     resolver = resolver or default_resolver()
     resolution = resolver.require_instance(simulation, attended=False, host=host)
+    lockstep_ids = set(MAVLINK_LOCKSTEP_ADAPTERS.values())
     wrong = [
         f"vessel {agent_id} runs through {chain.asv_adapter.id if chain.asv_adapter else 'no adapter'}"
         for agent_id, chain in resolution.chains.items()
-        if chain.asv_adapter is None or chain.asv_adapter.id != REPLAY_MAVLINK_LOCKSTEP.id
+        if chain.asv_adapter is None or chain.asv_adapter.id not in lockstep_ids
     ]
     if wrong:
-        raise StackUnavailableError([f"run_mavlink_replay needs {REPLAY_MAVLINK_LOCKSTEP.id} for every simulated vessel: {', '.join(wrong)}"])
+        raise StackUnavailableError([f"run_mavlink_stack needs {' or '.join(sorted(lockstep_ids))} for every simulated vessel: {', '.join(wrong)}"])
     dt = float(trajectories.time_step) if dt is None else dt
-    link_class = resolver.registry.runtime(REPLAY_MAVLINK_LOCKSTEP.id)
+    scene = trajectories.initial_scene
 
     links: Dict[int, MavlinkLink] = {}
-    followers: Dict[int, ReplayFollower] = {}
+    participants: Dict[int, LockstepParticipant] = {}
     vessels: Dict[int, ConcreteVessel] = {}
+    navigation_parameters: Dict[int, UsvNavigationParameters] = {}
     for agent_id, vessel_config in simulation.simulated_vessels.items():
-        vessel = trajectories.initial_scene.get_by_id(agent_id)
+        vessel = scene.get_by_id(agent_id)
         if not isinstance(vessel, ConcreteVessel):
             raise ValueError(f"Vessel {vessel} is not a ConcreteVessel.")
+        adapter = resolution.chains[agent_id].asv_adapter
         endpoint = (endpoints or {}).get(agent_id) or sitl_mavlink_endpoint(vessel_config.require_connection().agent_name, vessel.id)
-        links[vessel.id] = link_class(endpoint, vessel.id, reference_geofence)
-        followers[vessel.id] = ReplayFollower(vessel, trajectories.state_list(vessel), trajectories.time_step)
+        links[vessel.id] = resolver.registry.runtime(adapter.id)(endpoint, vessel.id, reference_geofence)
+        if adapter.id == REPLAY_MAVLINK_LOCKSTEP.id:
+            participants[vessel.id] = ReplayFollower(vessel, trajectories.state_list(vessel), trajectories.time_step)
+        else:
+            parameters = (usv_navigation_parameters or {}).get(vessel.id) or UsvNavigationParameters.from_reference(vessel, trajectories.state_list(vessel), scene.actors, dt)
+            navigation_parameters[vessel.id] = parameters
+            participants[vessel.id] = usv_navigation_participant_runtime()(vessel, parameters)
         vessels[vessel.id] = vessel
     steps = steps if steps is not None else int(round(trajectories.timespan / dt))
     try:
-        result = run_mavlink_lockstep(links, followers, vessels, dt, steps, simulation.environment.seed, start_boot_s=start_boot_s, on_step=on_step)
+        result = run_mavlink_lockstep(links, participants, vessels, dt, steps, simulation.environment.seed, start_boot_s=start_boot_s, on_step=on_step)
     finally:
         for link in links.values():
             link.close()
@@ -235,6 +260,8 @@ def run_mavlink_replay(
         "environment": resolution.effective_environment(),
         "state_digest": result.state_digest(),
     }
+    if navigation_parameters:
+        run_record["usv_navigation"] = {str(vessel_id): parameters.as_dict() for vessel_id, parameters in sorted(navigation_parameters.items())}
     return dataclasses.replace(result, run_record=run_record)
 
 

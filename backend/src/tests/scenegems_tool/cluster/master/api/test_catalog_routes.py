@@ -198,8 +198,8 @@ def test_the_reasons_tell_why_a_resolver_stack_is_not_a_campaign_stack(stacks):
     entries = {(entry["asv_software"], entry["control_layer"], entry["simulation_layer"]): entry for entry in stacks["unavailable_stacks"]}
     gazebo = entries[("replay", "ardupilot", "gazebo")]  # the resolver has it, the campaign config does not offer it yet
     assert gazebo["available_in_resolver"] is True and gazebo["tier"] == "bounded" and "kinematic" in gazebo["reasons"][0]
-    planned = entries[("usv_navigation", "ardupilot", "ardupilot_sim")]
-    assert planned["available_in_resolver"] is False and planned["status"].startswith("planned") and "planned" in planned["reasons"][0]
+    usv_navigation = entries[("usv_navigation", "ardupilot", "ardupilot_sim")]  # available since WP5b, not offered to campaigns
+    assert usv_navigation["available_in_resolver"] is True and "kinematic" in usv_navigation["reasons"][0]
     impossible = entries[("replay", "ardupilot", "kinematic")]
     assert impossible["status"] == "unavailable" and impossible["design_status"] == "no" and "integrates control internally" in impossible["reasons"][0]
     interactive = entries[("mission_planner", "ardupilot", "gazebo")]

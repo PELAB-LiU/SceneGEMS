@@ -96,7 +96,7 @@ def test_an_observed_run_forwards_its_lockstep_states_at_the_stacks_own_pace(mon
                 on_step(index, samples)
         return MavlinkRunResult((0, 1), 1.0, 0, (), (100_000, 100_000), tuple(recorded), (), 12.0, {"steps": len(recorded) - 1})
 
-    monkeypatch.setattr(mavlink_lockstep_runner, "run_mavlink_replay", replay)
+    monkeypatch.setattr(mavlink_lockstep_runner, "run_mavlink_stack", replay)
     job = make_job(JobType.SIMULATION_ARDUPILOT, {"simulation_layer": "ardupilot_sim", "trajectories": head_on_trajectories.to_dict(), "geofence": GEOFENCE, "speedup": 50})
     plain = execute(job, lambda message, progress=None: None)
     frames, sleeps = [], []
