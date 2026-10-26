@@ -26,6 +26,10 @@ parts.
 A crash between the two parts loses nothing: intents are resubmitted on the next tick (the
 keys make that idempotent), and jobs of ended cases are cancelled at the next start.
 
+After each committed transaction the engine tells on_change, on the event loop, which
+campaigns it wrote to (events, states, cases of their classes). The live channel listens and
+reads what changed for the campaigns somebody watches; the engine itself queries nothing for it.
+
 Desired and actual states:
 
     start    actual created, desired running or draining: pin the master's current expected
@@ -55,7 +59,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Awaitable, Callable, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Set
 
 import anyio
 from sqlalchemy.orm import Session
@@ -121,6 +125,7 @@ class StepPlan:
     wake: bool = False
     events_read: int = 0
     caught_up: bool = True  # the batch was not full
+    changed: Set[str] = field(default_factory=set)  # campaigns the transaction wrote to
 
 
 @dataclass(frozen=True)
@@ -149,6 +154,7 @@ class PipelineEngine:
         settings: EngineSettings = EngineSettings(),
         catalog: Optional[ClassCatalog] = None,
         leadership: Optional[EngineLeadership] = None,
+        on_change: Optional[Callable[[Set[str]], None]] = None,
     ):
         self.stores = stores
         self.jobs = job_store
@@ -167,6 +173,8 @@ class PipelineEngine:
         self._stopped = False
         self._check_every_class = True
         self._unrunnable_since: Dict[str, datetime] = {}
+        self.on_change = on_change  # hears the campaigns each committed transaction wrote to
+        self._changed: Set[str] = set()
 
     @property
     def started(self) -> bool:
@@ -209,6 +217,7 @@ class PipelineEngine:
         except LeadershipLost:
             self._lose_leadership()
             return False
+        self._notify(self._take_changes(outbox))
         self._started, self._started_term = True, self.leadership.term
         await self._cancel_jobs(outbox)
         return True
@@ -230,6 +239,7 @@ class PipelineEngine:
         except LeadershipLost:
             self._lose_leadership()
             return self._stand_by()
+        self._notify(plan.changed)
         cancelled = await self._cancel_jobs(plan.outbox)
         submitted = await self._submit_all(plan.submissions)
         if plan.wake or submitted:
@@ -258,6 +268,7 @@ class PipelineEngine:
 
     def _reconcile(self) -> StepOutbox:
         outbox = StepOutbox()
+        self._changed = set()
         with self.stores.transaction() as session:
             position = self.stores.pipeline.read_cursor(lock=True, session=session)
             self.leadership.check(session)
@@ -267,7 +278,7 @@ class PipelineEngine:
                 intents = self.stores.pipeline.intents_without_job(campaign.campaign_id, session=session)
                 outbox.cancel(orphaned, "its case ended before the engine restarted")
                 detail = {"cursor": [position.tx_id, position.event_id], "intents": len(intents), "recounted_classes": [record.class_id for record in corrected], "orphaned_jobs": len(orphaned)}
-                self.stores.campaigns.append_event(campaign.campaign_id, CampaignEventKind.ENGINE_STARTED, detail, session=session)
+                self._event(session, campaign.campaign_id, CampaignEventKind.ENGINE_STARTED, detail)
                 if corrected:
                     logger.warning("Campaign %s: class counts repaired from the cases for %s", campaign.campaign_id, ", ".join(record.class_id for record in corrected))
         self._check_every_class = True
@@ -276,6 +287,7 @@ class PipelineEngine:
     def _step(self, nodes: Sequence[NodeAvailability]) -> StepPlan:
         now = self._clock()
         plan = StepPlan(StepOutbox())
+        self._changed = set()
         with self.stores.transaction() as session:
             # The cursor row is locked and this engine holds the engine lock, so the cursor is where the
             # last committed tick left it, also after a tick whose commit failed (committed or not)
@@ -292,6 +304,7 @@ class PipelineEngine:
             self.stores.pipeline.advance_cursor(ENGINE_CURSOR, position, batch.position, session=session)
             plan.submissions = self._pending_submissions(session, plan.outbox)
         self._check_every_class = False
+        plan.changed = self._take_changes(plan.outbox)
         plan.events_read = len(batch.events)
         plan.caught_up = len(batch.events) < self.settings.batch_size
         return plan
@@ -374,7 +387,7 @@ class PipelineEngine:
             return
         reason = self._stop_condition(session, context, now)
         if reason is not None:
-            self.stores.campaigns.append_event(campaign_id, CampaignEventKind.NOTE, {"stop_condition": reason}, session=session)
+            self._event(session, campaign_id, CampaignEventKind.NOTE, {"stop_condition": reason})
             self.contexts.update(self.stores.campaigns.set_desired_state(campaign_id, CampaignDesiredState.DRAINING, session=session))
             logger.info("Campaign %s drains: %s", campaign_id, reason)
             return
@@ -399,7 +412,7 @@ class PipelineEngine:
             machine.cancel(context, case, STOPPED_REASON)
         for record in self.stores.cases.list_classes(campaign_id, [CampaignClassState.OPEN], session=session):
             self.stores.cases.set_class_state(campaign_id, record.class_id, CampaignClassState.ABANDONED, STOPPED_REASON, session=session)
-            self.stores.campaigns.append_event(campaign_id, CampaignEventKind.CLASS_ABANDONED, {"reason": STOPPED_REASON}, class_id=record.class_id, session=session)
+            self._event(session, campaign_id, CampaignEventKind.CLASS_ABANDONED, {"reason": STOPPED_REASON}, record.class_id)
         unfinished = self._unfinished_jobs(session, campaign_id)
         machine.outbox.cancel(unfinished, STOPPED_REASON)
         if unfinished:
@@ -436,7 +449,7 @@ class PipelineEngine:
         if decision.close is not None:
             self.stores.cases.set_class_state(campaign_id, class_id, decision.close, decision.reason, session=session)
             kind = CampaignEventKind.CLASS_COMPLETE if decision.close == CampaignClassState.COMPLETE else CampaignEventKind.CLASS_ABANDONED
-            self.stores.campaigns.append_event(campaign_id, kind, {"reason": decision.reason, "cancelled_cases": len(decision.cancel)}, class_id=class_id, session=session)
+            self._event(session, campaign_id, kind, {"reason": decision.reason, "cancelled_cases": len(decision.cancel)}, class_id)
         return True
 
     def _complete(self, machine: CaseMachine, session: Session, context: CampaignContext, case) -> bool:
@@ -556,11 +569,13 @@ class PipelineEngine:
 
         await asyncio.gather(*(submit_one(planned) for planned in submissions))
         if links or refused:
-            await anyio.to_thread.run_sync(self._link, links, refused)
+            self._notify(await anyio.to_thread.run_sync(self._link, links, refused))
         return len(links)
 
-    def _link(self, links: Sequence[tuple], refused: Sequence[tuple]) -> None:
+    def _link(self, links: Sequence[tuple], refused: Sequence[tuple]) -> Set[str]:
+        """Links submitted jobs to their intents and ends the cases of refused ones; returns the campaigns it changed."""
         outbox = StepOutbox()
+        self._changed = set()
         with self.stores.transaction() as session:
             held = [job_id for planned, job_id in links if planned.hold]
             for planned, job_id in links:
@@ -568,7 +583,7 @@ class PipelineEngine:
             if held:
                 self.jobs.hold_jobs(held, session=session)
             if not refused:
-                return
+                return set()
             self.contexts.refresh(self.stores.campaigns.unfinished_campaigns(session=session))
             machine = CaseMachine(self.stores, session, self.contexts, outbox)
             for planned, error in refused:
@@ -577,6 +592,7 @@ class PipelineEngine:
                 context = self.contexts.get(planned.campaign_id, session, None if case is None else case.config_version)
                 if case is not None and context is not None and not case.state.is_final:
                     machine.end(context, case, CaseState.FAILED, f"the master refused the {planned.submission.job_type.value} job: {error}")
+        return self._take_changes(outbox)
 
     async def _cancel_jobs(self, outbox: StepOutbox) -> int:
         cancelled = 0
@@ -591,12 +607,30 @@ class PipelineEngine:
 
     # Helpers
 
+    def _event(self, session: Session, campaign_id: str, kind: CampaignEventKind, detail: Optional[Dict[str, Any]] = None, class_id: Optional[str] = None) -> None:
+        self.stores.campaigns.append_event(campaign_id, kind, detail, class_id=class_id, session=session)
+        self._changed.add(campaign_id)
+
+    def _take_changes(self, outbox: StepOutbox) -> Set[str]:
+        """The campaigns the last transaction wrote to: events appended, cases of their classes moved."""
+        changed = self._changed | {campaign_id for campaign_id, _ in outbox.touched_classes}
+        self._changed = set()
+        return changed
+
+    def _notify(self, campaign_ids: Set[str]) -> None:
+        if not campaign_ids or self.on_change is None:
+            return
+        try:
+            self.on_change(set(campaign_ids))
+        except Exception:
+            logger.exception("The campaign change listener failed")
+
     def _unfinished_jobs(self, session: Session, campaign_id: str) -> List[str]:
         return self.stores.pipeline.job_ids_of_campaign(campaign_id, UNFINISHED_JOB_STATES, session=session)
 
     def _set_actual(self, session: Session, campaign: CampaignRecord, state: CampaignActualState, reason: Optional[str], kind: CampaignEventKind, detail: Optional[dict] = None) -> CampaignRecord:
         updated = self.stores.campaigns.set_actual_state(campaign.campaign_id, state, reason, session=session)
-        self.stores.campaigns.append_event(campaign.campaign_id, kind, detail, session=session)
+        self._event(session, campaign.campaign_id, kind, detail)
         self.contexts.update(updated)
         logger.info("Campaign %s (%s) is %s%s", campaign.campaign_id, campaign.name, state.value, f": {reason}" if reason else "")
         return updated

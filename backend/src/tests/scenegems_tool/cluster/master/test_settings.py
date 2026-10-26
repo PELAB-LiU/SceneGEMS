@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from scenegems_tool.cluster.master.settings import DEFAULT_OPERATOR_ALLOWED_ORIGINS, ArtifactSettings, Listener, MasterSettings, SettingMissing, parse_allowed_origins
+from scenegems_tool.cluster.master.settings import DEFAULT_OPERATOR_ALLOWED_ORIGINS, ArtifactSettings, BrokerClientSettings, Listener, MasterSettings, SettingMissing, parse_allowed_origins
 
 REQUIRED = {
     "SCENEGEMS_SECURITY_DIR": "/etc/scenegems/security",
@@ -17,6 +17,7 @@ def test_defaults():
     assert (settings.node_api, settings.operator, settings.broker_hook) == (Listener("0.0.0.0", 8443), Listener("127.0.0.1", 5174), Listener("127.0.0.1", 8090))
     assert settings.release_manifest is None
     assert settings.artifacts == ArtifactSettings(Path("/var/lib/scenegems/artifacts"), 256 * 1024 * 1024, 600.0, 3600.0)
+    assert settings.broker is None
 
 
 def test_the_operator_allows_the_ui_dev_server_by_default():
@@ -68,3 +69,16 @@ def test_a_relative_security_folder_is_relative_to_the_env_file(tmp_path):
 def test_secrets_stay_out_of_the_repr():
     text = repr(MasterSettings.from_environment(REQUIRED))
     assert REQUIRED["SCENEGEMS_DATABASE_URL"] not in text and REQUIRED["SCENEGEMS_BROKER_AUTH_HOOK_SECRET"] not in text
+
+
+def test_the_broker_login_needs_a_host_and_the_masters_password():
+    assert MasterSettings.from_environment(dict(REQUIRED, SCENEGEMS_BROKER_HOST="cluster-broker")).broker is None
+    assert MasterSettings.from_environment(dict(REQUIRED, SCENEGEMS_BROKER_MASTER_PASSWORD="broker-secret-0123456789")).broker is None
+    environ = dict(REQUIRED, SCENEGEMS_BROKER_HOST="cluster-broker", SCENEGEMS_BROKER_MASTER_PASSWORD="broker-secret-0123456789")
+    assert MasterSettings.from_environment(environ).broker == BrokerClientSettings("cluster-broker", 8883, "", "broker-secret-0123456789")
+    environ.update(SCENEGEMS_BROKER_PORT="18883", SCENEGEMS_BROKER_MASTER_USERNAME="observer")
+    settings = MasterSettings.from_environment(environ)
+    assert (settings.broker.port, settings.broker.username) == (18883, "observer")
+    assert "broker-secret" not in repr(settings)
+    with pytest.raises(ValueError, match="SCENEGEMS_BROKER_PORT"):
+        MasterSettings.from_environment(dict(environ, SCENEGEMS_BROKER_PORT="tls"))

@@ -12,6 +12,7 @@ JOBS_PATH = "/cluster/jobs"  # POST JobSubmission; GET lists jobs, GET <JOBS_PAT
 # GET and PUT <ARTIFACTS_PATH>/<sha256> on the node API (node credential); GET and HEAD on the operator API
 ARTIFACTS_PATH = "/cluster/artifacts"
 CAMPAIGNS_PATH = "/cluster/campaigns"  # operator API: POST a campaign config; GET lists campaigns, GET <CAMPAIGNS_PATH>/<campaign id> one (campaign_routes.py)
+LIVE_PATH = "/cluster/live"  # operator API: the browser's live channel WebSocket (live.py)
 
 CATALOG_PATH = "/cluster/catalog"  # operator API: GET <CATALOG_PATH>/classes the class catalog, GET <CATALOG_PATH>/stacks what a campaign run may use (catalog_routes.py)
 

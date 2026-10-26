@@ -16,6 +16,10 @@ The compose service sets the listeners and folders itself; the secrets come from
     SCENEGEMS_ARTIFACT_MAX_BYTES      largest artifact a node may upload, uncompressed (default 256 MiB)
     SCENEGEMS_ARTIFACT_SWEEP_INTERVAL_S  how often unreferenced artifacts are deleted (default 600; 0 turns the sweep off)
     SCENEGEMS_ARTIFACT_SWEEP_GRACE_S  how long an unreferenced artifact is kept after its last use (default 3600)
+    SCENEGEMS_BROKER_HOST, _PORT      the cluster broker as the master dials it (compose: cluster-broker, 8883); with
+                                      SCENEGEMS_BROKER_MASTER_PASSWORD it lets the live channel observe pools
+    SCENEGEMS_BROKER_MASTER_USERNAME  the master's broker account (default: the one in the security folder)
+    SCENEGEMS_BROKER_MASTER_PASSWORD  its password
 """
 
 import os
@@ -50,6 +54,7 @@ class MasterSettings:
     release_manifest: Optional[Path] = None
     operator_allowed_origins: Tuple[str, ...] = DEFAULT_OPERATOR_ALLOWED_ORIGINS
     artifacts: "ArtifactSettings" = field(default_factory=lambda: ArtifactSettings())
+    broker: Optional["BrokerClientSettings"] = None  # the master's own broker login, for observing pools
 
     @classmethod
     def from_environment(cls, environ: Optional[Mapping[str, str]] = None, env_file_folder: Optional[Path] = None) -> "MasterSettings":
@@ -69,6 +74,7 @@ class MasterSettings:
             release_manifest=Path(release_manifest) if release_manifest else None,
             operator_allowed_origins=parse_allowed_origins(environ.get("SCENEGEMS_OPERATOR_ALLOWED_ORIGINS", "")),
             artifacts=ArtifactSettings.from_environment(environ),
+            broker=BrokerClientSettings.from_environment(environ),
         )
 
 
@@ -100,6 +106,30 @@ def parse_allowed_origins(text: str) -> Tuple[str, ...]:
     """The origins of a comma separated list, without blanks and trailing slashes; the defaults for an empty list."""
     origins = tuple(dict.fromkeys(item.strip().rstrip("/") for item in text.split(",") if item.strip()))
     return origins or DEFAULT_OPERATOR_ALLOWED_ORIGINS
+
+
+@dataclass(frozen=True)
+class BrokerClientSettings:
+    """How the master logs in to its own cluster broker (the live channel's observation hub); TLS against the cluster CA."""
+
+    host: str
+    port: int = 8883
+    username: str = ""  # empty: the master broker username of the security folder
+    password: str = field(default="", repr=False)
+
+    @classmethod
+    def from_environment(cls, environ: Mapping[str, str]) -> Optional["BrokerClientSettings"]:
+        """None unless both the broker host and the master's broker password are set."""
+        host = environ.get("SCENEGEMS_BROKER_HOST", "").strip()
+        password = environ.get("SCENEGEMS_BROKER_MASTER_PASSWORD", "").strip()
+        if not host or not password:
+            return None
+        return cls(
+            host=host,
+            port=int(_number(environ, "SCENEGEMS_BROKER_PORT", cls.port, int)),
+            username=environ.get("SCENEGEMS_BROKER_MASTER_USERNAME", "").strip(),
+            password=password,
+        )
 
 
 def _number(environ: Mapping[str, str], name: str, default, parse):

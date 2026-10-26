@@ -19,6 +19,7 @@ from typing import List, Optional
 
 import anyio
 
+from scenegems_tool.cluster.master.job_activity import JobActivity
 from scenegems_tool.cluster.master.registry.node_registry import NodeRegistry
 from scenegems_tool.cluster.master.registry.node_session import NodeSession
 from scenegems_tool.cluster.master.scheduling.fingerprint_policy import ExpectedFingerprints
@@ -32,8 +33,18 @@ logger = logging.getLogger(__name__)
 
 
 class Scheduler:
-    def __init__(self, job_store: JobStore, registry: NodeRegistry, expected: ExpectedFingerprints, backoff: RejectBackoff, timing: ControlTiming, guard: ResourceGuard):
+    def __init__(
+        self,
+        job_store: JobStore,
+        registry: NodeRegistry,
+        expected: ExpectedFingerprints,
+        backoff: RejectBackoff,
+        timing: ControlTiming,
+        guard: ResourceGuard,
+        activity: Optional[JobActivity] = None,
+    ):
         self._jobs = job_store
+        self._activity = activity  # hears each offer, as the job is now leased
         self._registry = registry
         self._expected = expected
         self._backoff = backoff
@@ -95,6 +106,8 @@ class Scheduler:
     async def _offer(self, session: NodeSession, lease: Lease) -> bool:
         session.offered(lease)  # before sending, so an immediate accept finds it
         if await session.send(LeaseOffer(lease_id=lease.lease_id, job=lease.job, expires_at=lease.expires_at)):
+            if self._activity is not None:
+                self._activity.changed(lease.job.job_id)
             return True
         session.forget(lease.lease_id)
         await anyio.to_thread.run_sync(self._jobs.reject, lease.lease_id, "the offer could not be delivered")
