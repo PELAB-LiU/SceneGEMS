@@ -451,7 +451,11 @@ function failureFrom(doc: Document.Parsed): ParseFailure {
   const error = doc.errors[0];
   const position = error.linePos?.[0];
   return {
-    message: error.message.split("\n")[0].trim(),
+    // The first line of a pretty error ends with its position, which is shown separately.
+    message: error.message
+      .split("\n")[0]
+      .replace(/\s+at line \d+, column \d+:?$/, "")
+      .trim(),
     line: position?.line ?? null,
     column: position?.col ?? null,
   };

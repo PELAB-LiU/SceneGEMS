@@ -290,6 +290,7 @@ describe("parse errors", () => {
     const failure = findParseFailure(text);
     expect(failure).not.toBeNull();
     expect(failure?.line).toBeGreaterThan(0);
+    expect(failure?.message).not.toMatch(/at line/);
     expect(buildConstraintsModel(text).ok).toBe(false);
   });
 
