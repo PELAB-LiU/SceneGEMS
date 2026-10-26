@@ -1,4 +1,5 @@
 import type { LiveChannel, LiveChannelStatus, TopicEvent } from "./liveChannel";
+import type { SubscribeOptions } from "./liveProtocol";
 import type { LiveTopicReducer } from "./liveTopics";
 
 /**
@@ -36,15 +37,22 @@ export class LiveTopicWatcher<T> {
   readonly topic: string;
   private readonly channel: LiveChannel;
   private readonly reducer: LiveTopicReducer<T>;
+  private readonly options: SubscribeOptions | undefined;
   private readonly listeners = new Set<() => void>();
   private state: LiveTopicState<T> = IDLE_TOPIC_STATE;
   private stop: (() => void) | null = null;
 
-  constructor(channel: LiveChannel, topic: string, reducer: LiveTopicReducer<T>) {
+  constructor(channel: LiveChannel, topic: string, reducer: LiveTopicReducer<T>, options?: SubscribeOptions) {
     this.channel = channel;
     this.topic = topic;
     this.reducer = reducer;
+    this.options = options;
   }
+
+  /** Changes the topic's subscribe options (a simulation's speed) while it is watched. */
+  configure = (options: SubscribeOptions): void => {
+    this.channel.configure(this.topic, options);
+  };
 
   getState = (): LiveTopicState<T> => this.state;
 
@@ -64,7 +72,7 @@ export class LiveTopicWatcher<T> {
   private start(): void {
     this.set({ status: "waiting", data: null, seq: 0, error: null });
     const offStatus = this.channel.onStatusChange((status) => this.channelStatus(status));
-    const offTopic = this.channel.subscribe(this.topic, (event) => this.receive(event));
+    const offTopic = this.channel.subscribe(this.topic, (event) => this.receive(event), this.options);
     this.stop = () => {
       offTopic();
       offStatus();
