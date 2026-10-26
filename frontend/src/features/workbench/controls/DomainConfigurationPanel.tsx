@@ -1,4 +1,3 @@
-import CodeMirror from "@uiw/react-codemirror";
 import {
   useCallback,
   useMemo,
@@ -12,9 +11,13 @@ import {
   OBSTACLE_TYPES_PRESETS,
   VESSEL_TYPES_PRESETS,
 } from "./domainConfigPresets";
-import { yamlEditorExtensions } from "./yamlEditorExtensions";
+import { ConstraintsEditor } from "./constraintsEditor";
 
 type DomainConfigTab = "colregs" | "vesselObstacleTypes";
+
+// The backend looks these rows up by name (VesselTypeMap and StaticObstacleTypeMap).
+const VESSEL_TYPE_PROTECTED_ROWS = ["UnspecifiedVesselType"] as const;
+const OBSTACLE_TYPE_PROTECTED_ROWS = ["UnspecifiedObstacleType"] as const;
 
 const DUAL_COLUMN_SPLIT_MIN = 15;
 const DUAL_COLUMN_SPLIT_MAX = 85;
@@ -25,6 +28,7 @@ function clampDualColumnSplit(value: number): number {
 
 interface YamlEditorColumnProps {
   title: string;
+  protectedRows: readonly string[];
   presets: readonly string[];
   text: string;
   onTextChange: (value: string) => void;
@@ -36,6 +40,7 @@ interface YamlEditorColumnProps {
 
 function YamlEditorColumn({
   title,
+  protectedRows,
   presets,
   text,
   onTextChange,
@@ -89,13 +94,12 @@ function YamlEditorColumn({
           Export
         </button>
       </div>
-      <CodeMirror
-        className="scene-editor-yaml-codemirror"
-        value={text}
-        height="100%"
-        theme="dark"
-        extensions={yamlEditorExtensions}
-        onChange={onTextChange}
+      <ConstraintsEditor
+        text={text}
+        onTextChange={onTextChange}
+        label={title}
+        protectedRows={protectedRows}
+        tableMinRows={1}
       />
     </div>
   );
@@ -248,14 +252,7 @@ export function DomainConfigurationPanel({
               Export
             </button>
           </div>
-          <CodeMirror
-            className="scene-editor-yaml-codemirror"
-            value={colregsText}
-            height="100%"
-            theme="dark"
-            extensions={yamlEditorExtensions}
-            onChange={onColregsTextChange}
-          />
+          <ConstraintsEditor text={colregsText} onTextChange={onColregsTextChange} label="COLREGS constraints" />
         </div>
       ) : (
         <div className="scene-editor-panel domain-config-dual-panel">
@@ -266,6 +263,7 @@ export function DomainConfigurationPanel({
           >
             <YamlEditorColumn
               title="Vessel types"
+              protectedRows={VESSEL_TYPE_PROTECTED_ROWS}
               presets={VESSEL_TYPES_PRESETS}
               text={vesselTypesText}
               onTextChange={onVesselTypesTextChange}
@@ -286,6 +284,7 @@ export function DomainConfigurationPanel({
             />
             <YamlEditorColumn
               title="Static obstacle types"
+              protectedRows={OBSTACLE_TYPE_PROTECTED_ROWS}
               presets={OBSTACLE_TYPES_PRESETS}
               text={obstacleTypesText}
               onTextChange={onObstacleTypesTextChange}
