@@ -1,4 +1,5 @@
 import type { ReactElement, SVGProps } from "react";
+import { Disclosure } from "../components/Disclosure";
 import { useClusterStore } from "../domain/cluster/clusterStore";
 import type { AppSection, WorkbenchView } from "./uiStore";
 
@@ -8,7 +9,7 @@ type IconProps = SVGProps<SVGSVGElement>;
 
 function iconBaseProps(props: IconProps) {
   return {
-    className: "left-menu-icon",
+    className: "left-nav-icon",
     viewBox: "0 0 24 24",
     fill: "none",
     stroke: "currentColor",
@@ -72,15 +73,6 @@ function WarapsIcon(props: IconProps) {
   );
 }
 
-function WorkbenchIcon(props: IconProps) {
-  return (
-    <svg {...iconBaseProps(props)}>
-      <rect x="3" y="4" width="18" height="13" rx="1.5" />
-      <path d="M8 21h8M12 17v4" />
-    </svg>
-  );
-}
-
 function ClusterIcon(props: IconProps) {
   return (
     <svg {...iconBaseProps(props)}>
@@ -132,19 +124,38 @@ function DocumentationIcon(props: IconProps) {
   );
 }
 
-const WORKBENCH_ITEMS: { view: WorkbenchView; label: string; Icon: (props: IconProps) => ReactElement }[] = [
-  { view: "domainConfig", label: "Domain Configuration", Icon: DomainConfigIcon },
-  { view: "sceneGeneration", label: "Scene Generation", Icon: SceneGenerationIcon },
-  { view: "trajectoryGeneration", label: "Trajectory Generation", Icon: TrajectoryGenerationIcon },
-  { view: "simulation", label: "Simulation", Icon: SimulationIcon },
-  { view: "waraps", label: "Connections", Icon: WarapsIcon },
+function MenuIcon(props: IconProps) {
+  return (
+    <svg {...iconBaseProps(props)}>
+      <line x1="4" y1="6" x2="20" y2="6" />
+      <line x1="4" y1="12" x2="20" y2="12" />
+      <line x1="4" y1="18" x2="20" y2="18" />
+    </svg>
+  );
+}
+
+interface NavEntry<T> {
+  id: T;
+  label: string;
+  /** One plain phrase on what the destination is for. */
+  hint: string;
+  Icon: (props: IconProps) => ReactElement;
+}
+
+/** The workbench views in the order of the workflow: configure, generate a scene, plan trajectories, simulate. */
+const WORKBENCH_ITEMS: NavEntry<WorkbenchView>[] = [
+  { id: "domainConfig", label: "Domain Configuration", hint: "Set the rules and vessel types", Icon: DomainConfigIcon },
+  { id: "sceneGeneration", label: "Scene Generation", hint: "Create a starting scene", Icon: SceneGenerationIcon },
+  { id: "trajectoryGeneration", label: "Trajectory Generation", hint: "Plan the vessel routes", Icon: TrajectoryGenerationIcon },
+  { id: "simulation", label: "Simulation", hint: "Watch the scenario play", Icon: SimulationIcon },
+  { id: "waraps", label: "Connections", hint: "Link to WARA-PS", Icon: WarapsIcon },
 ];
 
-const CLUSTER_SECTIONS: { section: AppSection; label: string; Icon: (props: IconProps) => ReactElement }[] = [
-  { section: "cluster", label: "Cluster", Icon: ClusterIcon },
-  { section: "campaigns", label: "Campaigns", Icon: CampaignsIcon },
-  { section: "observe", label: "Observe", Icon: ObserveIcon },
-  { section: "results", label: "Results", Icon: ResultsIcon },
+const CLUSTER_ITEMS: NavEntry<AppSection>[] = [
+  { id: "cluster", label: "Cluster", hint: "Machines and their status", Icon: ClusterIcon },
+  { id: "campaigns", label: "Campaigns", hint: "Run many simulations", Icon: CampaignsIcon },
+  { id: "observe", label: "Observe", hint: "Watch runs live", Icon: ObserveIcon },
+  { id: "results", label: "Results", hint: "Review finished runs", Icon: ResultsIcon },
 ];
 
 function ClusterSelect() {
@@ -153,13 +164,12 @@ function ClusterSelect() {
   const selectCluster = useClusterStore((s) => s.selectCluster);
   return (
     <label className="left-pane-cluster">
-      <span className="left-pane-cluster-label">Cluster</span>
+      <span className="left-pane-cluster-label">Active cluster</span>
       <select
         value={selectedClusterId ?? ""}
         onChange={(e) => selectCluster(e.target.value === "" ? null : e.target.value)}
-        aria-label="Selected cluster"
       >
-        <option value="">{clusters.length === 0 ? "no clusters" : "none"}</option>
+        <option value="">{clusters.length === 0 ? "No clusters yet" : "None selected"}</option>
         {clusters.map((cluster) => (
           <option key={cluster.id} value={cluster.id}>
             {cluster.name}
@@ -167,6 +177,32 @@ function ClusterSelect() {
         ))}
       </select>
     </label>
+  );
+}
+
+interface NavButtonProps {
+  entry: NavEntry<string>;
+  active: boolean;
+  onSelect: () => void;
+}
+
+function NavButton({ entry, active, onSelect }: NavButtonProps) {
+  const { label, hint, Icon } = entry;
+  return (
+    <button
+      type="button"
+      className={`left-nav-item${active ? " active" : ""}`}
+      onClick={onSelect}
+      aria-current={active ? "page" : undefined}
+      aria-label={label}
+      title={label}
+    >
+      <Icon />
+      <span className="left-nav-text">
+        <span className="left-nav-label">{label}</span>
+        <span className="left-nav-hint">{hint}</span>
+      </span>
+    </button>
   );
 }
 
@@ -180,6 +216,11 @@ interface LeftPaneProps {
   onWorkbenchViewSelect: (view: WorkbenchView) => void;
 }
 
+/**
+ * The main navigation. Expanded it shows each destination with a plain-language hint; collapsed
+ * it is an icon rail (names stay as tooltips and accessible names), so every section is one
+ * click away in both states. On narrow screens it becomes a bar at the top.
+ */
 export function LeftPane({
   isCollapsed,
   onToggleCollapse,
@@ -191,74 +232,68 @@ export function LeftPane({
   const workbenchActive = activeSection === "workbench";
   return (
     <aside className={`left-pane${isCollapsed ? " collapsed" : ""}`}>
-      <div className="left-pane-brand">
-        {isCollapsed ? (
-          <img className="left-pane-logo" src="/favicon.svg" alt={APP_TITLE} />
-        ) : (
-          <>
-            <div className="left-pane-brand-header">
-              <img className="left-pane-logo" src="/favicon.svg" alt="" aria-hidden />
-              <span className="left-pane-brand-title">{APP_TITLE}</span>
-            </div>
-            <p className="left-pane-brand-subtitle">
-              A Scenario Generation and Execution Framework for Simulation-Based Assurance of
-              Maritime Autonomous Surface Vehicles
-            </p>
-          </>
-        )}
-      </div>
-      <div className="left-pane-header">
+      <div className="left-pane-top">
+        <div className="left-pane-brand">
+          <img className="left-pane-logo" src="/favicon.svg" alt="" aria-hidden />
+          <span className="left-pane-brand-title">{APP_TITLE}</span>
+        </div>
         <button
-          className="left-menu-toggle"
-          aria-label="Toggle menu"
+          type="button"
+          className="left-pane-toggle"
           onClick={onToggleCollapse}
+          aria-expanded={!isCollapsed}
+          aria-controls="main-navigation"
+          aria-label={isCollapsed ? "Show menu labels" : "Collapse menu"}
+          title={isCollapsed ? "Show menu labels" : "Collapse menu"}
         >
-          &#9776;
+          <MenuIcon />
         </button>
       </div>
       {!isCollapsed && (
-        <>
-          <details open className="left-menu-group">
-            <summary>Menu</summary>
-            <button
-              className={`left-menu-item left-menu-section${workbenchActive ? " active-section" : ""}`}
-              onClick={() => onSectionSelect("workbench")}
-              aria-current={workbenchActive ? "page" : undefined}
-            >
-              <WorkbenchIcon />
-              Workbench
-            </button>
-            <div className="left-menu-subitems" role="group" aria-label="Workbench views">
-              {WORKBENCH_ITEMS.map(({ view, label, Icon }) => (
-                <button
-                  key={view}
-                  className={`left-menu-item left-menu-subitem${workbenchActive && workbenchView === view ? " active" : ""}`}
-                  onClick={() => onWorkbenchViewSelect(view)}
-                >
-                  <Icon />
-                  {label}
-                </button>
-              ))}
-            </div>
-            {CLUSTER_SECTIONS.map(({ section, label, Icon }) => (
-              <button
-                key={section}
-                className={`left-menu-item left-menu-section${activeSection === section ? " active" : ""}`}
-                onClick={() => onSectionSelect(section)}
-                aria-current={activeSection === section ? "page" : undefined}
-              >
-                <Icon />
-                {label}
-              </button>
-            ))}
-            <a href="/docs/" className="left-menu-item">
-              <DocumentationIcon />
-              Documentation
-            </a>
-          </details>
-          <ClusterSelect />
-        </>
+        <Disclosure
+          id="left-pane:about"
+          variant="link"
+          headingLevel={null}
+          title="About SceneGEMS"
+          className="left-pane-about"
+        >
+          A Scenario Generation and Execution Framework for Simulation-Based Assurance of Maritime
+          Autonomous Surface Vehicles.
+        </Disclosure>
       )}
+      <nav id="main-navigation" className="left-nav" aria-label="Main">
+        <p className="left-nav-heading">Workbench</p>
+        <div className="left-nav-group">
+          {WORKBENCH_ITEMS.map((entry) => (
+            <NavButton
+              key={entry.id}
+              entry={entry}
+              active={workbenchActive && workbenchView === entry.id}
+              onSelect={() => onWorkbenchViewSelect(entry.id)}
+            />
+          ))}
+        </div>
+        <p className="left-nav-heading">Cluster</p>
+        <div className="left-nav-group">
+          {CLUSTER_ITEMS.map((entry) => (
+            <NavButton
+              key={entry.id}
+              entry={entry}
+              active={activeSection === entry.id}
+              onSelect={() => onSectionSelect(entry.id)}
+            />
+          ))}
+        </div>
+      </nav>
+      <div className="left-pane-footer">
+        {!isCollapsed && <ClusterSelect />}
+        <a href="/docs/" className="left-nav-item left-nav-link" title="Documentation" aria-label="Documentation">
+          <DocumentationIcon />
+          <span className="left-nav-text">
+            <span className="left-nav-label">Documentation</span>
+          </span>
+        </a>
+      </div>
     </aside>
   );
 }

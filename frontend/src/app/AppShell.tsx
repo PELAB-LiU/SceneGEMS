@@ -3,6 +3,7 @@ import "./shell.css";
 import "../components/components.css";
 import { LeftPane } from "./LeftPane";
 import { useUiStore } from "./uiStore";
+import { usePersistedState } from "./usePersistedState";
 import { WorkbenchSection } from "./WorkbenchSection";
 import { usePlaybackStore } from "../domain/playback/playbackStore";
 import { ClusterSection } from "../features/cluster/ClusterSection";
@@ -11,6 +12,11 @@ import { ObserveSection } from "../features/observe/ObserveSection";
 import { ResultsSection } from "../features/results/ResultsSection";
 
 const APP_TITLE = "SceneGEMS";
+const NARROW_QUERY = "(max-width: 800px)";
+
+function isNarrowScreen(): boolean {
+  return typeof window !== "undefined" && window.matchMedia?.(NARROW_QUERY).matches === true;
+}
 
 /**
  * The frame of the console: the left pane with its sections and the shown section. The
@@ -26,20 +32,30 @@ export function AppShell() {
   const setSection = useUiStore((s) => s.setSection);
   const workbenchView = useUiStore((s) => s.workbenchView);
   const setWorkbenchView = useUiStore((s) => s.setWorkbenchView);
-  const [isLeftMenuCollapsed, setIsLeftMenuCollapsed] = useState(true);
+  // The menu is open on a wide screen and starts closed on a narrow one, where it is a bar at the top.
+  const [isLeftMenuCollapsed, setIsLeftMenuCollapsed] = usePersistedState<boolean>(
+    "left-menu-collapsed",
+    isNarrowScreen
+  );
+  /** After choosing a destination on a narrow screen, close the menu so the content is visible. */
+  const closeMenuWhenNarrow = () => {
+    if (isNarrowScreen()) {
+      setIsLeftMenuCollapsed(true);
+    }
+  };
   const [errorSlot, setErrorSlot] = useState<HTMLDivElement | null>(null);
 
   return (
     <div className="app-shell">
-      <div
-        className="app-body"
-        style={{ gridTemplateColumns: `${isLeftMenuCollapsed ? 48 : 220}px minmax(0, 1fr)` }}
-      >
+      <div className={`app-body${isLeftMenuCollapsed ? " is-menu-collapsed" : ""}`}>
         <LeftPane
           isCollapsed={isLeftMenuCollapsed}
           onToggleCollapse={() => setIsLeftMenuCollapsed((v) => !v)}
           activeSection={section}
-          onSectionSelect={setSection}
+          onSectionSelect={(next) => {
+            setSection(next);
+            closeMenuWhenNarrow();
+          }}
           workbenchView={workbenchView}
           onWorkbenchViewSelect={(view) => {
             if (view === "simulation") {
@@ -47,6 +63,7 @@ export function AppShell() {
             }
             setWorkbenchView(view);
             setSection("workbench");
+            closeMenuWhenNarrow();
           }}
         />
 
