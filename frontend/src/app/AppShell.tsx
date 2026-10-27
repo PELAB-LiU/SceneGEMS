@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import "./shell.css";
+import "../components/components.css";
 import { LeftPane } from "./LeftPane";
 import { useUiStore } from "./uiStore";
 import { WorkbenchSection } from "./WorkbenchSection";

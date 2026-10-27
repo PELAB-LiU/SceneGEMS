@@ -30,7 +30,7 @@
 
 .left-menu-subitem {
   font-weight: 400;
-  min-height: 24px;
+  min-height: var(--hit-target);
 }
 
 .left-pane-cluster {
@@ -83,7 +83,7 @@
 
 .section-title {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--font-size);
   font-weight: 600;
   letter-spacing: 0.01em;
 }

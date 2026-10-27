@@ -66,7 +66,7 @@
 
 .stat-tile-value {
   font-family: var(--font-mono);
-  font-size: 20px;
+  font-size: var(--font-size-lg);
   font-weight: 600;
   line-height: 1.2;
 }
@@ -173,7 +173,7 @@
 
 .node-card-name {
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--font-size-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

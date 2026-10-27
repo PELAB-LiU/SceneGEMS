@@ -92,7 +92,7 @@
   display: inline-block;
   padding: 0 4px;
   border-radius: 2px;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   font-weight: 700;
   line-height: 14px;
   color: #0b1220;
@@ -124,7 +124,7 @@
 }
 
 .enc-card-metrics dt {
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-faint);
@@ -146,7 +146,7 @@
 .enc-flag {
   padding: 0 5px;
   border-radius: 2px;
-  font-size: 10.5px;
+  font-size: var(--font-size-xs);
   line-height: 15px;
 }
 
@@ -179,7 +179,7 @@
   padding: 0 5px;
   border: 1px solid;
   border-radius: 9px;
-  font-size: 10.5px;
+  font-size: var(--font-size-xs);
   line-height: 16px;
   background: rgba(15, 23, 42, 0.6);
   cursor: help;
@@ -216,7 +216,7 @@
   bottom: 4px;
   height: 18px;
   padding: 0 6px;
-  font-size: 10.5px;
+  font-size: var(--font-size-xs);
   background: transparent;
   border: 1px solid transparent;
   color: var(--text-muted);
@@ -434,7 +434,7 @@
 .enc-tl-seg-label {
   display: block;
   padding-left: 3px;
-  font-size: 8.5px;
+  font-size: var(--font-size-xs);
   line-height: 9px;
   color: #0b1220;
   font-weight: 600;
@@ -469,7 +469,7 @@
   transform: translateX(-50%);
   color: var(--text-faint);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   pointer-events: none;
 }
 
@@ -488,7 +488,7 @@
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
 }
 
 .enc-tl-legend {
@@ -497,7 +497,7 @@
   gap: 2px 10px;
   margin-top: 4px;
   color: var(--text-muted);
-  font-size: 10.5px;
+  font-size: var(--font-size-xs);
 }
 
 .enc-tl-legend span {

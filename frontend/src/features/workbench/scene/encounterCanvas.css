@@ -94,7 +94,7 @@
   align-items: center;
   gap: 4px;
   padding-left: 6px;
-  height: 22px;
+  min-height: var(--hit-target);
   font-size: var(--font-size-xs);
   color: var(--text-muted);
   background: rgba(15, 23, 42, 0.86);
@@ -104,7 +104,7 @@
 
 .enc-select select {
   border: none;
-  height: 20px;
+  min-height: var(--hit-target);
   background: transparent;
 }
 
@@ -135,8 +135,8 @@
 
 .enc-layer-menu summary {
   list-style: none;
-  height: 22px;
-  line-height: 20px;
+  min-height: var(--hit-target);
+  line-height: 1.25;
   padding: 0 8px;
   cursor: pointer;
   color: var(--text-muted);

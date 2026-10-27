@@ -163,7 +163,7 @@
 }
 .observe-viewer-title h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--font-size-sm);
 }
 .observe-viewer-chips {
   display: flex;

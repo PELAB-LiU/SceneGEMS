@@ -190,7 +190,7 @@
 
 .results-tile-value {
   font-family: var(--font-mono);
-  font-size: 22px;
+  font-size: var(--font-size-xl);
   font-weight: 600;
   line-height: 1.15;
 }

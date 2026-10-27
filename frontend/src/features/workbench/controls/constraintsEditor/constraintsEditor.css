@@ -16,7 +16,7 @@
 
 .ce-tab {
   flex: 0 0 auto;
-  min-height: 26px;
+  min-height: var(--hit-target);
   padding: var(--space-2) var(--space-5);
   background: transparent;
   border: none;
@@ -341,7 +341,7 @@
 }
 
 .ce-row-actions button {
-  min-height: 22px;
+  min-height: var(--hit-target);
   padding: 1px 6px;
   margin-right: var(--space-2);
 }
