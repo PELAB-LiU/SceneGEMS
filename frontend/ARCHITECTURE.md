@@ -6,7 +6,8 @@
 src/
   app/           AppShell (frame: left pane and the shown section), WorkbenchSection
                  (the workbench views and their state), UI-only Zustand (uiStore)
-  components/    Shared UI pieces (SectionFrame, LoadingSpinner)
+  components/    Shared UI pieces: Disclosure (+ disclosureStore), PopoverMenu, EmptyState, PageHeader,
+                 SectionFrame, LoadingSpinner
   domain/        Simulation protocol, WebSocket client, playback store; cluster/ has the
                  cluster list, the operator API client, the live channel client and stores
   features/      React UI by section: workbench/ (connection, controls, metrics, monitor,
@@ -14,12 +15,29 @@ src/
   language/      Lezer grammar for .problem files
 ```
 
+## UI conventions
+
+Sizes are tokens in `index.css` (`:root`): body 16px (`--font-size`), captions 13px at the smallest
+(`--font-size-xs`), controls and every clickable thing at least 40px (`--control-height`,
+`--hit-target`), spacing on a 4px scale (`--space-1` to `--space-6`). Screens use the tokens rather
+than their own sizes. One focus ring (`--focus-ring`) covers all keyboard focus.
+
+Each screen shows what its main task needs and hides the rest behind progressive disclosure:
+`Disclosure` (a button with `aria-expanded`, optionally remembered per browser through its `id`, kept
+open with `forceOpen` while it holds an error), `PopoverMenu` for small groups of options laid over a
+canvas, and native `details` (given the same chevron and row size globally) in the monitor panels.
+A screen has one primary action (`primary-btn accent`), shown in its `PageHeader` or at the top of its
+control panel.
+
 ## Sections
 
 The left pane has five sections: Workbench (with the views Domain Configuration, Scene
 Generation, Trajectory Generation, Simulation and Connections), Cluster, Campaigns, Observe
 and Results. `uiStore` keeps `section` and `workbenchView` (persisted, v4). The workbench
-stays mounted while another section is shown, so its gateway socket and state carry on.
+stays mounted while another section is shown, so its gateway socket and state carry on. The left
+pane is 280px with a plain-language hint per destination, an icon rail of 72px when collapsed (the
+choice is kept per browser) and a bar at the top below 800px. Below 1100px the workbench panes stack
+and scroll as one page.
 
 The cluster sections work on the cluster selected in the left pane. `domain/cluster/clusterStore.ts`
 keeps the list (name and operator URL, per browser). A master's operator API listens on its
