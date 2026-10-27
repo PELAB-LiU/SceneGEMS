@@ -429,8 +429,9 @@
 }
 
 .wiz-chip button {
-  min-height: 18px;
-  padding: 0 6px;
+  min-height: var(--hit-target);
+  min-width: var(--hit-target);
+  padding: 0 var(--space-2);
   border-radius: 999px;
   line-height: 1;
 }

@@ -939,9 +939,9 @@ body,
   border-radius: var(--radius);
   background: var(--bg-control);
   color: #cbd5e1;
-  font-size: var(--font-size-xs);
-  padding: 2px 8px;
-  min-height: 22px;
+  font-size: var(--font-size-sm);
+  padding: 2px var(--space-3);
+  min-height: var(--hit-target);
   cursor: pointer;
 }
 

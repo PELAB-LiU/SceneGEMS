@@ -355,8 +355,8 @@
 
 .results-sort,
 .results-link {
-  min-height: 0;
-  padding: 0;
+  min-height: var(--hit-target);
+  padding: 0 var(--space-2);
   background: transparent;
   border: 0;
   color: inherit;
