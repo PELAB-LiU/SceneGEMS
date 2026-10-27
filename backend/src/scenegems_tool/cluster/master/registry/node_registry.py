@@ -109,6 +109,17 @@ class NodeRegistry:
             self.on_change(node_id)
         return record
 
+    async def remove(self, node_id: str) -> Optional[bool]:
+        """Forgets an offline node; None for an unknown node, False for one that is connected or not offline."""
+        session = self._sessions.get(node_id)
+        if session is not None and not session.closed:
+            return False if await anyio.to_thread.run_sync(self._nodes.get, node_id) is not None else None
+        removed = await anyio.to_thread.run_sync(self._nodes.remove_offline, node_id)
+        if removed:
+            self._sessions.pop(node_id, None)
+            self.on_change(node_id)
+        return removed
+
     async def sweep_silent(self) -> List[str]:
         """Marks silent nodes offline and closes their sockets; returns their ids."""
         silent = await anyio.to_thread.run_sync(partial(self._nodes.mark_silent_nodes_offline, self._offline_after_s))

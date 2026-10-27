@@ -70,6 +70,17 @@ describe("operator API client", () => {
     expect(spy.mock.calls[1][1]?.body).toBeUndefined();
   });
 
+  it("removes an offline node with POST and reports a refusal", async () => {
+    const { client, spy } = clientWith(async () => jsonResponse({ removed: "node-a1" }));
+    expect(await client.removeNode("node-a1")).toBe("node-a1");
+    expect(spy.mock.calls[0][0]).toBe(`${BASE}/cluster/nodes/node-a1/remove`);
+    expect(spy.mock.calls[0][1]?.method).toBe("POST");
+    const refused = clientWith(async () => jsonResponse({ detail: "node node-a1 is not offline; only an offline node can be removed" }, { status: 409 }));
+    const error = await rejection(refused.client.removeNode("node-a1"));
+    expect(error.status).toBe(409);
+    expect(describeOperatorError(error)).toContain("not offline");
+  });
+
   it("carries the server's message and reasons", async () => {
     const { client } = clientWith(async () =>
       jsonResponse({ detail: { message: "the campaign config is not valid", reasons: ["quota must be positive", "unknown stack"] } }, { status: 422 })

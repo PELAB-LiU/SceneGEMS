@@ -15,6 +15,7 @@ workbench gateway.
     GET  NODES_PATH/<node id>
     POST NODES_PATH/<node id>/drain      no new jobs; running ones finish
     POST NODES_PATH/<node id>/resume     ends the drain
+    POST NODES_PATH/<node id>/remove     forgets an offline node; 409 while it is not offline
     GET  STATUS_PATH                     master id, expected fingerprints, connected nodes
 
 The node view carries the machine the node runs on (null until a node that reports it says hello).
@@ -105,6 +106,22 @@ def _node_routes(plane: ControlPlane) -> APIRouter:
             raise HTTPException(status_code=404, detail=f"no node {node_id}")
         return node_view(node, plane.registry.session(node_id))
 
+    @router.get(STATUS_PATH)
+    async def status() -> dict:
+        expected = plane.expected.current()
+        return {
+            "master_id": plane.master_id,
+            "expected_fingerprints": {"state": plane.expected.state.value, "error": plane.expected.error, "images": expected or {}},
+            "connected_nodes": [session.node_id for session in plane.registry.connected()],
+        }
+
+    router.include_router(_node_control_routes(plane))
+    return router
+
+
+def _node_control_routes(plane: ControlPlane) -> APIRouter:
+    router = APIRouter()
+
     @router.post(NODES_PATH + "/{node_id}/drain")
     async def drain_node(node_id: str, reason: str = Body("drained by the operator", embed=True)) -> dict:
         node = await plane.drain(node_id, reason)
@@ -119,13 +136,13 @@ def _node_routes(plane: ControlPlane) -> APIRouter:
             raise HTTPException(status_code=404, detail=f"no node {node_id}")
         return node_view(node, plane.registry.session(node_id))
 
-    @router.get(STATUS_PATH)
-    async def status() -> dict:
-        expected = plane.expected.current()
-        return {
-            "master_id": plane.master_id,
-            "expected_fingerprints": {"state": plane.expected.state.value, "error": plane.expected.error, "images": expected or {}},
-            "connected_nodes": [session.node_id for session in plane.registry.connected()],
-        }
+    @router.post(NODES_PATH + "/{node_id}/remove")
+    async def remove_node(node_id: str) -> dict:
+        removed = await plane.remove_node(node_id)
+        if removed is None:
+            raise HTTPException(status_code=404, detail=f"no node {node_id}")
+        if not removed:
+            raise HTTPException(status_code=409, detail=f"node {node_id} is not offline; only an offline node can be removed")
+        return {"removed": node_id}
 
     return router

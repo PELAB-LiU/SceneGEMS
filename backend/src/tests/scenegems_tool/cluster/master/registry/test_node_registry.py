@@ -95,6 +95,28 @@ def test_resume_leaves_an_offline_node_offline(registry, nodes, clock):
     assert anyio.run(registry.drain, "nobody", "x") is None and anyio.run(registry.resume, "nobody") is None
 
 
+def test_remove_forgets_an_offline_node_and_tells_the_listener(registry, nodes, clock):
+    changed = []
+    registry.on_change = changed.append
+    session = _connect(registry, clock, "node-a")
+    changed.clear()
+    assert anyio.run(registry.remove, "node-a") is False  # connected
+    nodes.set_status("node-a", NodeStatus.OFFLINE)
+    assert anyio.run(registry.remove, "node-a") is False  # still has its control link
+    registry.disconnect(session)
+    changed.clear()
+    assert anyio.run(registry.remove, "node-a") is True
+    assert changed == ["node-a"] and nodes.get("node-a") is None
+    assert anyio.run(registry.remove, "node-a") is None
+    assert anyio.run(registry.remove, "nobody") is None
+
+
+def test_remove_refuses_an_online_node_without_a_link(registry, nodes, clock):
+    session = _connect(registry, clock, "node-a")
+    registry.disconnect(session)
+    assert anyio.run(registry.remove, "node-a") is False and nodes.get("node-a") is not None
+
+
 def test_out_of_date_is_recomputed_against_the_expected_set(registry, clock):
     session = _connect(registry, clock, "node-a", fingerprints={})
     assert registry.refresh_out_of_date(session, None) is False  # nothing to compare with yet

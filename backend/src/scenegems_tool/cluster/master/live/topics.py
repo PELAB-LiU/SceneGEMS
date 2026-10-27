@@ -38,6 +38,7 @@ from scenegems_tool.cluster.protocol.live import (
     JobProgressView,
     JobStatusChanged,
     NodeChanged,
+    NodeRemoved,
     Topic,
     TopicKind,
     campaign_topic,
@@ -128,7 +129,11 @@ class NodesTopic:
         for node_id in node_ids:
             session = registry.session(node_id)
             record = session.record if session is not None and not session.closed else await registry.node(node_id)
-            if record is None or not self._channel.has_subscribers(NODES_TOPIC):
+            if not self._channel.has_subscribers(NODES_TOPIC):
+                continue
+            if record is None:
+                self._sent.pop(node_id, None)
+                self._channel.publish(NODES_TOPIC, NodeRemoved(removed=node_id).model_dump())
                 continue
             view = node_view(record, registry.session(node_id))
             key = _without(view, _NODE_NOISE)

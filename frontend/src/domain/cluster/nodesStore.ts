@@ -31,6 +31,8 @@ export interface NodesState {
   updatedAt: number | null;
   /** Puts a node view from another answer (drain, resume) into the list. */
   applyNode: (node: NodeView) => void;
+  /** Drops a node the master forgot. */
+  removeNode: (nodeId: string) => void;
 }
 
 const EMPTY = {
@@ -46,6 +48,7 @@ export const useNodesStore = create<NodesState>()((set) => ({
   operatorUrl: null,
   ...EMPTY,
   applyNode: (node) => set((state) => ({ nodes: upsertNode(state.nodes, node), updatedAt: Date.now() })),
+  removeNode: (nodeId) => set((state) => ({ nodes: state.nodes.filter((node) => node.node_id !== nodeId), updatedAt: Date.now() })),
 }));
 
 export interface NodesFeedOptions {

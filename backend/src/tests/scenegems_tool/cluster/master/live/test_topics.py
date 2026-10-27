@@ -90,6 +90,24 @@ def test_the_nodes_topic_follows_connects_drains_and_disconnects(client, browser
     assert left["node_id"] == second.node_id and left["connected"] is False
 
 
+def test_the_nodes_topic_announces_a_removed_node(client, browser, make_node, idle, on_loop, plane, clock):
+    gone = make_node("lab 1")
+    kept = make_node("lab 2")
+    gone.connect()
+    kept.connect()
+    browser.subscribe("nodes")
+    gone.close()
+    idle()
+    browser.drain()
+    clock.advance(plane.registry._offline_after_s + 1)
+    on_loop(plane.registry.sweep_silent)
+    idle()
+    browser.drain()
+    assert client.post(f"{NODES_PATH}/{gone.node_id}/remove").status_code == 200
+    idle()
+    assert browser.expect_update("nodes") == {"removed": gone.node_id}
+
+
 def test_the_job_topic_follows_a_job_through_its_life(client, browser, make_node, schedule, idle):
     node = make_node("lab 1", slots={SCENE: 1})
     node.connect()

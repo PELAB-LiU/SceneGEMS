@@ -185,7 +185,9 @@ export const cancelJobResultSchema = z.object({
   job: jobViewSchema,
 });
 
-export type JobRequirements = z.infer<typeof jobRequirementsSchema>;
+export const nodeRemovedSchema = z.object({ removed: z.string() });
+
+export type JobRequirements =z.infer<typeof jobRequirementsSchema>;
 export type JobProgress = z.infer<typeof jobProgressSchema>;
 export type LogLine = z.infer<typeof logLineSchema>;
 export type JobView = z.infer<typeof jobViewSchema>;

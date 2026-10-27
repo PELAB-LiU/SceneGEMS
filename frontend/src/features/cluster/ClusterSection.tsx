@@ -5,8 +5,8 @@ import { EmptyState } from "../../components/EmptyState";
 import { SectionFrame } from "../../components/SectionFrame";
 import { useSelectedCluster } from "../../domain/cluster/clusterStore";
 import { useNodesFeed, useNodesStore } from "../../domain/cluster/nodesStore";
-import { describeOperatorError, OperatorApiError } from "../../domain/cluster/operatorApi";
-import type { MasterStatus } from "../../domain/cluster/schemas";
+import { createOperatorClient, describeOperatorError, OperatorApiError } from "../../domain/cluster/operatorApi";
+import type { MasterStatus, NodeView } from "../../domain/cluster/schemas";
 import { useLiveChannelStatus } from "../../domain/cluster/useLiveTopic";
 import { ClusterListPanel, SSH_TUNNEL_COMMAND } from "./ClusterListPanel";
 import { shortHash, summarizeNodes } from "./clusterFormat";
@@ -110,6 +110,47 @@ function MasterDetails({ status, liveStatus, nodesSource, connected, total }: Ma
   );
 }
 
+/** Removes every offline node of the cluster, e.g. the old versions of nodes that came back under a new id. */
+function ClearOfflineBar({ operatorUrl, offline }: { operatorUrl: string; offline: NodeView[] }) {
+  const removeNode = useNodesStore((s) => s.removeNode);
+  const [confirming, setConfirming] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const clear = async () => {
+    setPending(true);
+    setError(null);
+    const client = createOperatorClient(operatorUrl);
+    const failures: string[] = [];
+    for (const node of offline) {
+      try {
+        removeNode(await client.removeNode(node.node_id));
+      } catch (failure) {
+        failures.push(`${node.name}: ${describeOperatorError(failure)}`);
+      }
+    }
+    setError(failures.length > 0 ? failures.join("; ") : null);
+    setConfirming(false);
+    setPending(false);
+  };
+
+  return (
+    <div className="cluster-clear-offline">
+      <button
+        type="button"
+        className={`node-card-action${confirming ? " node-card-action--danger" : ""}`}
+        disabled={pending}
+        onClick={() => (confirming ? void clear() : setConfirming(true))}
+        onBlur={() => setConfirming(false)}
+        title="Forget every offline node. One that connects again reappears."
+      >
+        {pending ? "Clearing..." : confirming ? `Confirm: remove ${offline.length}` : `Clear ${offline.length} offline`}
+      </button>
+      {error && <p className="meta warning">{error}</p>}
+    </div>
+  );
+}
+
 /** The Cluster section: the selected cluster's master and its nodes as machine resources. */
 export function ClusterSection() {
   const cluster = useSelectedCluster();
@@ -128,6 +169,7 @@ export function ClusterSection() {
     !loaded &&
     ((statusError instanceof OperatorApiError && statusError.unreachable) || (nodesOfCluster && nodesState.unreachable));
   const summary = summarizeNodes(nodes);
+  const offlineNodes = nodes.filter((node) => node.status === "offline");
 
   const apiBadge = cluster && (
     <div className="section-badges">
@@ -215,6 +257,7 @@ export function ClusterSection() {
         {nodesOfCluster && nodesState.error && loaded && (
           <p className="meta warning">Nodes may be stale: {nodesState.error}</p>
         )}
+        {offlineNodes.length > 0 && <ClearOfflineBar operatorUrl={cluster.operatorUrl} offline={offlineNodes} />}
         {loaded && nodes.length === 0 ? (
           <EmptyState title="No nodes yet">
             <p>The master has no paired nodes. Nodes appear here once they pair and connect.</p>

@@ -198,6 +198,10 @@ class ControlPlane:
         self.scheduler.wake()
         return record
 
+    async def remove_node(self, node_id: str) -> Optional[bool]:
+        """Forgets an offline node, for the operator's clean-up of old machines; None for an unknown node, False for one that is not offline."""
+        return await self.registry.remove(node_id)
+
     # Jobs
 
     async def submit(self, submission: JobSubmission) -> SubmitOutcome:

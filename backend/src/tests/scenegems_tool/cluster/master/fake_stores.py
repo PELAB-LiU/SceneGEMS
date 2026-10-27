@@ -122,6 +122,16 @@ class InMemoryNodeStore:
                 self.nodes[node_id].status = NodeStatus.OFFLINE
             return silent
 
+    def remove_offline(self, node_id: str) -> Optional[bool]:
+        with self.lock:
+            node = self.nodes.get(node_id)
+            if node is None:
+                return None
+            if node.status != NodeStatus.OFFLINE:
+                return False
+            del self.nodes[node_id]
+            return True
+
     def get(self, node_id: str) -> Optional[NodeRecord]:
         with self.lock:
             node = self.nodes.get(node_id)

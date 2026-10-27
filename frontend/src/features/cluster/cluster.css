@@ -194,6 +194,11 @@
   min-width: 64px;
 }
 
+.node-card-action--danger {
+  border-color: #ef4444;
+  color: #fecaca;
+}
+
 .node-card-error {
   margin: 0;
 }

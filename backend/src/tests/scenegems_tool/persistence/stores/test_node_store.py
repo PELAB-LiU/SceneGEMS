@@ -98,6 +98,27 @@ def test_silent_nodes_go_offline(node_store, clock):
     assert node_store.get("node-b").status == NodeStatus.ONLINE
 
 
+def test_remove_offline_deletes_only_an_offline_node(node_store):
+    node_store.register(make_hello("node-a", slots={SCENE: 2}, fingerprints={"image": "f1"}))
+    node_store.register(make_hello("node-b"))
+    assert node_store.remove_offline("node-a") is False  # online
+    node_store.set_status("node-a", NodeStatus.DRAINING)
+    assert node_store.remove_offline("node-a") is False
+    node_store.set_status("node-a", NodeStatus.OFFLINE)
+    assert node_store.remove_offline("node-a") is True
+    assert node_store.get("node-a") is None
+    assert [node.node_id for node in node_store.list_nodes()] == ["node-b"]
+    assert node_store.remove_offline("node-a") is None
+
+
+def test_a_removed_node_registers_anew(node_store):
+    node_store.register(make_hello("node-a", slots={SCENE: 2}))
+    node_store.set_status("node-a", NodeStatus.OFFLINE)
+    node_store.remove_offline("node-a")
+    node = node_store.register(make_hello("node-a", slots={KINEMATIC: 1}))
+    assert node.status == NodeStatus.ONLINE and node.capabilities == {KINEMATIC: CapabilityUsage(slots=1, slots_in_use=0)}
+
+
 def test_list_nodes(node_store):
     for node_id in ("node-b", "node-a"):
         node_store.register(make_hello(node_id))

@@ -11,6 +11,7 @@ import {
   jobDetailSchema,
   jobViewSchema,
   masterStatusSchema,
+  nodeRemovedSchema,
   nodeViewSchema,
   runRecordSchema,
   verdictSchema,
@@ -271,6 +272,11 @@ export class OperatorClient {
 
   async resumeNode(nodeId: string) {
     return (await this.request("POST", `/cluster/nodes/${encodeURIComponent(nodeId)}/resume`, nodeViewSchema)).data;
+  }
+
+  /** Forgets an offline node (the master refuses one that is not offline). Answers the removed node's id. */
+  async removeNode(nodeId: string) {
+    return (await this.request("POST", `/cluster/nodes/${encodeURIComponent(nodeId)}/remove`, nodeRemovedSchema)).data.removed;
   }
 
   // Jobs

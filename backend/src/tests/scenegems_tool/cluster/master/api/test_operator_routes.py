@@ -148,6 +148,24 @@ def test_drain_and_resume(client, make_node):
     assert client.post(f"{NODES_PATH}/nobody/resume").status_code == 404
 
 
+def test_remove_forgets_an_offline_node(client, make_node, on_loop, plane, clock):
+    old = make_node("lab 1")
+    kept = make_node("lab 2")
+    old.connect()
+    kept.connect()
+    assert client.post(f"{NODES_PATH}/{old.node_id}/remove").status_code == 409  # online
+    old.close()
+    clock.advance(plane.registry._offline_after_s + 1)
+    on_loop(plane.registry.sweep_silent)
+    assert client.get(f"{NODES_PATH}/{old.node_id}").json()["status"] == "offline"
+    removed = client.post(f"{NODES_PATH}/{old.node_id}/remove")
+    assert removed.status_code == 200 and removed.json() == {"removed": old.node_id}
+    assert client.get(f"{NODES_PATH}/{old.node_id}").status_code == 404
+    assert client.post(f"{NODES_PATH}/{old.node_id}/remove").status_code == 404
+    assert client.post(f"{NODES_PATH}/nobody/remove").status_code == 404
+    assert [node["node_id"] for node in client.get(NODES_PATH).json()] == [kept.node_id]
+
+
 def test_status(client, make_node):
     node = make_node("lab 1")
     node.connect()

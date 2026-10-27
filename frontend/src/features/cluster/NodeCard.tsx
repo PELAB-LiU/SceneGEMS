@@ -37,7 +37,9 @@ interface NodeCardProps {
 /** One node of the cluster as a machine resource: state, slots, resources, leases and release. */
 export function NodeCard({ node, operatorUrl, nowMs }: NodeCardProps) {
   const applyNode = useNodesStore((s) => s.applyNode);
+  const removeNode = useNodesStore((s) => s.removeNode);
   const [pending, setPending] = useState(false);
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const totals = nodeSlotTotals(node);
   const capabilities = Object.entries(node.capabilities).sort(([a], [b]) => a.localeCompare(b));
@@ -60,6 +62,19 @@ export function NodeCard({ node, operatorUrl, nowMs }: NodeCardProps) {
     }
   };
 
+  const remove = async () => {
+    setPending(true);
+    setActionError(null);
+    try {
+      removeNode(await createOperatorClient(operatorUrl).removeNode(node.node_id));
+    } catch (error) {
+      setActionError(describeOperatorError(error));
+      setConfirmingRemove(false);
+    } finally {
+      setPending(false);
+    }
+  };
+
   return (
     <article className={`node-card node-card--${node.status}${node.out_of_date ? " node-card--stale" : ""}`}>
       <header className="node-card-head">
@@ -77,15 +92,28 @@ export function NodeCard({ node, operatorUrl, nowMs }: NodeCardProps) {
           </span>
         </div>
         <span className={`node-status node-status--${node.status}`}>{node.status}</span>
-        <button
-          type="button"
-          className="node-card-action"
-          disabled={pending || node.status === "offline"}
-          onClick={() => void toggleDrain()}
-          title={draining ? "Let the node receive jobs again" : "No new jobs for this node; running ones finish"}
-        >
-          {pending ? "..." : draining ? "Resume" : "Drain"}
-        </button>
+        {node.status === "offline" ? (
+          <button
+            type="button"
+            className={`node-card-action${confirmingRemove ? " node-card-action--danger" : ""}`}
+            disabled={pending}
+            onClick={() => (confirmingRemove ? void remove() : setConfirmingRemove(true))}
+            onBlur={() => setConfirmingRemove(false)}
+            title="Forget this offline node. It reappears if it connects again."
+          >
+            {pending ? "..." : confirmingRemove ? "Confirm" : "Remove"}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="node-card-action"
+            disabled={pending}
+            onClick={() => void toggleDrain()}
+            title={draining ? "Let the node receive jobs again" : "No new jobs for this node; running ones finish"}
+          >
+            {pending ? "..." : draining ? "Resume" : "Drain"}
+          </button>
+        )}
       </header>
 
       {actionError && <p className="meta warning node-card-error">{actionError}</p>}

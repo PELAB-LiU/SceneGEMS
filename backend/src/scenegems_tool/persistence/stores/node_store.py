@@ -100,6 +100,20 @@ class NodeStore:
             statement = update(NodeRow).where(NodeRow.status != NodeStatus.OFFLINE, NodeRow.last_seen_at < cutoff).values(status=NodeStatus.OFFLINE).returning(NodeRow.id)
             return sorted(session.execute(statement).scalars())
 
+    def remove_offline(self, node_id: str) -> Optional[bool]:
+        """Deletes an offline node with its capabilities and fingerprints; None for an unknown node, False for one that is not offline.
+
+        Jobs and results keep the node id they carry. A node that is heard from again registers anew.
+        """
+        with transaction(self._sessions) as session:
+            row = self._load(session, node_id, lock=True)
+            if row is None:
+                return None
+            if row.status != NodeStatus.OFFLINE:
+                return False
+            session.delete(row)
+            return True
+
     def get(self, node_id: str) -> Optional[NodeRecord]:
         with transaction(self._sessions) as session:
             row = self._load(session, node_id)

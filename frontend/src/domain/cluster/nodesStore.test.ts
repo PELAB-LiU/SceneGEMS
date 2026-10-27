@@ -90,6 +90,16 @@ describe("nodes feed", () => {
     stop();
   });
 
+  it("drops a node the master forgot", async () => {
+    const { client } = fakeClient(async () => ({ items: [node(), node({ node_id: "node-b", name: "worker-b" })], total: null }));
+    const stop = startNodesFeed(URL, { client, channel: makeChannel(), pollIntervalMs: 1000 });
+    await vi.advanceTimersByTimeAsync(0);
+    useNodesStore.getState().removeNode("node-b");
+    expect(useNodesStore.getState().nodes.map((entry) => entry.node_id)).not.toContain("node-b");
+    expect(useNodesStore.getState().nodes).toHaveLength(1);
+    stop();
+  });
+
   it("shares one feed per cluster between components", async () => {
     resetLiveChannels({ createSocket: MockWebSocket.factory });
     const fetchSpy = vi.fn(async () => new Response(JSON.stringify([sampleNode()]), { status: 200 }));
