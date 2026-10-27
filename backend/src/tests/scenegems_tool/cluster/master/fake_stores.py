@@ -161,6 +161,7 @@ class _Job:
     result_attempt: Optional[int] = None
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    allowed_nodes: List[str] = field(default_factory=list)
     events: List[JobEventRecord] = field(default_factory=list)
 
 
@@ -196,6 +197,7 @@ class InMemoryJobStore:
                 required_fingerprints=dict(requirements.fingerprints),
                 min_memory_mb=requirements.min_memory_mb,
                 min_cpus=requirements.min_cpus,
+                allowed_nodes=list(submission.allowed_nodes),
                 priority=submission.priority,
                 max_attempts=submission.max_attempts,
                 idempotency_key=key,
@@ -252,6 +254,7 @@ class InMemoryJobStore:
                 and job.required_fingerprints.items() <= node.fingerprints.items()
                 and job.min_memory_mb <= node.resources.free_memory_mb
                 and job.min_cpus <= node.resources.cpus
+                and (not job.allowed_nodes or node_id in job.allowed_nodes)
                 and job.id not in exclude_job_ids
             ]
             if not candidates:

@@ -488,6 +488,28 @@ def test_a_campaign_without_a_node_for_a_needed_job_type_is_stalled(harness):
     assert kinds.index(CampaignEventKind.STALLED) < kinds.index(CampaignEventKind.RESUMED)
 
 
+def test_a_campaign_runs_only_on_its_selected_nodes(harness):
+    elsewhere = create_campaign(harness.stores, config_dict(quota=1, failure_budget=0, resources={"nodes": ["another-node"]}))
+    harness.settle()
+    assert harness.executor.run() == 0  # the only node is not selected
+    harness.clock.advance(31)
+    harness.settle()
+    stalled = harness.campaign(elsewhere.campaign_id)
+    assert stalled.actual_state == CampaignActualState.STALLED and stalled.state_reason.endswith("among its selected nodes")
+    nodes = [harness.executor.node_id, "another-node"]
+    selected = create_campaign(harness.stores, config_dict(quota=1, failure_budget=0, resources={"nodes": nodes}))
+    assert harness.drive(selected.campaign_id).actual_state == CampaignActualState.COMPLETED
+    (case,) = _cases(harness, selected)
+    assert [job.allowed_nodes for _, job in _jobs_of(harness, case)] and all(job.allowed_nodes == tuple(nodes) for _, job in _jobs_of(harness, case))
+    assert harness.campaign(elsewhere.campaign_id).actual_state == CampaignActualState.STALLED
+
+
+def test_node_availability_honours_the_selected_nodes(harness):
+    (node,) = harness.nodes
+    assert node.runs(JobType.SCENE_GENERATION, {}, {}) and node.runs(JobType.SCENE_GENERATION, {}, {}, {harness.executor.node_id})
+    assert not node.runs(JobType.SCENE_GENERATION, {}, {}, {"another-node"})
+
+
 def test_a_stop_condition_drains_the_campaign(harness):
     campaign = create_campaign(harness.stores, config_dict(quota=3, failure_budget=0, policy={"stop": {"max_cases": 2}}))
     paused = harness.drive(campaign.campaign_id)

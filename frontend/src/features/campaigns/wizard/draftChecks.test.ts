@@ -105,4 +105,12 @@ describe("checkDraft", () => {
     draft.resources.labels = [{ key: "", value: "lab" }];
     expect(messages(draft)).toEqual(["resources/-/required_labels"]);
   });
+
+  it("asks for a machine when the machines are chosen by hand", () => {
+    const draft = validDraft();
+    draft.resources.fullUsage = false;
+    expect(messages(draft)).toEqual(["resources/-/nodes"]);
+    draft.resources.nodes = ["node-a"];
+    expect(messages(draft)).toEqual([]);
+  });
 });

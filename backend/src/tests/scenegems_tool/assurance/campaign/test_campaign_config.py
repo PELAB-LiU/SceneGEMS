@@ -56,6 +56,7 @@ def test_a_minimal_config_gets_the_defaults():
     assert (run.stack.simulation_layer, run.stack.mode, run.monitor, run.repeats, run.seed, run.early_stop) == ("kinematic", KinematicMode.REPLAY, MonitorImplementation.POST_HOC, 1, None, False)
     assert (config.policy.retention, config.policy.keep_frames, config.policy.seed) == (RetentionPolicy.ALL, False, 0)
     assert config.resources.queue_depth.cap(PipelineStage.SIMULATE) == 32 and config.resources.required_labels == {}
+    assert config.resources.nodes == ()  # every node
     assert DEFAULT_VESSEL_TYPES_FILE.name == "vessel_types.yaml"
 
 
@@ -125,6 +126,8 @@ def test_live_monitor_with_early_stop_and_usv_navigation_parameters():
         (_with(policy={"seed": -1}), "policy.seed"),
         (_with(policy={"retention": "some"}), "policy.retention: Input should be 'all', 'failures' or 'verdicts_only'"),
         (_with(resources={"queue_depth": {"simulate": 0}}), "resources.queue_depth.simulate"),
+        (_with(resources={"nodes": ["node-a", "node-a"]}), "resources.nodes: Value error, node ids must be distinct"),
+        (_with(resources={"nodes": ["node-a", " "]}), "resources.nodes: Value error, a node id must not be empty"),
         (_with(domain={"vessel_types": "- just\n- a list\n"}), "domain.vessel_types: Value error, expected a YAML mapping"),
         (_with(domain={"colregs_constants": "a: [unclosed"}), "domain.colregs_constants: Value error, not valid YAML"),
         (_with(domain={"scene_generation_timeout_s": 0}), "domain.scene_generation_timeout_s"),

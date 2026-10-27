@@ -1,5 +1,6 @@
 import { Document, isSeq, visit, type YAMLSeq } from "yaml";
 import type { CatalogGenerator, CatalogParameter, CatalogStack } from "../../../domain/cluster/campaignApi";
+import { fullUsageQueueDepth } from "../resourcePlan";
 import { QUEUE_DEPTH_DEFAULTS, type ParamValues, type RunDraft, type WizardDraft } from "./wizardState";
 
 /**
@@ -15,6 +16,8 @@ export type ConfigObject = Record<string, unknown>;
 export interface BuilderCatalog {
   stacks: readonly CatalogStack[];
   generators: readonly CatalogGenerator[];
+  /** Slots per job type of the nodes that can take the campaign's jobs, for full usage's queue caps; absent while the nodes are not known. */
+  slots?: Readonly<Record<string, number>>;
 }
 
 export const CONFIG_FORMAT = 1;
@@ -154,20 +157,35 @@ function buildRun(run: RunDraft, catalog: BuilderCatalog): ConfigObject {
   return result;
 }
 
-function buildResources(draft: WizardDraft): ConfigObject {
-  const resources: ConfigObject = {};
+/** The labels every job needs, as the config writes them (named ones only). */
+export function requiredLabelsOf(draft: WizardDraft): Record<string, string> {
   const labels: Record<string, string> = {};
   for (const { key, value } of draft.resources.labels) {
     if (key.trim()) {
       labels[key.trim()] = value;
     }
   }
+  return labels;
+}
+
+/** The queue caps the config gets: full usage's from the cluster's slots, else the operator's. */
+export function effectiveQueueDepth(draft: WizardDraft, catalog: BuilderCatalog): Record<string, number | null> {
+  return draft.resources.fullUsage ? fullUsageQueueDepth(catalog.slots ?? {}) : draft.resources.queueDepth;
+}
+
+function buildResources(draft: WizardDraft, catalog: BuilderCatalog): ConfigObject {
+  const resources: ConfigObject = {};
+  if (!draft.resources.fullUsage && draft.resources.nodes.length > 0) {
+    resources.nodes = [...draft.resources.nodes].sort();
+  }
+  const labels = requiredLabelsOf(draft);
   if (Object.keys(labels).length > 0) {
     resources.required_labels = labels;
   }
   const queueDepth: Record<string, number> = {};
+  const depths = effectiveQueueDepth(draft, catalog);
   for (const [stage, defaultDepth] of Object.entries(QUEUE_DEPTH_DEFAULTS)) {
-    const depth = draft.resources.queueDepth[stage];
+    const depth = depths[stage];
     if (depth !== null && depth !== undefined && depth !== defaultDepth) {
       queueDepth[stage] = depth;
     }
@@ -203,7 +221,7 @@ export function buildCampaignConfig(draft: WizardDraft, catalog: BuilderCatalog)
   config.domain = buildDomain(draft);
   config.trajectories = buildTrajectories(draft, catalog);
   config.execution = { runs: draft.runs.map((run) => buildRun(run, catalog)) };
-  config.resources = buildResources(draft);
+  config.resources = buildResources(draft, catalog);
   config.policy = buildPolicy(draft);
   return config;
 }

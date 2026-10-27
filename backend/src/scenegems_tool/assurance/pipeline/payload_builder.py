@@ -162,11 +162,18 @@ class PayloadBuilder:
     # Submissions
 
     def submission(self, step: Step, payload: Dict[str, Any], key: str, pinned: Mapping[str, str]) -> JobSubmission:
-        """The job of a step, checked: its payload, the campaign's labels, the pinned fingerprints of its images, its priority."""
+        """The job of a step, checked: its payload, the campaign's labels and nodes, the pinned fingerprints of its images, its priority."""
         validate_payload(step.job_type, payload)
         resources = self.config.resources
         requirements = JobRequirements(labels=dict(resources.required_labels), fingerprints=required_fingerprints(step.job_type, payload, pinned))
-        return JobSubmission(job_type=step.job_type, payload=payload, requirements=requirements, priority=step.priority(resources.priority), idempotency_key=key)
+        return JobSubmission(
+            job_type=step.job_type,
+            payload=payload,
+            requirements=requirements,
+            priority=step.priority(resources.priority),
+            idempotency_key=key,
+            allowed_nodes=list(resources.nodes),
+        )
 
     # Helpers
 

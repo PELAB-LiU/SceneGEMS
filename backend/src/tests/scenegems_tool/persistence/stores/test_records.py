@@ -44,6 +44,8 @@ def test_job_record_rebuilds_the_requirements():
     record = JobRecord.from_row(_job_row())
     assert record.requirements == JobRequirements(labels={"site": "lab"}, fingerprints={"scenegems-scenario-execution": "f1"}, min_memory_mb=2000, min_cpus=1.5)
     assert (record.state, record.attempt, record.failed_attempts, record.error) == (JobState.RUNNING, 2, 1, "boom")
+    assert record.allowed_nodes == ()
+    assert JobRecord.from_row(_job_row(allowed_nodes=["node-a", "node-b"])).allowed_nodes == ("node-a", "node-b")
 
 
 def test_lease_carries_the_job_spec_for_the_offer():

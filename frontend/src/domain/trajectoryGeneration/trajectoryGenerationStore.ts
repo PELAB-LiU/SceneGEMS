@@ -46,6 +46,23 @@ export type TrajectoryGenerationTab = "generate" | "advanced" | "preview";
 /** Monitor results ride along with every preview by default. */
 export const DEFAULT_INCLUDE_MONITOR_RESULTS = true;
 
+/** Fields written to local storage. `migrate` must return this shape. */
+type TrajectoryGenerationPersisted = {
+  params: TrajectoryGenerationParams;
+  includeMonitorResults: boolean;
+  generator: TrajectoryGeneratorWire;
+  timespan: number;
+  activeTab: TrajectoryGenerationTab;
+  handoffScene: GeneratedSceneData | null;
+  handoffSourceName: string | null;
+  status: TrajectoryGenerationStatus;
+  iteration: number;
+  resultScenarioJson: string | null;
+  resultValid: boolean;
+  resultComplete: boolean | null;
+  errorMessage: string | null;
+};
+
 interface TrajectoryGenerationState {
   /** Initial scene handed over from the Scene Generation page (or loaded here). */
   handoffScene: GeneratedSceneData | null;
@@ -175,7 +192,7 @@ export const useTrajectoryGenerationStore = create<TrajectoryGenerationState>()(
       // Persist the advanced-parameter form, the selected tab, the handoff scene and
       // the last generated trajectory so the page restores on reload. A run that was
       // still in flight is downgraded to "idle" (there is no live request to resume).
-      partialize: (state) => ({
+      partialize: (state): TrajectoryGenerationPersisted => ({
         params: state.params,
         includeMonitorResults: state.includeMonitorResults,
         generator: state.generator,
@@ -183,14 +200,16 @@ export const useTrajectoryGenerationStore = create<TrajectoryGenerationState>()(
         activeTab: state.activeTab,
         handoffScene: state.handoffScene,
         handoffSourceName: state.handoffSourceName,
-        status: state.status === "running" ? ("idle" as const) : state.status,
+        status: state.status === "running" ? "idle" : state.status,
         iteration: state.iteration,
         resultScenarioJson: state.resultScenarioJson,
         resultValid: state.resultValid,
         resultComplete: state.resultComplete,
         errorMessage: state.status === "running" ? null : state.errorMessage,
       }),
-      migrate: (persisted) => persisted as Partial<TrajectoryGenerationState>,
+      // Identity: a version bump must keep the saved form. Older blobs may omit
+      // fields added later; rehydration merges them over the current defaults.
+      migrate: (persisted): TrajectoryGenerationPersisted => persisted as TrajectoryGenerationPersisted,
     }
   )
 );

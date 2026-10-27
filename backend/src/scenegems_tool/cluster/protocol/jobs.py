@@ -6,7 +6,7 @@ the master checks at submission and the node again, with resolved artifacts, bef
 """
 
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import Field
 
@@ -58,6 +58,8 @@ class JobSubmission(ProtocolModel):
     priority: int = 0  # higher runs first
     max_attempts: int = Field(default=3, ge=1)
     idempotency_key: Optional[str] = None  # a second submission with the same key returns the first job
+    # Node ids that may run the job, empty for any node. The master matches it; offers do not carry it
+    allowed_nodes: List[str] = Field(default_factory=list)
 
 
 class JobSpec(ProtocolModel):

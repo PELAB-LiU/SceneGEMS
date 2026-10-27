@@ -26,6 +26,7 @@ def test_a_submission_is_queued_with_the_expected_fingerprints(client):
     job = response.json()
     assert job["state"] == "queued" and job["priority"] == 3 and job["attempt"] == 0
     assert job["requirements"]["fingerprints"] == {SCENE_GENERATION_IMAGE: "fp-scene"}
+    assert job["allowed_nodes"] == []
 
 
 def test_a_known_idempotency_key_returns_the_first_job(client):

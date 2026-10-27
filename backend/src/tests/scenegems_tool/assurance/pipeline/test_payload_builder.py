@@ -97,9 +97,17 @@ def test_a_submission_requires_the_pinned_fingerprints_of_its_images_and_the_lab
     submission = builder.submission(SCENE_STEP, payload, "key", EXPECTED)
     assert submission.requirements.fingerprints == {SCENE_GENERATION_IMAGE: EXPECTED[SCENE_GENERATION_IMAGE]}
     assert submission.requirements.labels == {"site": "lab"} and submission.priority == 5 and submission.idempotency_key == "key"
+    assert submission.allowed_nodes == []  # any node
     assert required_fingerprints(JobType.CALIBRATION_DEVIATION, {}, EXPECTED) == {SCENARIO_EXECUTION_IMAGE: "fp-execution"}
     with pytest.raises(PayloadError, match="invalid simulation.kinematic payload"):
         builder.submission(Step(PipelineStage.SIMULATE, 0, 0), {"trajectories": {"scene_list": []}}, "key", EXPECTED)
+
+
+def test_a_submission_names_the_campaigns_selected_nodes():
+    builder = _builder(resources={"nodes": ["lab-1", "lab-3"]})
+    payload = builder.scene_generation(CLASS_A, ClassCatalog.default().get(CLASS_A).content_hash, 3)
+    submission = builder.submission(SCENE_STEP, payload, "key", EXPECTED)
+    assert submission.allowed_nodes == ["lab-1", "lab-3"] and submission.requirements.labels == {}
 
 
 def test_derived_seeds_are_stable_and_distinct():

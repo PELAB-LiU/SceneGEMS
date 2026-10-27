@@ -91,6 +91,16 @@ describe("controlAvailability", () => {
     expect(running.start.reason).toMatch(/asked to run already/);
     expect(running.resume.reason).toMatch(/asked to run already/);
   });
+
+  it("keeps Start and Resume off while a needed capability has no machine", () => {
+    const blocker = "No usable machine of the campaign runs post hoc monitoring.";
+    const created = controlAvailability(summary({ desired_state: "paused", actual_state: "created", started_at: null }), blocker);
+    expect(created.start).toEqual({ enabled: false, reason: `It cannot start: ${blocker}` });
+    expect(created.drain.enabled && created.stop.enabled).toBe(true);
+    const paused = controlAvailability(summary({ desired_state: "paused", actual_state: "paused", started_at: "2026-10-26T09:00:00+00:00" }), blocker);
+    expect(paused.resume.reason).toBe(`It cannot start: ${blocker}`);
+    expect(controlAvailability(summary({ desired_state: "running", actual_state: "running" }), blocker).pause.enabled).toBe(true);
+  });
 });
 
 describe("newerSummary", () => {

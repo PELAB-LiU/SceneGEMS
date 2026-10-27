@@ -3,7 +3,7 @@ import { Disclosure } from "../../components/Disclosure";
 import type { CampaignControl } from "../../domain/cluster/operatorApi";
 import { OperatorApiError } from "../../domain/cluster/operatorApi";
 import type { CampaignSummary } from "../../domain/cluster/schemas";
-import { CONTROL_SPECS, controlAvailability, type ControlSpec } from "./campaignModel";
+import { CONTROL_SPECS, controlAvailability, isFinalState, type ControlSpec } from "./campaignModel";
 import { useCampaignControl } from "./useCampaignData";
 
 /** The message of a refused control, with what the master said. */
@@ -41,11 +41,19 @@ function ControlButton({ spec, enabled, reason, busy, onPress }: { spec: Control
   );
 }
 
+export interface ControlsBarProps {
+  campaign: CampaignSummary;
+  onChanged: (summary: CampaignSummary) => void;
+  /** Why the campaign cannot start on the cluster's machines, or null. */
+  startBlocker?: string | null;
+}
+
 /** Start, pause, drain, resume and stop, each with what it does; a stop is confirmed, a refusal is shown in full. */
-export function ControlsBar({ campaign, onChanged }: { campaign: CampaignSummary; onChanged: (summary: CampaignSummary) => void }) {
+export function ControlsBar({ campaign, onChanged, startBlocker = null }: ControlsBarProps) {
   const [confirming, setConfirming] = useState<CampaignControl | null>(null);
   const mutation = useCampaignControl(campaign.campaign_id, onChanged);
-  const availability = controlAvailability(campaign);
+  const availability = controlAvailability(campaign, startBlocker);
+  const held = startBlocker !== null && !isFinalState(campaign.actual_state) && campaign.desired_state !== "running" && campaign.desired_state !== "stopped";
 
   const run = (control: CampaignControl) => {
     setConfirming(null);
@@ -78,6 +86,11 @@ export function ControlsBar({ campaign, onChanged }: { campaign: CampaignSummary
           />
         ))}
       </div>
+      {held && (
+        <p className="camp-start-blocked" role="status">
+          <strong>Start and Resume are off.</strong> {startBlocker}
+        </p>
+      )}
       <Disclosure
         id="campaign:control-help"
         variant="link"

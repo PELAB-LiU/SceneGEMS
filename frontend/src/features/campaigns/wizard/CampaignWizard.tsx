@@ -1,9 +1,13 @@
 import { useMutation } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { createCampaign } from "../../../domain/cluster/campaignApi";
+import { useSelectedCluster } from "../../../domain/cluster/clusterStore";
+import { useNodesFeed, useNodesStore } from "../../../domain/cluster/nodesStore";
 import { describeOperatorError, OperatorApiError, type OperatorClient } from "../../../domain/cluster/operatorApi";
+import type { NodeView } from "../../../domain/cluster/schemas";
+import { planResources, requiredCapabilities, slotsByJobType, startBlocker } from "../resourcePlan";
 import { useCatalogClasses, useCatalogStacks, useOperatorClient } from "../useCampaignData";
-import { buildCampaignYaml, type BuilderCatalog } from "./configBuilder";
+import { buildCampaignConfig, configToYaml, requiredLabelsOf, type BuilderCatalog } from "./configBuilder";
 import { checkDraft } from "./draftChecks";
 import { DomainStep } from "./DomainStep";
 import { PolicyStep } from "./PolicyStep";
@@ -12,7 +16,7 @@ import { ResourcesStep } from "./ResourcesStep";
 import { ReviewStep } from "./ReviewStep";
 import { RunsStep } from "./RunsStep";
 import { ScopeStep } from "./ScopeStep";
-import type { CatalogState, StepProps } from "./stepTypes";
+import type { CatalogState, ClusterResources, StepProps } from "./stepTypes";
 import { TrajectoriesStep } from "./TrajectoriesStep";
 import { useValidation, validationFromError } from "./useValidation";
 import { useWizardStore, WIZARD_STEP_LABELS, WIZARD_STEPS, type WizardStepId } from "./wizardState";
@@ -20,6 +24,7 @@ import "./wizard.css";
 
 const AUTO_CHECK_DELAY_MS = 700;
 const EMPTY_BUILDER: BuilderCatalog = { stacks: [], generators: [] };
+const NO_NODES: readonly NodeView[] = [];
 
 export interface CampaignWizardProps {
   onClose: () => void;
@@ -58,12 +63,38 @@ export function CampaignWizard({ onClose, onCreated }: CampaignWizardProps) {
     },
   };
 
+  // The cluster's nodes: what the campaign needs is checked against them, and full usage sizes its queues to their slots
+  const operatorUrl = useSelectedCluster()?.operatorUrl ?? null;
+  useNodesFeed(operatorUrl);
+  const nodesState = useNodesStore();
+  const nodesLoaded = operatorUrl !== null && nodesState.operatorUrl === operatorUrl && nodesState.loaded;
+  const nodes = nodesLoaded ? nodesState.nodes : NO_NODES;
+  const labels = useMemo(() => requiredLabelsOf(draft), [draft]);
+  // Kept by content: heartbeats replace the node list every few seconds, the slots rarely change
+  const slotsKey = JSON.stringify(slotsByJobType(nodes, labels));
+  const slots = useMemo(() => JSON.parse(slotsKey) as Record<string, number>, [slotsKey]);
+
   const builderCatalog = useMemo<BuilderCatalog>(
-    () => (stacks.data ? { stacks: stacks.data.stacks, generators: stacks.data.trajectory_generators } : EMPTY_BUILDER),
-    [stacks.data]
+    () => (stacks.data ? { stacks: stacks.data.stacks, generators: stacks.data.trajectory_generators, slots: nodesLoaded ? slots : undefined } : EMPTY_BUILDER),
+    [stacks.data, nodesLoaded, slots]
   );
-  const yaml = useMemo(() => buildCampaignYaml(draft, builderCatalog), [draft, builderCatalog]);
+  const config = useMemo(() => buildCampaignConfig(draft, builderCatalog), [draft, builderCatalog]);
+  const yaml = useMemo(() => configToYaml(config), [config]);
   const localReasons = useMemo(() => checkDraft(draft, stacks.data ? builderCatalog : null), [draft, builderCatalog, stacks.data]);
+
+  const plan = useMemo(
+    () => (nodesLoaded ? planResources(requiredCapabilities(config), nodes, { nodes: draft.resources.fullUsage ? null : draft.resources.nodes, labels }) : null),
+    [nodesLoaded, config, nodes, draft.resources.fullUsage, draft.resources.nodes, labels]
+  );
+  const cluster: ClusterResources = {
+    selected: operatorUrl !== null,
+    loaded: nodesLoaded,
+    error: nodesState.operatorUrl === operatorUrl ? nodesState.error : null,
+    nodes,
+    plan,
+    slots,
+    startBlocker: startBlocker(plan),
+  };
 
   const { state: validation, check, adopt, reset: resetValidation } = useValidation(client);
   const [createMessage, setCreateMessage] = useState<string | null>(null);
@@ -128,7 +159,7 @@ export function CampaignWizard({ onClose, onCreated }: CampaignWizardProps) {
       body = <RunsStep {...stepProps} catalog={catalogState} />;
       break;
     case "resources":
-      body = <ResourcesStep {...stepProps} />;
+      body = <ResourcesStep {...stepProps} cluster={cluster} />;
       break;
     case "policy":
       body = <PolicyStep {...stepProps} />;
@@ -151,6 +182,7 @@ export function CampaignWizard({ onClose, onCreated }: CampaignWizardProps) {
           }}
           creating={creation.isPending}
           createMessage={createMessage}
+          startBlocker={cluster.startBlocker}
         />
       );
   }
@@ -158,7 +190,8 @@ export function CampaignWizard({ onClose, onCreated }: CampaignWizardProps) {
   const stepBadge = (id: WizardStepId): number => {
     const server = byStep[id].filter((reason) => reason.source === "server").length;
     const local = visited.includes(id) ? byStep[id].filter((reason) => reason.source === "local").length : 0;
-    return id === "review" ? 0 : server + local;
+    const missing = id === "resources" && visited.includes(id) ? (plan?.missing.length ?? 0) : 0;
+    return id === "review" ? 0 : server + local + missing;
   };
 
   return (

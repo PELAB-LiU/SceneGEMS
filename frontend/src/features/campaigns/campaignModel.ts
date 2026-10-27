@@ -128,7 +128,11 @@ export interface ControlAvailability {
 }
 
 /** Which controls apply to a campaign in its state; the master refuses the others with a 409 as well. */
-export function controlAvailability(summary: Pick<CampaignSummary, "desired_state" | "actual_state" | "started_at">): Record<CampaignControl, ControlAvailability> {
+/** What each control may do now; a start blocker (no machine for a needed capability) keeps Start and Resume off. */
+export function controlAvailability(
+  summary: Pick<CampaignSummary, "desired_state" | "actual_state" | "started_at">,
+  startBlocker: string | null = null
+): Record<CampaignControl, ControlAvailability> {
   const yes: ControlAvailability = { enabled: true, reason: null };
   const no = (reason: string): ControlAvailability => ({ enabled: false, reason });
   if (isFinalState(summary.actual_state)) {
@@ -141,9 +145,10 @@ export function controlAvailability(summary: Pick<CampaignSummary, "desired_stat
   }
   const neverStarted = summary.started_at === null;
   const wantsRunning = summary.desired_state === "running";
+  const startable = startBlocker === null ? yes : no(`It cannot start: ${startBlocker}`);
   return {
-    start: wantsRunning ? no("The campaign is asked to run already.") : neverStarted ? yes : no("It has started before; use Resume."),
-    resume: wantsRunning ? no("The campaign is asked to run already.") : neverStarted ? no("It has not started yet; use Start.") : yes,
+    start: wantsRunning ? no("The campaign is asked to run already.") : neverStarted ? startable : no("It has started before; use Resume."),
+    resume: wantsRunning ? no("The campaign is asked to run already.") : neverStarted ? no("It has not started yet; use Start.") : startable,
     pause: summary.desired_state === "paused" ? no("The campaign is paused already.") : yes,
     drain: summary.desired_state === "draining" ? no("The campaign is draining already.") : yes,
     stop: yes,

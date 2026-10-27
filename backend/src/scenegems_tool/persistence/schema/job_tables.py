@@ -11,7 +11,7 @@ it ahead by the backoff, and holding a campaign's jobs (pause) moves it to HELD_
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import BigInteger, CheckConstraint, Float, ForeignKey, Identity, Index, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
@@ -48,6 +48,7 @@ class JobRow(Base):
     required_fingerprints: Mapped[Dict[str, str]] = mapped_column(JSONB)
     min_memory_mb: Mapped[int] = mapped_column(Integer)
     min_cpus: Mapped[float] = mapped_column(Float)
+    allowed_nodes: Mapped[List[str]] = mapped_column(JSONB, server_default=text("'[]'::jsonb"))  # node ids that may claim the job, empty for any
     priority: Mapped[int] = mapped_column(Integer)  # higher runs first
     max_attempts: Mapped[int] = mapped_column(Integer)
     idempotency_key: Mapped[str] = mapped_column(String(256), unique=True)

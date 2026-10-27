@@ -67,6 +67,10 @@ export interface RunDraft {
 }
 
 export interface ResourcesDraft {
+  /** Every node of the cluster, also nodes that join later, with the queue caps sized to its slots. */
+  fullUsage: boolean;
+  /** Node ids the campaign may use when it does not use every node. */
+  nodes: string[];
   labels: { key: string; value: string }[];
   queueDepth: Record<string, number | null>;
   priority: number | null;
@@ -158,7 +162,7 @@ export function emptyDraft(): WizardDraft {
     },
     trajectories: { generator: "monitor_driven_rrt", parameters: {}, timeoutS: DEFAULT_TRAJECTORY_TIMEOUT_S },
     runs: [emptyRun()],
-    resources: { labels: [], queueDepth: { ...QUEUE_DEPTH_DEFAULTS }, priority: 0 },
+    resources: { fullUsage: true, nodes: [], labels: [], queueDepth: { ...QUEUE_DEPTH_DEFAULTS }, priority: 0 },
     policy: { retention: "all", keepFrames: false, seed: DEFAULT_CAMPAIGN_SEED, maxCases: null, maxFailedVerdicts: null, maxDurationS: null },
   };
 }

@@ -11,7 +11,7 @@ backoff or held by a paused campaign waits in the queue without blocking the one
 from datetime import datetime
 from typing import Collection, Dict, List, Mapping, Optional
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, or_, select
 
 from scenegems_tool.cluster.protocol.jobs import JobState, JobType
 from scenegems_tool.persistence.schema import JobRow
@@ -31,13 +31,15 @@ def next_queued_job_query(
     exclude_job_ids: Collection[str] = (),
     *,
     now: datetime,
+    node_id: str,
 ) -> Select:
     """The highest-priority, oldest queued job a node with these facts may run, locked.
 
     A job matches when its type is among job_types, its required labels and fingerprints
     are contained in the node's (JSONB containment), its memory and CPU minimums fit the
-    node's free memory and CPUs, it is available by now, and it is not among exclude_job_ids
-    (jobs the scheduler holds back from this node, for example after the node rejected them).
+    node's free memory and CPUs, its allowed nodes are empty or name node_id, it is available
+    by now, and it is not among exclude_job_ids (jobs the scheduler holds back from this node,
+    for example after the node rejected them).
     """
     conditions = [
         JobRow.state == JobState.QUEUED,
@@ -47,6 +49,7 @@ def next_queued_job_query(
         JobRow.required_fingerprints.contained_by(fingerprints),
         JobRow.min_memory_mb <= free_memory_mb,
         JobRow.min_cpus <= cpus,
+        or_(JobRow.allowed_nodes == [], JobRow.allowed_nodes.contains([node_id])),
     ]
     if exclude_job_ids:
         conditions.append(JobRow.id.notin_(list(exclude_job_ids)))

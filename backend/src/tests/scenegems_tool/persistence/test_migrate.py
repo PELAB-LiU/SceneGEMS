@@ -50,11 +50,12 @@ def test_migrations_live_in_the_package():
 
 def test_revisions_form_one_line():
     scripts = _scripts()
-    assert scripts.get_heads() == ["0003"]
+    assert scripts.get_heads() == ["0004"]
     revisions = list(scripts.walk_revisions())
-    assert [revision.revision for revision in revisions] == ["0003", "0002", "0001"]
-    assert revisions[0].down_revision == "0002"
-    assert revisions[1].down_revision == "0001"
+    assert [revision.revision for revision in revisions] == ["0004", "0003", "0002", "0001"]
+    assert revisions[0].down_revision == "0003"
+    assert revisions[1].down_revision == "0002"
+    assert revisions[2].down_revision == "0001"
     assert revisions[-1].down_revision is None
     assert all(len(revision.revision) == 4 and revision.revision.isdigit() for revision in revisions)
 
@@ -100,6 +101,7 @@ def test_offline_upgrade_renders_the_tables(capsys):
     assert "UPDATE job SET available_at = submitted_at" in sql
     assert "calibration.deviation" in sql
     assert "ALTER TABLE node ADD COLUMN machine VARCHAR(256)" in sql
+    assert "ALTER TABLE job ADD COLUMN allowed_nodes JSONB DEFAULT '[]'::jsonb NOT NULL" in sql
 
 
 @pytest.mark.postgres
@@ -109,7 +111,7 @@ def test_upgrade_on_an_empty_database(empty_database_url):
     try:
         assert set(inspect(engine).get_table_names()) == ALL_TABLES | {"alembic_version"}
         with engine.connect() as connection:
-            assert MigrationContext.configure(connection).get_current_revision() == "0003"
+            assert MigrationContext.configure(connection).get_current_revision() == "0004"
     finally:
         engine.dispose()
 
@@ -181,6 +183,31 @@ def test_the_machine_column_comes_and_goes_with_revision_0003(empty_database_url
             assert connection.execute(text("SELECT name FROM node WHERE id = 'node-1'")).scalar_one() == "worker-1"  # the node stays
         command.upgrade(config, "head")
         assert "machine" in {column["name"] for column in inspect(engine).get_columns("node")}
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.postgres
+def test_jobs_of_before_revision_0004_may_run_on_any_node(empty_database_url):
+    config = alembic_config(empty_database_url)
+    command.upgrade(config, "0003")
+    submitted = datetime(2026, 10, 27, 9, 30, tzinfo=timezone.utc)
+    engine = create_engine(empty_database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO job (id, job_type, payload, required_labels, required_fingerprints, min_memory_mb, min_cpus, priority, max_attempts,"
+                    " idempotency_key, state, attempt, failed_attempts, submitted_at, available_at, updated_at)"
+                    " VALUES ('job-1', 'scene_generation', '{}', '{}', '{}', 0, 0, 0, 3, 'key-1', 'queued', 0, 0, :at, :at, :at)"
+                ),
+                {"at": submitted},
+            )
+        command.upgrade(config, "0004")
+        with engine.connect() as connection:
+            assert connection.execute(text("SELECT allowed_nodes FROM job WHERE id = 'job-1'")).scalar_one() == []
+        command.downgrade(config, "0003")
+        assert "allowed_nodes" not in {column["name"] for column in inspect(engine).get_columns("job")}
     finally:
         engine.dispose()
 

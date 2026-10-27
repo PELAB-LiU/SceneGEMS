@@ -19,6 +19,7 @@ def job_view(job: JobRecord, progress: Optional[JobProgress] = None) -> Dict[str
         "max_attempts": job.max_attempts,
         "idempotency_key": job.idempotency_key,
         "requirements": job.requirements.model_dump(),
+        "allowed_nodes": list(job.allowed_nodes),
         "lease_owner": job.lease_owner,
         "lease_expires_at": job.lease_expires_at,
         "submitted_at": job.submitted_at,

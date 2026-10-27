@@ -59,6 +59,7 @@ def make_submission(
     max_attempts: int = 3,
     requirements: Optional[JobRequirements] = None,
     payload: Optional[dict] = None,
+    allowed_nodes: Optional[list] = None,
 ) -> JobSubmission:
     return JobSubmission(
         job_type=job_type,
@@ -67,6 +68,7 @@ def make_submission(
         priority=priority,
         max_attempts=max_attempts,
         idempotency_key=idempotency_key,
+        allowed_nodes=allowed_nodes or [],
     )
 
 

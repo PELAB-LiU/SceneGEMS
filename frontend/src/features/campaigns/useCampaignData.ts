@@ -4,10 +4,12 @@ import { getCatalogStacks, listCatalogClasses } from "../../domain/cluster/campa
 import { useSelectedCluster } from "../../domain/cluster/clusterStore";
 import { campaignTopic } from "../../domain/cluster/liveProtocol";
 import { campaignReducer, type CampaignTopicState } from "../../domain/cluster/liveTopics";
+import { useNodesFeed, useNodesStore } from "../../domain/cluster/nodesStore";
 import { createOperatorClient, OperatorApiError, type CampaignControl, type OperatorClient } from "../../domain/cluster/operatorApi";
-import type { CampaignDetail, CampaignSummary } from "../../domain/cluster/schemas";
+import type { CampaignConfig, CampaignDetail, CampaignSummary } from "../../domain/cluster/schemas";
 import { useLiveTopic } from "../../domain/cluster/useLiveTopic";
 import { EMPTY_EVENT_FEED, eventFeedReducer, isFinalState, listQuery, mergeEvents, newerSummary, type ListViewState } from "./campaignModel";
+import { planOfConfig, startBlocker } from "./resourcePlan";
 
 /** Queries and live feeds of the Campaigns section. */
 
@@ -202,6 +204,16 @@ export function useCampaignConfig(campaignId: string) {
     staleTime: 30_000,
     retry: retryUnlessUnreachable,
   });
+}
+
+/** Why the campaign of a stored config cannot start on the selected cluster's machines, or null; follows the nodes while mounted. */
+export function useStartBlocker(config: CampaignConfig | undefined): string | null {
+  const operatorUrl = useSelectedCluster()?.operatorUrl ?? null;
+  useNodesFeed(operatorUrl);
+  const nodesState = useNodesStore();
+  const loaded = operatorUrl !== null && nodesState.operatorUrl === operatorUrl && nodesState.loaded;
+  const current = config?.versions.find((version) => version.version === config.current_version)?.config;
+  return useMemo(() => startBlocker(loaded && current ? planOfConfig(current, nodesState.nodes) : null), [loaded, current, nodesState.nodes]);
 }
 
 export function useCampaignControl(campaignId: string, onDone: (summary: CampaignSummary) => void) {

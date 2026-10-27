@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from scenegems_tool.cluster.protocol.jobs import JobRequirements, JobSpec, JobState, JobType
 from scenegems_tool.persistence.schema import JobEventKind, JobEventRow, JobRow
@@ -36,6 +36,7 @@ class JobRecord:
     result_attempt: Optional[int]
     result: Optional[Dict[str, Any]]
     error: Optional[str]
+    allowed_nodes: Tuple[str, ...] = ()  # node ids that may claim the job, empty for any
 
     @classmethod
     def from_row(cls, row: JobRow) -> "JobRecord":
@@ -61,6 +62,7 @@ class JobRecord:
             result_attempt=row.result_attempt,
             result=None if row.result is None else dict(row.result),
             error=row.error,
+            allowed_nodes=tuple(row.allowed_nodes or ()),  # unset on a row that was never flushed
         )
 
 

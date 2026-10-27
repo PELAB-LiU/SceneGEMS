@@ -755,3 +755,256 @@
 .wiz-foot {
   padding-bottom: var(--space-4);
 }
+
+/* Resources */
+
+.wiz-resources-part {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.wiz-resources-part .meta,
+.wiz-resources-part .wiz-error,
+.wiz-subsection .meta {
+  margin: 0;
+}
+
+.wiz-subsection--first {
+  padding-top: 0;
+  border-top: none;
+}
+
+.wiz-needs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.wiz-need {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: var(--hit-target);
+  padding: var(--space-3) var(--space-4);
+}
+
+.wiz-need + .wiz-need {
+  border-top: 1px solid var(--border);
+}
+
+.wiz-need-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  font-weight: 700;
+}
+
+.wiz-need--ok .wiz-need-mark {
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.14);
+}
+
+.wiz-need--missing {
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.wiz-need--missing .wiz-need-mark {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.2);
+}
+
+.wiz-need-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wiz-need-reason {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.wiz-need-status {
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
+.wiz-need--missing .wiz-need-status {
+  color: #fca5a5;
+  font-weight: 600;
+}
+
+.wiz-machine-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.wiz-machine-tools .meta {
+  margin: 0 auto 0 0;
+}
+
+.wiz-machines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-4);
+}
+
+.wiz-machine {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  background: var(--bg-pane);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+
+.wiz-machine--used {
+  border-color: var(--accent-strong);
+}
+
+.wiz-machine--unusable {
+  opacity: 0.8;
+}
+
+.wiz-machine-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--hit-target);
+  cursor: pointer;
+}
+
+.wiz-machine-head input {
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
+
+.wiz-machine-head input:disabled {
+  cursor: default;
+}
+
+.wiz-machine-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin-right: auto;
+}
+
+.wiz-machine-title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wiz-machine-sub,
+.wiz-machine-specs {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.wiz-machine-specs {
+  margin: 0;
+}
+
+.wiz-machine-caps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.wiz-cap {
+  padding: 2px var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.wiz-cap--needed {
+  border-color: rgba(56, 189, 248, 0.5);
+  background: rgba(56, 189, 248, 0.08);
+  color: inherit;
+}
+
+.wiz-cap-slots {
+  color: var(--text-faint);
+}
+
+.wiz-machine .wiz-hint {
+  margin: 0;
+}
+
+.wiz-depths {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.wiz-depths div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.wiz-depths dt {
+  font-size: var(--font-size-sm);
+}
+
+.wiz-depths dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.wiz-start-blocked {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid #f59e0b;
+  border-radius: var(--radius-sm);
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.wiz-start-blocked p {
+  flex: 1 1 320px;
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+@media (max-width: 600px) {
+  .wiz-need {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .wiz-need-status {
+    grid-column: 2;
+    white-space: normal;
+  }
+}

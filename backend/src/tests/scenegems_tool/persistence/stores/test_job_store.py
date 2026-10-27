@@ -68,6 +68,12 @@ def test_requirements_round_trip(job_store):
     assert job_store.get(job.job_id).requirements == requirements
 
 
+def test_allowed_nodes_round_trip(job_store):
+    assert job_store.submit(make_submission()).job.allowed_nodes == ()
+    job = job_store.submit(make_submission(allowed_nodes=["node-b", "node-c"])).job
+    assert job_store.get(job.job_id).allowed_nodes == ("node-b", "node-c")
+
+
 def test_unknown_job(job_store):
     assert job_store.get("missing") is None
     with pytest.raises(UnknownJob):
@@ -175,6 +181,18 @@ def test_claim_matches_labels(job_store, node_store):
     job = job_store.submit(make_submission(requirements=JobRequirements(labels={"gpu": "yes"}))).job
     assert job_store.claim_next("plain", LEASE_S) is None
     assert job_store.claim_next("gpu", LEASE_S).job.job_id == job.job_id
+
+
+def test_claim_matches_allowed_nodes(job_store, node_store):
+    for node_id in ("left-out", "chosen", "also-chosen"):
+        node_store.register(make_hello(node_id, slots={SCENE: 5}))
+    restricted = job_store.submit(make_submission(priority=5, allowed_nodes=["chosen", "also-chosen"])).job
+    anywhere = job_store.submit(make_submission(priority=1)).job
+    assert job_store.claim_next("left-out", LEASE_S).job.job_id == anywhere.job_id
+    assert job_store.claim_next("left-out", LEASE_S) is None
+    lease = job_store.claim_next("also-chosen", LEASE_S)
+    assert lease.job.job_id == restricted.job_id
+    assert lease.job.requirements == JobRequirements()  # the offer does not carry the allowed nodes
 
 
 def test_claim_matches_fingerprints(job_store, node_store):

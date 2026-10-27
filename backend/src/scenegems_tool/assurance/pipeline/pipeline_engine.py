@@ -59,7 +59,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Set
+from typing import Any, Awaitable, Callable, Collection, Dict, List, Mapping, Optional, Sequence, Set
 
 import anyio
 from sqlalchemy.orm import Session
@@ -92,9 +92,12 @@ class NodeAvailability:
     record: NodeRecord
     out_of_date: bool = False
 
-    def runs(self, job_type: JobType, fingerprints: Mapping[str, str], labels: Mapping[str, str]) -> bool:
+    def runs(self, job_type: JobType, fingerprints: Mapping[str, str], labels: Mapping[str, str], nodes: Collection[str] = ()) -> bool:
+        """Whether the node may run the job type now; nodes, when not empty, are the node ids the campaign allows."""
         record = self.record
         if record.status != NodeStatus.ONLINE or self.out_of_date or job_type not in record.capabilities:
+            return False
+        if nodes and record.node_id not in nodes:
             return False
         if any(record.labels.get(key) != value for key, value in labels.items()):
             return False
@@ -482,6 +485,7 @@ class PipelineEngine:
             + ", ".join(job_type.value for job_type in missing)
             + " with the campaign's pinned fingerprints"
             + (" and labels" if context.config.resources.required_labels else "")
+            + (" among its selected nodes" if context.config.resources.nodes else "")
         )
         if campaign.actual_state != CampaignActualState.STALLED and now - since >= timedelta(seconds=self.settings.stall_after_s):
             logger.warning("Campaign %s is stalled: %s", campaign_id, reason)
@@ -491,13 +495,14 @@ class PipelineEngine:
     @staticmethod
     def _missing_job_types(context: CampaignContext, queued, nodes: Sequence[NodeAvailability]) -> List[JobType]:
         labels = context.config.resources.required_labels
+        allowed = frozenset(context.config.resources.nodes)
         missing = []
         for stage, count in sorted(queued.items(), key=lambda item: item[0].value):
             job_type = STAGE_JOB_TYPES.get(stage)
             if count <= 0 or job_type is None:
                 continue
             fingerprints = required_fingerprints(job_type, {}, context.pinned)
-            if not any(node.runs(job_type, fingerprints, labels) for node in nodes):
+            if not any(node.runs(job_type, fingerprints, labels, allowed) for node in nodes):
                 missing.append(job_type)
         return missing
 

@@ -48,10 +48,12 @@ export interface ReviewStepProps {
   onCreate: (start: boolean) => void;
   creating: boolean;
   createMessage: string | null;
+  /** Why the campaign cannot start on the cluster's machines, or null. */
+  startBlocker: string | null;
 }
 
 /** Review: the generated YAML, the master's check of it (reasons attached to their steps) and the way to create the campaign. */
-export function ReviewStep({ yaml, validation, current, localReasons, serverReasons, onGoTo, onCheck, onCreate, creating, createMessage }: ReviewStepProps) {
+export function ReviewStep({ yaml, validation, current, localReasons, serverReasons, onGoTo, onCheck, onCreate, creating, createMessage, startBlocker }: ReviewStepProps) {
   const [copied, setCopied] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const all = [...localReasons, ...serverReasons];
@@ -184,10 +186,26 @@ export function ReviewStep({ yaml, validation, current, localReasons, serverReas
           <button type="button" disabled={!ready || creating} onClick={() => onCreate(false)}>
             {creating ? "Creating..." : "Create paused"}
           </button>
-          <button type="button" className="primary-btn accent" disabled={!ready || creating} onClick={() => onCreate(true)}>
+          <button
+            type="button"
+            className="primary-btn accent"
+            disabled={!ready || creating || startBlocker !== null}
+            title={startBlocker ?? undefined}
+            onClick={() => onCreate(true)}
+          >
             {creating ? "Creating..." : "Create and start"}
           </button>
         </div>
+        {startBlocker && (
+          <div className="wiz-start-blocked" role="status">
+            <p>
+              <strong>The campaign cannot start yet.</strong> {startBlocker} You can create it paused and start it from its page once the machines are there.
+            </p>
+            <button type="button" onClick={() => onGoTo("resources")}>
+              Go to Resources
+            </button>
+          </div>
+        )}
         {!ready && !creating && (
           <p className="wiz-hint">
             {blocked

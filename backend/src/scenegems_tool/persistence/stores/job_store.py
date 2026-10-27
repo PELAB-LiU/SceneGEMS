@@ -32,8 +32,8 @@ from scenegems_tool.persistence.schema import HELD_UNTIL, JobEventKind, JobRow, 
 from scenegems_tool.persistence.stores.job_claim import free_job_types, next_queued_job_query
 from scenegems_tool.persistence.stores.job_event_log import append_job_event, job_events
 from scenegems_tool.persistence.stores.job_lifecycle import ACTIVE_STATES, lease_is_current, result_status, retry_backoff_s, state_after_failed_attempt
-from scenegems_tool.persistence.stores.store_session import session_scope
 from scenegems_tool.persistence.stores.job_records import CancelOutcome, ExpiredLease, JobEventRecord, JobRecord, Lease, ResultReport, ResultStatus, SubmitOutcome
+from scenegems_tool.persistence.stores.store_session import session_scope
 
 
 class UnknownNode(LookupError):
@@ -97,6 +97,7 @@ class JobStore:
                     required_fingerprints=requirements.fingerprints,
                     min_memory_mb=requirements.min_memory_mb,
                     min_cpus=requirements.min_cpus,
+                    allowed_nodes=list(submission.allowed_nodes),
                     priority=submission.priority,
                     max_attempts=submission.max_attempts,
                     idempotency_key=idempotency_key,
@@ -149,7 +150,7 @@ class JobStore:
 
         Considers only online nodes and job types the node has a free slot for (slots minus
         its leased and running jobs of that type), optionally limited to job_types, and skips
-        the jobs in exclude_job_ids and those not available yet. The match on labels, fingerprints and resources and the
+        the jobs in exclude_job_ids and those not available yet. The match on labels, fingerprints, resources and allowed nodes and the
         order (priority, then submission) are in next_queued_job_query. The lease starts as
         an offer that holds for lease_duration_s; the node accepts it with accept().
         """
@@ -168,7 +169,7 @@ class JobStore:
             if not job_types:
                 return None
             fingerprints = {fingerprint.image: fingerprint.fingerprint for fingerprint in node.fingerprints}
-            row = session.execute(next_queued_job_query(job_types, node.labels, fingerprints, node.free_memory_mb, node.cpus, exclude_job_ids, now=now)).scalar_one_or_none()
+            row = session.execute(next_queued_job_query(job_types, node.labels, fingerprints, node.free_memory_mb, node.cpus, exclude_job_ids, now=now, node_id=node_id)).scalar_one_or_none()
             if row is None:
                 return None
             row.state = JobState.LEASED

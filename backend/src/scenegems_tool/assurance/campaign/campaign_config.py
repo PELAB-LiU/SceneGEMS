@@ -7,7 +7,8 @@ Sections:
     trajectories    the generator: monitor_driven_rrt with its search parameters (the wire keys of
                     TrajectoryGenerationParams) or straight with its timespan; the timeout
     execution       the runs of every case: a stack, an environment, a seed, repeats, the monitor
-    resources       required node labels, queue depth caps per stage, priority
+    resources       the nodes it may use (all when none are named), required node labels, queue depth
+                    caps per stage, priority
     policy          retention, whether to keep frames, the campaign seed, stop conditions
 
 Unknown fields are rejected everywhere. YAML is read with a safe loader that also rejects
@@ -213,9 +214,19 @@ class QueueDepthCaps(ConfigModel):
 
 
 class ResourcesConfig(ConfigModel):
+    nodes: Tuple[str, ...] = ()  # node ids the campaign's jobs may run on; empty: every node, also those that join later
     required_labels: Dict[str, str] = Field(default_factory=dict)  # every job of the campaign needs these node labels
     queue_depth: QueueDepthCaps = Field(default_factory=QueueDepthCaps)
     priority: int = 0  # base priority of the campaign's jobs; later stages run above it
+
+    @field_validator("nodes")
+    @classmethod
+    def _distinct_node_ids(cls, nodes: Tuple[str, ...]) -> Tuple[str, ...]:
+        if any(not node.strip() for node in nodes):
+            raise ValueError("a node id must not be empty")
+        if len(set(nodes)) != len(nodes):
+            raise ValueError("node ids must be distinct")
+        return nodes
 
 
 # Policy

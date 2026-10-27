@@ -52,6 +52,20 @@ export interface ConnectionFormState {
   applyConnection: (connection: MqttConnectionInfo) => void;
 }
 
+/** Fields written to local storage. `migrate` must return this shape, not the storage envelope. */
+export type ConnectionPersisted = Pick<
+  ConnectionFormState,
+  | "user"
+  | "password"
+  | "agentBroker"
+  | "clientBroker"
+  | "port"
+  | "tlsConnection"
+  | "allowCertificates"
+  | "selectedPreset"
+  | "geofence"
+>;
+
 /**
  * Persisted WARA-PS connection form. Lives in a store (not component state) so
  * both the connection panel and the global auto-connect logic can read it.
@@ -99,29 +113,28 @@ export const useConnectionStore = create<ConnectionFormState>()(
     {
       name: "scenegems:connection-form",
       version: 2,
-      migrate: (persistedState, version) => {
+      // Zustand calls this with the stored state object (already unwrapped) and merges
+      // the return value onto the store. Host-local addresses are legitimate again: the
+      // backend resolves them to the Docker host gateway, which is how a broker started
+      // by another compose project (for example the OTG stack) is reached. Only an
+      // explicitly selected preset is refreshed, so a hand-typed address always survives.
+      migrate: (persistedState, version): ConnectionPersisted => {
         if (version >= 2 || !persistedState || typeof persistedState !== "object") {
-          return persistedState as ConnectionFormState;
+          return persistedState as ConnectionPersisted;
         }
-        const envelope = persistedState as { state?: ConnectionFormState };
-        const state = envelope.state ?? (persistedState as ConnectionFormState);
-        // Host-local addresses are legitimate again: the backend resolves them to the
-        // Docker host gateway, which is how a broker started by another compose project
-        // (for example the OTG stack) is reached. Only an explicitly selected preset is
-        // refreshed, so a hand-typed address always survives the migration.
+        const state = persistedState as ConnectionPersisted;
         if (state.selectedPreset !== "local_mqtt_connection") {
-          return persistedState as ConnectionFormState;
+          return state;
         }
-        const migrated = {
+        return {
           ...state,
           agentBroker: local_mqtt_connection.agent_broker,
           clientBroker: local_mqtt_connection.client_broker,
           port: local_mqtt_connection.port,
           tlsConnection: local_mqtt_connection.tls_connection,
         };
-        return envelope.state !== undefined ? { ...envelope, state: migrated } : migrated;
       },
-      partialize: (state) => ({
+      partialize: (state): ConnectionPersisted => ({
         user: state.user,
         password: state.password,
         agentBroker: state.agentBroker,

@@ -1,0 +1,128 @@
+import { describe, expect, it } from "vitest";
+import { nodeViewSchema, type NodeView } from "../../domain/cluster/schemas";
+import { sampleNode } from "../../test/fixtures/clusterViews";
+import {
+  capabilityLabel,
+  fullUsageQueueDepth,
+  nodeProblems,
+  planOfConfig,
+  planResources,
+  requiredCapabilities,
+  slotsByJobType,
+  startBlocker,
+} from "./resourcePlan";
+import { QUEUE_DEPTH_DEFAULTS } from "./wizard/wizardState";
+
+function node(id: string, capabilities: Record<string, number>, overrides: Record<string, unknown> = {}): NodeView {
+  const usage = Object.fromEntries(Object.entries(capabilities).map(([jobType, slots]) => [jobType, { slots, slots_in_use: 0 }]));
+  return nodeViewSchema.parse(sampleNode({ node_id: id, name: id, machine: `${id}-pc`, labels: { site: "lab" }, capabilities: usage, ...overrides }));
+}
+
+const PIPELINE = { scene_generation: 4, trajectory_generation: 4, "simulation.kinematic": 8, "monitoring.post_hoc": 4 };
+
+function config(runs: Record<string, unknown>[], resources: Record<string, unknown> = {}): Record<string, unknown> {
+  return { trajectories: { generator: "monitor_driven_rrt" }, execution: { runs }, resources };
+}
+
+describe("requiredCapabilities", () => {
+  it("needs scenes, trajectories, the simulation and the post hoc monitor by default", () => {
+    const required = requiredCapabilities(config([{}]));
+    expect(required.map((capability) => capability.jobType)).toEqual(["scene_generation", "trajectory_generation", "simulation.kinematic", "monitoring.post_hoc"]);
+    expect(required[1].reason).toBe("Every case plans its trajectories (monitor driven rrt).");
+  });
+
+  it("needs the monitoring job only for post hoc runs and the calibration only for repeats", () => {
+    const live = requiredCapabilities(config([{ monitor: "live" }, { monitor: "empty" }]));
+    expect(live.map((capability) => capability.stage)).toEqual(["generate_scene", "generate_trajectories", "simulate"]);
+    const repeated = requiredCapabilities(config([{ name: "nav", monitor: "post_hoc", repeats: 3 }, { monitor: "post_hoc", repeats: 2 }]));
+    expect(repeated.map((capability) => capability.stage)).toEqual(["generate_scene", "generate_trajectories", "simulate", "monitor", "calibrate"]);
+    expect(repeated[3].reason).toBe("The post hoc monitor judges nav and run 2.");
+    expect(repeated[4].reason).toBe("The repeats of nav and run 2 are compared.");
+  });
+});
+
+describe("nodeProblems", () => {
+  it("accepts an online, current node with the labels", () => {
+    expect(nodeProblems(node("a", PIPELINE), { site: "lab" })).toEqual([]);
+  });
+
+  it("names every reason a node cannot take jobs", () => {
+    const stale = node("a", PIPELINE, { status: "draining", out_of_date: true });
+    expect(nodeProblems(stale, { site: "sea", gpu: "true" })).toEqual([
+      "Draining: it takes no new jobs.",
+      "Out of date: its images differ from the master's release.",
+      "Lacks the labels site=sea, gpu=true.",
+    ]);
+    expect(nodeProblems(node("b", PIPELINE, { status: "offline" }), {})).toEqual(["Offline."]);
+  });
+});
+
+describe("planResources", () => {
+  const required = requiredCapabilities(config([{ repeats: 2 }]));
+  const nodes = [
+    node("a", { scene_generation: 2, trajectory_generation: 2 }),
+    node("b", { "simulation.kinematic": 6, "monitoring.post_hoc": 2 }),
+    node("c", { "simulation.kinematic": 4, "calibration.deviation": 1 }, { out_of_date: true }),
+  ];
+
+  it("covers with every usable node in full usage and reports what no node runs", () => {
+    const plan = planResources(required, nodes, { nodes: null, labels: {} });
+    expect(plan.usable.map((entry) => entry.node_id)).toEqual(["a", "b"]);
+    expect(plan.coverage.map((entry) => [entry.capability.jobType, entry.slots])).toEqual([
+      ["scene_generation", 2],
+      ["trajectory_generation", 2],
+      ["simulation.kinematic", 6],
+      ["monitoring.post_hoc", 2],
+      ["calibration.deviation", 0],
+    ]);
+    expect(plan.missing.map((capability) => capability.jobType)).toEqual(["calibration.deviation"]);
+    expect(startBlocker(plan)).toBe("No usable machine of the campaign runs repeat calibration.");
+  });
+
+  it("counts only the selected nodes and lists selected ids the master does not know", () => {
+    const plan = planResources(required.slice(0, 3), nodes, { nodes: ["b", "gone"], labels: {} });
+    expect(plan.usable.map((entry) => entry.node_id)).toEqual(["b"]);
+    expect(plan.missing.map((capability) => capability.jobType)).toEqual(["scene_generation", "trajectory_generation"]);
+    expect(plan.unknownNodes).toEqual(["gone"]);
+    expect(startBlocker(plan)).toBe("No usable machine of the campaign runs scene generation and trajectory generation.");
+    expect(startBlocker(planResources(required.slice(0, 3), nodes, { nodes: ["a", "b"], labels: {} }))).toBeNull();
+  });
+
+  it("does not count nodes without the required labels", () => {
+    expect(planResources(required.slice(0, 1), nodes, { nodes: null, labels: { site: "sea" } }).missing).toHaveLength(1);
+  });
+
+  it("blocks the start while the nodes are unknown", () => {
+    expect(startBlocker(null)).toBe("The cluster's machines are not known yet.");
+  });
+});
+
+describe("planOfConfig", () => {
+  it("reads the nodes and labels of a stored config", () => {
+    const nodes = [node("a", PIPELINE), node("b", PIPELINE, { labels: {} })];
+    const stored = config([{ monitor: "post_hoc", repeats: 1 }], { nodes: ["b"], required_labels: { site: "lab" }, priority: 0 });
+    expect(planOfConfig(stored, nodes).usable).toEqual([]);
+    expect(planOfConfig(config([{}], { nodes: [], required_labels: {} }), nodes).usable.map((entry) => entry.node_id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("full usage", () => {
+  it("adds the slots of usable nodes per job type", () => {
+    const nodes = [node("a", PIPELINE), node("b", { "simulation.kinematic": 40 }), node("c", { "simulation.kinematic": 99 }, { status: "offline" })];
+    expect(slotsByJobType(nodes)).toEqual({ scene_generation: 4, trajectory_generation: 4, "simulation.kinematic": 48, "monitoring.post_hoc": 4 });
+  });
+
+  it("sizes each queue cap to the slots of its stage, never below the default", () => {
+    expect(fullUsageQueueDepth({})).toEqual(QUEUE_DEPTH_DEFAULTS);
+    expect(fullUsageQueueDepth({ scene_generation: 40, "simulation.kinematic": 12, "calibration.deviation": 9 })).toEqual({
+      ...QUEUE_DEPTH_DEFAULTS,
+      generate_scene: 40,
+      calibrate: 9,
+    });
+  });
+
+  it("names capabilities without the comma of the cluster labels", () => {
+    expect(capabilityLabel("simulation.kinematic")).toBe("Kinematic simulation");
+    expect(capabilityLabel("custom.job")).toBe("custom.job");
+  });
+});

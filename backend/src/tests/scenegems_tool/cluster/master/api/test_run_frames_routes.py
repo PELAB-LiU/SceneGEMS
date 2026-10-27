@@ -86,6 +86,7 @@ def test_frames_are_requested_once_and_answered_with_the_job_then_the_frames(cli
     assert job["job_type"] == "monitoring.post_hoc" and job["state"] == "queued" and job["priority"] == FRAMES_PRIORITY
     assert job["idempotency_key"] == frames_key(run_record_id)
     assert set(job["requirements"]["fingerprints"].values()) <= set(EXPECTED.values()) and job["requirements"]["fingerprints"]
+    assert job["allowed_nodes"] == []  # the campaign may use every node
     payload = plane.jobs.get(job["job_id"]).payload
     assert payload["trajectories"] == STATE_LOG  # the simulation's own reference, pointer included
     assert payload["include_frames"] is True and payload["scenario_id"] == f"run-record-{run_record_id}"
@@ -98,6 +99,14 @@ def test_frames_are_requested_once_and_answered_with_the_job_then_the_frames(cli
     _run_job(plane, job["job_id"], {"frames": FRAMES, "passed": True})
     done = client.get(path).json()
     assert done["job"]["state"] == "succeeded" and done["frames"] == FRAMES
+
+
+def test_the_frames_job_keeps_to_the_campaigns_selected_nodes(client, plane, stores):
+    campaign = client.post(CAMPAIGNS_PATH, content=small_config(resources={"priority": 0, "nodes": [NODE, "lab-2"]}), headers=YAML).json()
+    stores.artifacts.insert_if_absent(STATE_LOG["sha256"], "trajectories", 4096, "application/json")
+    run_record_id = _run_record(stores, campaign["campaign_id"], artifacts={"state_log": STATE_LOG["sha256"]})
+    job = client.post(_path(campaign["campaign_id"], run_record_id)).json()["job"]
+    assert job["allowed_nodes"] == [NODE, "lab-2"]
 
 
 def test_without_the_simulation_job_the_reference_comes_from_the_artifact_record(client, plane, stores, campaign):

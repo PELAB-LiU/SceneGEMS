@@ -421,6 +421,15 @@
   font-size: var(--font-size-sm);
 }
 
+.camp-start-blocked {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid #f59e0b;
+  border-radius: var(--radius-sm);
+  background: rgba(245, 158, 11, 0.1);
+  font-size: var(--font-size-sm);
+}
+
 .camp-confirm {
   border: 1px solid rgba(239, 68, 68, 0.55);
   background: rgba(239, 68, 68, 0.09);

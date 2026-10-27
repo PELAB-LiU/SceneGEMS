@@ -10,7 +10,7 @@ import { ControlsBar } from "./ControlsBar";
 import { CoverageTable } from "./CoverageTable";
 import { EventsFeed } from "./EventsFeed";
 import { showCampaignResults } from "../results/showResults";
-import { useCampaignConfig, useCampaignEvents, useCampaignFeed } from "./useCampaignData";
+import { useCampaignConfig, useCampaignEvents, useCampaignFeed, useStartBlocker } from "./useCampaignData";
 
 function useNow(intervalMs: number): number {
   const [now, setNow] = useState(() => Date.now());
@@ -79,6 +79,7 @@ export function CampaignDetail({ campaignId, onBack }: CampaignDetailProps) {
   const config = useCampaignConfig(campaignId);
   const now = useNow(1_000);
   const { detail } = feed;
+  const startBlocker = useStartBlocker(config.data);
 
   if (feed.loading) {
     return (
@@ -175,7 +176,7 @@ export function CampaignDetail({ campaignId, onBack }: CampaignDetailProps) {
         </div>
       </div>
       {feed.error && <p className="meta warning">The numbers may be stale: {describeOperatorError(feed.error)}</p>}
-      <ControlsBar campaign={detail} onChanged={feed.applySummary} />
+      <ControlsBar campaign={detail} onChanged={feed.applySummary} startBlocker={startBlocker} />
       <Totals detail={detail} />
       <CoverageTable classes={detail.classes} runNames={names} />
       <Disclosure

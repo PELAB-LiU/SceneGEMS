@@ -153,6 +153,8 @@ describe("buildCampaignConfig", () => {
 
   it("writes only the resources that differ from the defaults", () => {
     const draft = exitDraft();
+    draft.resources.fullUsage = false;
+    draft.resources.nodes = ["node-b", "node-a"];
     draft.resources.labels = [
       { key: "site", value: "lab" },
       { key: "  ", value: "" },
@@ -160,7 +162,24 @@ describe("buildCampaignConfig", () => {
     draft.resources.queueDepth.simulate = 64;
     draft.resources.queueDepth.monitor = 32;
     draft.resources.priority = 5;
-    expect(buildCampaignConfig(draft, catalog).resources).toEqual({ required_labels: { site: "lab" }, queue_depth: { simulate: 64 }, priority: 5 });
+    expect(buildCampaignConfig(draft, catalog).resources).toEqual({ nodes: ["node-a", "node-b"], required_labels: { site: "lab" }, queue_depth: { simulate: 64 }, priority: 5 });
+  });
+
+  it("names no nodes and sizes the queues to the cluster's slots in full usage", () => {
+    const draft = exitDraft();
+    draft.resources.nodes = ["node-a"];
+    draft.resources.queueDepth.simulate = 4;
+    expect(buildCampaignConfig(draft, catalog).resources).toEqual({ priority: 0 });
+    const cluster: BuilderCatalog = { ...catalog, slots: { scene_generation: 40, "simulation.kinematic": 12, "monitoring.post_hoc": 64 } };
+    expect(buildCampaignConfig(draft, cluster).resources).toEqual({ queue_depth: { generate_scene: 40, monitor: 64 }, priority: 0 });
+  });
+
+  it("keeps the operator's queue caps when the machines are chosen", () => {
+    const draft = exitDraft();
+    draft.resources.fullUsage = false;
+    draft.resources.nodes = ["node-a"];
+    const cluster: BuilderCatalog = { ...catalog, slots: { scene_generation: 40 } };
+    expect(buildCampaignConfig(draft, cluster).resources).toEqual({ nodes: ["node-a"], priority: 0 });
   });
 
   it("writes the stop conditions that are set", () => {
