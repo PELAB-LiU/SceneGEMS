@@ -15,7 +15,7 @@ workbench gateway.
     GET  NODES_PATH/<node id>
     POST NODES_PATH/<node id>/drain      no new jobs; running ones finish
     POST NODES_PATH/<node id>/resume     ends the drain
-    POST NODES_PATH/<node id>/remove     forgets an offline node; 409 while it is not offline
+    POST NODES_PATH/<node id>/remove     forgets an offline node; 409 while it is not offline or holds a lease
     GET  STATUS_PATH                     master id, expected fingerprints, connected nodes
 
 The node view carries the machine the node runs on (null until a node that reports it says hello).
@@ -142,7 +142,7 @@ def _node_control_routes(plane: ControlPlane) -> APIRouter:
         if removed is None:
             raise HTTPException(status_code=404, detail=f"no node {node_id}")
         if not removed:
-            raise HTTPException(status_code=409, detail=f"node {node_id} is not offline; only an offline node can be removed")
+            raise HTTPException(status_code=409, detail=f"node {node_id} cannot be removed: only an offline node without leases can be")
         return {"removed": node_id}
 
     return router

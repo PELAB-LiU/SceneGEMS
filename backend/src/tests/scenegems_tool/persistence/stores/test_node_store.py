@@ -1,10 +1,10 @@
 import pytest
 
-from scenegems_tool.cluster.protocol.jobs import JobType
-from scenegems_tool.cluster.protocol.messages import Heartbeat
+from scenegems_tool.cluster.protocol.jobs import JobOutcome, JobState, JobType
+from scenegems_tool.cluster.protocol.messages import Heartbeat, JobResult
 from scenegems_tool.persistence.schema import NodeStatus
 from scenegems_tool.persistence.stores import CapabilityUsage
-from tests.scenegems_tool.persistence.stores.builders import START, make_hello, make_resources
+from tests.scenegems_tool.persistence.stores.builders import START, make_hello, make_resources, make_submission
 
 pytestmark = pytest.mark.postgres
 
@@ -109,6 +109,27 @@ def test_remove_offline_deletes_only_an_offline_node(node_store):
     assert node_store.get("node-a") is None
     assert [node.node_id for node in node_store.list_nodes()] == ["node-b"]
     assert node_store.remove_offline("node-a") is None
+
+
+def test_remove_offline_keeps_the_jobs_the_node_ran(node_store, job_store):
+    node_store.register(make_hello("node-a", slots={SCENE: 1}))
+    job = job_store.submit(make_submission()).job
+    lease = job_store.claim_next("node-a", 30.0)
+    job_store.accept(lease.lease_id, 30.0)
+    job_store.report_result(JobResult(lease_id=lease.lease_id, job_id=job.job_id, idempotency_key=job.idempotency_key, outcome=JobOutcome.SUCCEEDED, result={}, error=None, retryable=False))
+    node_store.set_status("node-a", NodeStatus.OFFLINE)
+    assert node_store.remove_offline("node-a") is True
+    finished = job_store.get(job.job_id)
+    assert finished.state == JobState.SUCCEEDED and finished.lease_owner is None
+
+
+def test_remove_offline_refuses_a_node_that_holds_a_lease(node_store, job_store):
+    node_store.register(make_hello("node-a", slots={SCENE: 1}))
+    job_store.submit(make_submission())
+    job_store.claim_next("node-a", 30.0)
+    node_store.set_status("node-a", NodeStatus.OFFLINE)
+    assert node_store.remove_offline("node-a") is False
+    assert node_store.get("node-a") is not None
 
 
 def test_a_removed_node_registers_anew(node_store):

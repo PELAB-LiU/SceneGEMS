@@ -16,7 +16,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from scenegems_tool.cluster.protocol.messages import Heartbeat, Hello
 from scenegems_tool.persistence.clock import Clock, utc_now
 from scenegems_tool.persistence.database import transaction
-from scenegems_tool.persistence.schema import NodeCapabilityRow, NodeFingerprintRow, NodeRow, NodeStatus
+from scenegems_tool.persistence.schema import JobRow, NodeCapabilityRow, NodeFingerprintRow, NodeRow, NodeStatus
+from scenegems_tool.persistence.stores.job_lifecycle import ACTIVE_STATES
 from scenegems_tool.persistence.stores.node_records import NodeRecord
 
 
@@ -101,9 +102,10 @@ class NodeStore:
             return sorted(session.execute(statement).scalars())
 
     def remove_offline(self, node_id: str) -> Optional[bool]:
-        """Deletes an offline node with its capabilities and fingerprints; None for an unknown node, False for one that is not offline.
+        """Deletes an offline node with its capabilities and fingerprints; None for an unknown node, False for one that is not offline or still holds a lease.
 
-        Jobs and results keep the node id they carry. A node that is heard from again registers anew.
+        The node's finished and queued jobs lose their lease owner, which has a foreign key to the node; run records and events keep the node id they carry.
+        A node that is heard from again registers anew.
         """
         with transaction(self._sessions) as session:
             row = self._load(session, node_id, lock=True)
@@ -111,6 +113,9 @@ class NodeStore:
                 return None
             if row.status != NodeStatus.OFFLINE:
                 return False
+            if session.execute(select(JobRow.id).where(JobRow.lease_owner == node_id, JobRow.state.in_(ACTIVE_STATES)).limit(1)).first() is not None:
+                return False
+            session.execute(update(JobRow).where(JobRow.lease_owner == node_id).values(lease_owner=None))
             session.delete(row)
             return True
 
