@@ -1044,28 +1044,6 @@ body,
   font-size: var(--font-size-sm);
 }
 
-.collapsible-section > summary::-webkit-details-marker {
-  display: none;
-}
-
-.collapsible-section > summary::before {
-  content: "";
-  display: inline-block;
-  width: 0.5em;
-  height: 0.5em;
-  border-right: 2px solid var(--text-muted);
-  border-bottom: 2px solid var(--text-muted);
-  transform: rotate(-45deg);
-  transition: transform 0.12s ease;
-  flex-shrink: 0;
-  margin-top: -0.1em;
-}
-
-.collapsible-section[open] > summary::before {
-  transform: rotate(45deg);
-  margin-top: 0.06em;
-}
-
 .collapsible-section[open] > summary {
   color: var(--text);
 }
@@ -1102,7 +1080,7 @@ body,
   cursor: pointer;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
   font-size: var(--font-size-sm);
@@ -1122,6 +1100,7 @@ body,
 }
 
 .frame-subpanel-badge {
+  margin-left: auto;
   font-size: var(--font-size-xs);
   font-weight: 500;
   color: #94a3b8;
@@ -2562,13 +2541,34 @@ input[type="range"] {
   flex: 0 0 auto;
 }
 
+/* Every native details element: a 40px toggle row with the same chevron as the Disclosure component. */
 details > summary {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: var(--space-3);
   min-height: var(--hit-target);
+  list-style: none;
   cursor: pointer;
+}
+
+details > summary::-webkit-details-marker {
+  display: none;
+}
+
+details > summary::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 0.5em;
+  height: 0.5em;
+  border-right: 2px solid var(--text-muted);
+  border-bottom: 2px solid var(--text-muted);
+  transform: rotate(-45deg);
+  transition: transform 0.12s ease;
+}
+
+details[open] > summary::before {
+  transform: rotate(45deg);
 }
 
 .status-bad {

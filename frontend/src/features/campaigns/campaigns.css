@@ -687,7 +687,7 @@
 }
 
 .camp-config > summary .meta {
-  margin: 0;
+  margin: 0 0 0 auto;
 }
 
 .camp-config-title {
