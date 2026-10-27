@@ -111,6 +111,22 @@
   color: var(--text);
 }
 
+/* The identifiers from the YAML are detail: shown when "Show technical names" is on. */
+.ce-editor:not([data-show-keys]) .ce-key {
+  display: none;
+}
+
+.ce-keys-toggle {
+  margin: 0 0 0 auto;
+  padding: 0 var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.ce-section-disclosure {
+  flex-shrink: 0;
+}
+
 .ce-key {
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
@@ -131,7 +147,7 @@
 }
 
 .ce-number {
-  width: 14em;
+  width: 12em;
   text-align: right;
 }
 
@@ -197,7 +213,12 @@
   margin-top: var(--space-3);
 }
 
-.ce-group > summary {
+.ce-group > summary,
+.ce-header > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--hit-target);
   cursor: pointer;
   font-weight: 600;
 }

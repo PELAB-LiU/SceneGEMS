@@ -1,3 +1,4 @@
+import { Disclosure } from "../../../components/Disclosure";
 import { usePlaybackStore } from "../../../domain/playback/playbackStore";
 import { handleResetPlayback } from "./resetPlayback";
 
@@ -65,20 +66,29 @@ export function AnimationPlaybackControls({
         />
       </label>
 
-      <label className="field">
-        <span>Speed ({speed.toFixed(1)}x)</span>
-        <input
-          type="range"
-          min={0.5}
-          max={240}
-          step={0.5}
-          value={speed}
-          onChange={(e) => setSpeed(Number(e.target.value))}
-        />
-      </label>
-      <p className="meta animation-control-meta">
-        Animation time: {currentTimestamp}s | Latest: {latestTimestamp}s
-      </p>
+      <Disclosure
+        id="playback:speed"
+        variant="link"
+        headingLevel={null}
+        title="Speed and timing"
+        openTitle="Hide speed and timing"
+        hint={`${speed.toFixed(1)}x`}
+      >
+        <label className="field">
+          <span>Speed ({speed.toFixed(1)}x)</span>
+          <input
+            type="range"
+            min={0.5}
+            max={240}
+            step={0.5}
+            value={speed}
+            onChange={(e) => setSpeed(Number(e.target.value))}
+          />
+        </label>
+        <p className="meta animation-control-meta">
+          Animation time: {currentTimestamp}s | Latest: {latestTimestamp}s
+        </p>
+      </Disclosure>
     </section>
   );
 }

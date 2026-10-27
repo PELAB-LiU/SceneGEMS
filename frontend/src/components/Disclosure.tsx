@@ -16,7 +16,7 @@ export interface DisclosureProps {
    */
   variant?: "card" | "plain" | "link";
   /** The heading level wrapped around the toggle; `null` for none. */
-  headingLevel?: 2 | 3 | 4 | null;
+  headingLevel?: 2 | 3 | 4 | 5 | 6 | null;
   /** Keep the content mounted while closed (hidden), for content that holds state of its own. */
   keepMounted?: boolean;
   className?: string;

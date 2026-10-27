@@ -622,6 +622,7 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
                 onExportObstacleTypes={() =>
                   exportTextFile(obstacleTypesText, "static_obstacle_types.yaml", "text/yaml")
                 }
+                onContinue={() => setActiveView("sceneGeneration")}
               />
             </div>
           ) : activeView === "sceneGeneration" ? (

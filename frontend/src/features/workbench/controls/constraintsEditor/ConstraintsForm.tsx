@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Disclosure } from "../../../../components/Disclosure";
 import { ConstraintsTable } from "./ConstraintsTable";
 import { buildConstraintsModel, type FieldModel, type GroupModel, type ListModel, type ModelOptions, type ScalarFieldModel } from "./fieldModel";
 import { IssueList, ScalarControl, type EditHandler } from "./ScalarControl";
@@ -29,7 +30,7 @@ function ScalarFieldRow({ field, onEdit, ariaLabel }: { field: ScalarFieldModel;
   );
 }
 
-function FieldView({ field, onEdit, nested }: { field: FieldModel; onEdit: EditHandler; nested: boolean }) {
+function FieldView({ field, onEdit, nested, scope }: { field: FieldModel; onEdit: EditHandler; nested: boolean; scope: string }) {
   switch (field.nodeType) {
     case "scalar":
       return <ScalarFieldRow field={field} onEdit={onEdit} ariaLabel={field.label || field.key} />;
@@ -40,10 +41,10 @@ function FieldView({ field, onEdit, nested }: { field: FieldModel; onEdit: EditH
             {field.label} <code className="ce-key">{field.key}</code>
           </summary>
           {field.description ? <p className="ce-description">{field.description}</p> : null}
-          <GroupView group={field} onEdit={onEdit} />
+          <GroupView group={field} onEdit={onEdit} scope={scope} />
         </details>
       ) : (
-        <GroupView group={field} onEdit={onEdit} />
+        <GroupView group={field} onEdit={onEdit} scope={scope} collapsible />
       );
     case "table":
       return nested ? (
@@ -57,7 +58,7 @@ function FieldView({ field, onEdit, nested }: { field: FieldModel; onEdit: EditH
         <ConstraintsTable table={field} onEdit={onEdit} />
       );
     case "list":
-      return <ListView list={field} onEdit={onEdit} />;
+      return <ListView list={field} onEdit={onEdit} scope={scope} />;
     case "empty":
       return (
         <p className="ce-empty">
@@ -75,23 +76,57 @@ function FieldView({ field, onEdit, nested }: { field: FieldModel; onEdit: EditH
   }
 }
 
-function GroupView({ group, onEdit }: { group: GroupModel; onEdit: EditHandler }) {
+function slug(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+/**
+ * The sections of a group. At the top of a file with several titled sections, each section is a
+ * disclosure (the first open, the others closed until asked for) so a long file is a short list of topics.
+ */
+function GroupView({ group, onEdit, scope, collapsible = false }: { group: GroupModel; onEdit: EditHandler; scope: string; collapsible?: boolean }) {
+  const titled = group.sections.filter((section) => section.title).length;
   return (
     <div className="ce-sections">
-      {group.sections.map((section, sectionIndex) => (
-        <section key={sectionIndex} className="ce-section">
-          {section.title ? <h5 className="ce-section-title">{section.title}</h5> : null}
-          {section.note ? <p className="ce-description">{section.note}</p> : null}
-          {section.items.map((item) => (
-            <FieldView key={pathId(item.path)} field={item} onEdit={onEdit} nested />
-          ))}
-        </section>
-      ))}
+      {group.sections.map((section, sectionIndex) => {
+        const content = (
+          <>
+            {section.note ? <p className="ce-description">{section.note}</p> : null}
+            {section.items.map((item) => (
+              <FieldView key={pathId(item.path)} field={item} onEdit={onEdit} nested scope={scope} />
+            ))}
+          </>
+        );
+        if (collapsible && titled >= 2 && section.title) {
+          const count = section.items.length;
+          return (
+            <Disclosure
+              key={sectionIndex}
+              id={`ce:${scope}:${slug(section.title)}`}
+              title={section.title}
+              hint={`${count} ${count === 1 ? "setting" : "settings"}`}
+              defaultOpen={sectionIndex === 0}
+              variant="card"
+              headingLevel={4}
+              keepMounted
+              className="ce-section-disclosure"
+            >
+              <div className="ce-section">{content}</div>
+            </Disclosure>
+          );
+        }
+        return (
+          <section key={sectionIndex} className="ce-section">
+            {section.title ? <h5 className="ce-section-title">{section.title}</h5> : null}
+            {content}
+          </section>
+        );
+      })}
     </div>
   );
 }
 
-function ListView({ list, onEdit }: { list: ListModel; onEdit: EditHandler }) {
+function ListView({ list, onEdit, scope }: { list: ListModel; onEdit: EditHandler; scope: string }) {
   return (
     <div className="ce-list">
       {list.label ? <h5 className="ce-section-title">{list.label}</h5> : null}
@@ -99,7 +134,7 @@ function ListView({ list, onEdit }: { list: ListModel; onEdit: EditHandler }) {
       {list.items.map((item, index) => (
         <div key={pathId(item.path)} className="ce-list-item">
           <div className="ce-list-item-body">
-            <FieldView field={item} onEdit={onEdit} nested />
+            <FieldView field={item} onEdit={onEdit} nested scope={scope} />
           </div>
           <button type="button" onClick={() => onEdit({ kind: "removeItem", path: list.path, index })}>
             Remove
@@ -114,6 +149,8 @@ function ListView({ list, onEdit }: { list: ListModel; onEdit: EditHandler }) {
 }
 
 export interface ConstraintsFormProps extends ModelOptions {
+  /** Names the file in the remembered open or closed state of its sections, for example "colregs". */
+  scope?: string;
   text: string;
   onTextChange: (text: string) => void;
   /** Called by the button of the parse error message. */
@@ -121,7 +158,7 @@ export interface ConstraintsFormProps extends ModelOptions {
 }
 
 /** The form generated from the YAML text. Every edit writes the whole text back through `onTextChange`. */
-export function ConstraintsForm({ text, onTextChange, onShowYaml, protectedRows, tableMinRows }: ConstraintsFormProps) {
+export function ConstraintsForm({ scope = "constraints", text, onTextChange, onShowYaml, protectedRows, tableMinRows }: ConstraintsFormProps) {
   const model = useMemo(() => buildConstraintsModel(text, { protectedRows, tableMinRows }), [text, protectedRows, tableMinRows]);
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -185,7 +222,7 @@ export function ConstraintsForm({ text, onTextChange, onShowYaml, protectedRows,
           {editError}
         </p>
       ) : null}
-      <FieldView field={model.root} onEdit={onEdit} nested={false} />
+      <FieldView field={model.root} onEdit={onEdit} nested={false} scope={scope} />
     </div>
   );
 }

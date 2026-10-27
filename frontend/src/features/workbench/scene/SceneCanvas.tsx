@@ -1,3 +1,4 @@
+import { PopoverMenu } from "../../../components/PopoverMenu";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import {
   captureSvgScreenshot,
@@ -163,14 +164,20 @@ export function SceneCanvas({ generatedScene }: SceneCanvasProps = {}) {
         setSceneViewMode(sceneViewMode === "cartesian" ? "nautical" : "cartesian");
       }}
     >
-      {sceneViewMode === "cartesian" ? "Nautical GPS" : "Encounter canvas"}
+      {sceneViewMode === "cartesian" ? "Show nautical map" : "Show encounter canvas"}
     </button>
   );
   const exportToolbar = (
-    <div className="scene-export-toolbar toolbar-row" aria-label="Export scene">
+    <PopoverMenu
+      label="Export"
+      ariaLabel="Export scene"
+      align="end"
+      placement={sceneViewMode === "cartesian" ? "bottom" : "top"}
+      className="scene-export-menu"
+    >
       {sceneViewMode === "cartesian" ? (
         <button type="button" onClick={onScreenshot}>
-          Screenshot
+          Screenshot (image)
         </button>
       ) : null}
       <button
@@ -178,16 +185,16 @@ export function SceneCanvas({ generatedScene }: SceneCanvasProps = {}) {
         disabled={exportActiveFrames.length === 0}
         onClick={() => exportFramesAsCsv(exportActiveFrames, exportPrefix)}
       >
-        CSV
+        Table (CSV)
       </button>
       <button
         type="button"
         disabled={exportActiveFrames.length === 0}
         onClick={() => exportFramesAsGeoJson(exportActiveFrames, exportPrefix)}
       >
-        GeoJSON
+        Map data (GeoJSON)
       </button>
-    </div>
+    </PopoverMenu>
   );
 
   if (sceneViewMode === "cartesian") {

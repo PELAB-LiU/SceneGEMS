@@ -145,6 +145,19 @@ body,
   min-height: 0;
 }
 
+.domain-file-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+}
+
+.domain-file-tools > select {
+  flex: 1 1 260px;
+  min-width: 0;
+  max-width: 560px;
+}
+
 .domain-config-dual-panel {
   flex: 1;
   min-height: 0;
@@ -2640,36 +2653,21 @@ pre {
   }
 }
 
-.scene-export-toolbar {
+/* In the nautical map the export menu and the map switch sit at the bottom right of the map. */
+.scene-panel > .scene-export-menu {
   position: absolute;
-  right: 8px;
-  bottom: 8px;
+  right: var(--space-2);
+  bottom: var(--space-2);
   z-index: 1300;
-  pointer-events: auto;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  justify-content: flex-end;
-  max-width: min(100%, 300px);
-  background: rgba(15, 23, 42, 0.94);
-  border: 1px solid var(--border);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-}
-
-.scene-export-toolbar button {
-  font-size: var(--font-size-xs);
-  padding: 2px 7px;
-  min-height: var(--hit-target);
 }
 
 .scene-view-toggle-btn {
   position: absolute;
-  right: 8px;
-  bottom: 52px;
+  right: var(--space-2);
+  bottom: 56px;
   z-index: 1301;
   pointer-events: auto;
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   padding: var(--space-2) var(--space-3);
   min-height: var(--hit-target);
   border-radius: var(--radius);
@@ -3105,4 +3103,34 @@ pre {
 
 .geofence-own-ship-hint {
   margin: 8px 0;
+}
+
+/* Before you start: what the simulation still needs, in plain words. */
+.readiness-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: var(--space-2) 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+}
+
+.readiness-list li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.readiness-list .is-ok {
+  color: #86efac;
+}
+
+.readiness-list .is-missing {
+  color: var(--text-muted);
+}
+
+.readiness-mark {
+  flex: 0 0 1.25em;
+  text-align: center;
+  font-weight: 700;
 }

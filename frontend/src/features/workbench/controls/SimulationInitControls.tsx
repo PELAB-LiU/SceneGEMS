@@ -1,4 +1,5 @@
-import { forwardRef, useEffect, useId, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { Disclosure } from "../../../components/Disclosure";
 import { usePersistedState } from "../../../app/usePersistedState";
 import { usePlaybackStore } from "../../../domain/playback/playbackStore";
 import type { ActorStaticInfo } from "../../../domain/simulation/types";
@@ -186,9 +187,6 @@ function removeLegacyVesselDraftsWithModels(): void {
 
 export const SimulationInitControls = forwardRef<SimulationInitControlsHandle, Props>(
   function SimulationInitControls({ streamControls, onScenarioVesselCount }, ref) {
-  const baseId = useId();
-  const simulationInitialized = usePlaybackStore((s) => s.simulationInitialized);
-  const warapsStatus = usePlaybackStore((s) => s.warapsStatus);
   const visualizedActors = usePlaybackStore((s) => s.latestGeneratedScene?.scene?.actors ?? EMPTY_ACTORS);
   const animationActors = usePlaybackStore((s) => s.frames[0]?.actors ?? visualizedActors);
   const simulationActors = usePlaybackStore((s) => s.simulationFrames[0]?.actors ?? EMPTY_ACTORS);
@@ -366,14 +364,13 @@ export const SimulationInitControls = forwardRef<SimulationInitControlsHandle, P
 
   return (
     <>
-      <details
-        className="sim-init-subpanel sim-init-subpanel-collapsible"
-        open
-        aria-labelledby={`${baseId}-agent-conn`}
+      <Disclosure
+        id="simulation:agent-connections"
+        title="Agent connections"
+        hint={`${vesselConnectionDrafts.length} ${vesselConnectionDrafts.length === 1 ? "vessel" : "vessels"}`}
+        headingLevel={4}
+        className="sim-init-subpanel"
       >
-        <summary>
-          <h4 id={`${baseId}-agent-conn`}>Agent connection</h4>
-        </summary>
         <div style={{ maxHeight: 220, overflow: "auto" }}>
           <table className="sim-init-table">
             <thead>
@@ -454,16 +451,15 @@ export const SimulationInitControls = forwardRef<SimulationInitControlsHandle, P
             </tbody>
           </table>
         </div>
-      </details>
+      </Disclosure>
 
-      <details
-        className="sim-init-subpanel sim-init-subpanel-collapsible"
-        open
-        aria-labelledby={`${baseId}-vessel-models`}
+      <Disclosure
+        id="simulation:vessel-physics-models"
+        title="Vessel physics models"
+        hint="Optional: the server makes one if you do not"
+        headingLevel={4}
+        className="sim-init-subpanel"
       >
-        <summary>
-          <h4 id={`${baseId}-vessel-models`}>Vessel Physics Models</h4>
-        </summary>
         <p className="meta" style={{ marginTop: 0 }}>
           Load a Gazebo SDF model per vessel, export it, or clear it to let the server
           generate one automatically.
@@ -530,16 +526,15 @@ export const SimulationInitControls = forwardRef<SimulationInitControlsHandle, P
             </tbody>
           </table>
         </div>
-      </details>
+      </Disclosure>
 
-      <details
-        className="sim-init-subpanel sim-init-subpanel-collapsible"
-        open
-        aria-labelledby={`${baseId}-sim-params`}
+      <Disclosure
+        id="simulation:parameters"
+        title="Simulation parameters"
+        hint={`${simulatorType}, speed ${simulationSpeed}`}
+        headingLevel={4}
+        className="sim-init-subpanel"
       >
-        <summary>
-          <h4 id={`${baseId}-sim-params`}>Simulation parameters</h4>
-        </summary>
         <label className="field">
           <span>Simulator type</span>
           <select
@@ -563,14 +558,14 @@ export const SimulationInitControls = forwardRef<SimulationInitControlsHandle, P
           onChange={setSimulationSpeed}
         />
 
-        <details
+        <Disclosure
+          id="simulation:wind"
+          title="Wind"
+          hint="m/s"
+          variant="plain"
+          headingLevel={5}
           className="sim-init-nested-collapsible"
-          aria-labelledby={`${baseId}-wind`}
         >
-          <summary>
-            <h5 id={`${baseId}-wind`}>Wind</h5>
-            <span className="meta sim-init-nested-summary-hint">m/s</span>
-          </summary>
           <div className="sim-init-nested-body">
             <div className="sim-init-param-grid">
               <PreciseParam
@@ -599,16 +594,16 @@ export const SimulationInitControls = forwardRef<SimulationInitControlsHandle, P
               />
             </div>
           </div>
-        </details>
+        </Disclosure>
 
-        <details
+        <Disclosure
+          id="simulation:waves"
+          title="Waves"
+          hint="m/s"
+          variant="plain"
+          headingLevel={5}
           className="sim-init-nested-collapsible"
-          aria-labelledby={`${baseId}-waves`}
         >
-          <summary>
-            <h5 id={`${baseId}-waves`}>Waves</h5>
-            <span className="meta sim-init-nested-summary-hint">m/s</span>
-          </summary>
           <div className="sim-init-nested-body">
             <div className="sim-init-param-grid">
               <PreciseParam
@@ -652,13 +647,9 @@ export const SimulationInitControls = forwardRef<SimulationInitControlsHandle, P
               />
             </div>
           </div>
-        </details>
-      </details>
+        </Disclosure>
+      </Disclosure>
 
-      <p className="meta" style={{ marginTop: 6 }}>
-        Requirements: scenario initialized={simulationInitialized ? "yes" : "no"} | WARA-PS status=
-        {warapsStatus}
-      </p>
     </>
   );
   }
