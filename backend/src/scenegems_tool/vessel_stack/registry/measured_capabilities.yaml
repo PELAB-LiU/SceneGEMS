@@ -100,7 +100,12 @@ simulation_layer/gazebo:
     settling from rest. Cross-track error 1.18 m (calm 0.000 m) on the 5 m hull, 0.57 m (0.002 m) on
     the 30 m hull. Repeats stayed bit-identical; the finer cells slow the world (achieved 5.2x, 4.5x
     and 2.4x against 6.9x in calm water). Measured on the conda-forge Gazebo 8 stand-in image of a
-    4-core Linux VM with the same asv_wave_sim commit and rename; wave realism is not validated.
+    4-core Linux VM with the same asv_wave_sim commit and rename. 2026-10-27, the image's own build
+    (OSRF packages, ./build.sh --simulation) on the 12-core Windows host with Docker Desktop, 5 m hull
+    only, same run: heave 0.945 m (calm 0.002 m), pitch 8.97 degrees, roll 1.07 degrees and
+    cross-track error 1.18 m, matching the stand-in; achieved 3.17x calm and 1.38x in waves. Calm
+    repeats were bit-identical; in waves one repeat had 2 late thrust commands and the repeats ended
+    0.001 m apart. The 30 and 100 m hulls were not re-run. Wave realism is not validated.
 
 ardupilot_gazebo_plugin:
   repeatability_tier: bounded
