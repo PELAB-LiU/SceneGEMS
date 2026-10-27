@@ -302,12 +302,13 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
     return Math.min(maxHeight, Math.max(BOTTOM_PANEL_MIN_HEIGHT, heightFromBottom));
   }, []);
 
-  // The simulation view gives the encounter canvas and its timeline two thirds by default.
-  const defaultTopFraction = activeView === "simulation" ? 2 : 1;
+  // The simulation view gives the encounter canvas and its timeline three fifths by default.
+  const defaultTopFraction = activeView === "simulation" ? 3 : 1;
+  const defaultBottomFraction = activeView === "simulation" ? 2 : 1;
   const simulationBottomPanelGridRows =
     bottomPanelHeight !== null
       ? `minmax(0, 1fr) ${BOTTOM_PANEL_RESIZER_HEIGHT}px ${bottomPanelHeight}px`
-      : `minmax(0, ${defaultTopFraction}fr) ${BOTTOM_PANEL_RESIZER_HEIGHT}px minmax(0, 1fr)`;
+      : `minmax(0, ${defaultTopFraction}fr) ${BOTTOM_PANEL_RESIZER_HEIGHT}px minmax(0, ${defaultBottomFraction}fr)`;
 
   const onBottomPaneResizeStart = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {

@@ -10,6 +10,7 @@
 
 .ce-tabs {
   display: flex;
+  flex-wrap: wrap;
   flex-shrink: 0;
   border-bottom: 1px solid var(--border);
 }
@@ -391,4 +392,21 @@
   height: 1px;
   overflow: hidden;
   clip: rect(0 0 0 0);
+}
+
+@media (max-width: 640px) {
+  .ce-field {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: var(--space-1);
+  }
+
+  .ce-field > .ce-description,
+  .ce-field > .ce-issues {
+    grid-column: 1;
+  }
+
+  .ce-number {
+    width: 8.5em;
+    max-width: 100%;
+  }
 }

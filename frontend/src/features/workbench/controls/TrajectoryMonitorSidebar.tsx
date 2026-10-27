@@ -246,7 +246,7 @@ export function TrajectoryMonitorSidebar({ previewOnly = false }: { previewOnly?
           {(
             [
               ["runtime_data", "Live data"],
-              ["overall_analysis", "Analysis charts"],
+              ["overall_analysis", "Charts"],
             ] as const
           ).map(([id, label]) => (
             <button
