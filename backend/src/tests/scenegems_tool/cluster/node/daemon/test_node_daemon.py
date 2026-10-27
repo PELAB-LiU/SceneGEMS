@@ -1,17 +1,16 @@
-"""The node daemon against a scripted master over TLS: pairing, hello, leases, reconnects and refusals.
+"""The node daemon against a scripted master over plain HTTP: hello, leases, reconnects and refusals.
 
 Jobs are scripted (conftest.ScriptedJobs), so these tests need no Docker; the Docker test
 in test_node_daemon_docker.py runs real job containers.
 """
 
 import json
+import socket
 import time
 
 import pytest
 
 from scenegems_tool.cluster.node.daemon.node_daemon import DaemonStopped
-from scenegems_tool.cluster.node.daemon.pairing.ca_pinning import CaPinMismatch
-from scenegems_tool.cluster.node.daemon.pairing.pairing_state import PairingState
 from scenegems_tool.cluster.node.job_report import JobFailed
 from scenegems_tool.cluster.protocol.jobs import JobOutcome, JobType
 from scenegems_tool.cluster.protocol.messages import (
@@ -35,9 +34,8 @@ from scenegems_tool.cluster.protocol.messages import (
 )
 from scenegems_tool.cluster.protocol.node_description import CapabilityOffer
 from scenegems_tool.cluster.protocol.version import PROTOCOL_VERSION
-from scenegems_tool.cluster.security.certificates.certificate_authority import CertificateAuthority
-from scenegems_tool.cluster.security.credentials.node_credentials import revoke_node_credential
 from tests.scenegems_tool.cluster.node.daemon.conftest import FINGERPRINTS, make_job, make_offer, wait_for
+from tests.scenegems_tool.cluster.node.daemon.fake_master import FakeMaster
 
 QUIET_S = 0.6  # how long a frame that must not come is waited for
 
@@ -55,17 +53,14 @@ def assert_no_frame(connection, kind, quiet_s: float = QUIET_S):
     assert not connection.received(kind), f"unexpected {kind.__name__}: {connection.received(kind)}"
 
 
-# Pairing
+# Start-up
 
 
-def test_first_start_pairs_and_says_hello(fake_master, node_configuration, start_daemon):
+def test_the_node_says_hello_under_its_name_without_any_pairing(fake_master, node_configuration, start_daemon):
     configuration = node_configuration()
     daemon, connection, hello = connect(fake_master, start_daemon, configuration)
 
-    [request] = fake_master.pairing_requests
-    assert request.node_name == "test-node" and request.labels == {"site": "lab"}
-    response = PairingState(configuration.state_dir).load().response
-    assert connection.node_id == hello.node_id == response.node_id
+    assert connection.node_id == hello.node_id == "test-node"  # the node id is the node name
     assert hello.node_name == "test-node"
     assert hello.software_revision == "test-revision"
     assert hello.capabilities == [CapabilityOffer(job_type=JobType.SCENE_GENERATION, slots=1), CapabilityOffer(job_type=JobType.SIMULATION_KINEMATIC, slots=2)]
@@ -74,8 +69,7 @@ def test_first_start_pairs_and_says_hello(fake_master, node_configuration, start
     assert hello.resources.cpus >= 1 and hello.resources.free_disk_mb > 0
     assert hello.running_lease_ids == []
     assert hello.machine is None
-    # The CA the job containers mount is the paired one.
-    assert (configuration.trust_dir / "ca_certificate.pem").read_text() == fake_master.security.ca_certificate_pem
+    assert not configuration.state_dir.exists() or not any(configuration.state_dir.glob("pairing*"))  # nothing is stored to pair
 
 
 def test_hello_names_the_machine_from_the_configuration(fake_master, node_configuration, start_daemon):
@@ -90,60 +84,24 @@ def test_heartbeats_follow_the_welcome_interval(fake_master, node_configuration,
     assert first.slots_in_use == {} and second.running_lease_ids == []
 
 
-def test_later_start_reuses_the_pairing_without_a_token(fake_master, node_configuration, start_daemon):
-    first = node_configuration()
-    daemon, _, hello = connect(fake_master, start_daemon, first)
-    daemon.stop()
+def test_the_node_starts_before_its_master_and_connects_when_the_master_appears(node_configuration, start_daemon):
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    daemon = start_daemon(node_configuration(SCENEGEMS_MASTER_URL=f"http://127.0.0.1:{port}"))
+    time.sleep(0.6)  # several refused connections, no master yet
+    assert daemon.thread.is_alive() and daemon.error is None and not daemon.daemon.connected.is_set()
 
-    again = node_configuration(SCENEGEMS_PAIRING_TOKEN="")
-    assert again.pairing_token is None
-    _, _, second_hello = connect(fake_master, start_daemon, again)
-    assert second_hello.node_id == hello.node_id
-    assert len(fake_master.pairing_requests) == 1
-
-
-def test_a_wrong_ca_hash_is_refused_before_the_token_is_sent(fake_master, node_configuration, start_daemon):
-    other_ca = CertificateAuthority.create("other-master").certificate_pem.decode()
-    from scenegems_tool.cluster.node.daemon.pairing.ca_pinning import certificate_sha256
-
-    configuration = node_configuration(SCENEGEMS_MASTER_CA_SHA256=certificate_sha256(other_ca))
-    error = start_daemon(configuration).wait_exit()
-    assert isinstance(error, CaPinMismatch)
-    assert fake_master.pairing_requests == []
-    assert not PairingState(configuration.state_dir).pairing_file.exists()
+    with FakeMaster(port=port) as master:
+        connection = master.wait_for_connection()
+        assert connection.expect(Hello).node_id == "test-node"
+        wait_for(daemon.daemon.connected.is_set)
 
 
-def test_a_master_serving_another_ca_is_refused(fake_master, node_configuration, start_daemon):
-    fake_master.served_ca_certificate_pem = CertificateAuthority.create("impostor").certificate_pem.decode()
-    error = start_daemon(node_configuration()).wait_exit()
-    assert isinstance(error, CaPinMismatch)
-    assert "Refusing to pair" in str(error)
-    assert fake_master.pairing_requests == []
-
-
-def test_a_used_token_is_refused(fake_master, node_configuration, start_daemon, tmp_path):
-    configuration = node_configuration()
-    daemon, _, _ = connect(fake_master, start_daemon, configuration)
-    daemon.stop()
-    from scenegems_tool.cluster.node.daemon.configuration.node_configuration import NodeConfiguration
-    from scenegems_tool.cluster.node.daemon.pairing.pairing_client import PairingRefused
-    from tests.scenegems_tool.cluster.node.daemon.conftest import node_values
-
-    reused = NodeConfiguration.from_values(node_values(fake_master, tmp_path / "other-state", SCENEGEMS_PAIRING_TOKEN=configuration.pairing_token))
-    error = start_daemon(reused).wait_exit()
-    assert isinstance(error, PairingRefused)
-    assert "HTTP 403" in str(error)
-
-
-def test_a_revoked_credential_stops_the_daemon(fake_master, node_configuration, start_daemon):
-    configuration = node_configuration()
-    daemon, _, hello = connect(fake_master, start_daemon, configuration)
-    daemon.stop()
-    revoke_node_credential(fake_master.security.store, hello.node_id)
-
-    error = start_daemon(node_configuration(SCENEGEMS_PAIRING_TOKEN="")).wait_exit()
-    assert isinstance(error, DaemonStopped)
-    assert "HTTP 403" in str(error) and "pair" in str(error)
+def test_a_node_connects_to_a_master_that_was_never_told_about_it(fake_master, node_configuration, start_daemon):
+    _, first, _ = connect(fake_master, start_daemon, node_configuration(SCENEGEMS_NODE_NAME="alpha"))
+    _, second, _ = connect(fake_master, start_daemon, node_configuration(SCENEGEMS_NODE_NAME="beta"))
+    assert (first.node_id, second.node_id) == ("alpha", "beta")
 
 
 # Leases
@@ -304,7 +262,7 @@ def test_shutdown_releases_running_leases(fake_master, node_configuration, start
 
 def test_a_master_of_another_protocol_version_stops_the_daemon(fake_master, node_configuration, start_daemon):
     def newer_welcome(_hello):
-        return json.dumps({"type": "welcome", "protocol_version": PROTOCOL_VERSION + 1, "master_id": fake_master.security.master_id, "heartbeat_interval_s": 1.0, "lease_timeout_s": 3.0})
+        return json.dumps({"type": "welcome", "protocol_version": PROTOCOL_VERSION + 1, "master_id": fake_master.master_id, "heartbeat_interval_s": 1.0, "lease_timeout_s": 3.0})
 
     fake_master.hello_reply = newer_welcome
     error = start_daemon(node_configuration()).wait_exit()
@@ -325,7 +283,7 @@ def test_a_welcome_from_another_master_stops_the_daemon(fake_master, node_config
 
 
 def test_an_unreachable_master_is_retried_until_stopped(node_configuration, start_daemon):
-    configuration = node_configuration(SCENEGEMS_MASTER_URL="https://127.0.0.1:9")  # nothing listens on the discard port
+    configuration = node_configuration(SCENEGEMS_MASTER_URL="http://127.0.0.1:9")  # nothing listens on the discard port
     daemon = start_daemon(configuration)
     time.sleep(0.5)
     assert daemon.thread.is_alive()

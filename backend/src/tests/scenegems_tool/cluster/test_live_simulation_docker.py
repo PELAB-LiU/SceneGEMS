@@ -1,9 +1,9 @@
 """A live simulation end to end: a browser on the live channel watches a kinematic job that a node container runs.
 
 The master is real and runs in this process (control plane on in-memory stores, the node API
-over TLS on all interfaces, the operator listener with the live channel on loopback, one event
+over plain HTTP on all interfaces, the operator listener with the live channel on loopback, one event
 loop as in the master process). The node is the scenegems-node image started from
-deploy/node/docker-compose.yml; it pairs with the master and runs the job in a runner
+deploy/node/docker-compose.yml; it connects to the master, which it trusts without pairing, and runs the job in a runner
 container of the scenario execution image. The browser subscribes to the job's instance topic
 with a speed as soon as the job is leased, and the frames of the paced run reach it.
 
@@ -37,19 +37,14 @@ from scenegems_tool.cluster.master.live.topics import create_live_channel
 from scenegems_tool.cluster.master.scheduling.fingerprint_policy import ExpectedFingerprints
 from scenegems_tool.cluster.master.server import listeners
 from scenegems_tool.cluster.master.settings import Listener, MasterSettings
-from scenegems_tool.cluster.node.daemon.pairing.ca_pinning import certificate_sha256
 from scenegems_tool.cluster.node.subsystem import IMAGE_ENVIRONMENT_VARIABLES, Subsystem, subsystem_image
 from scenegems_tool.cluster.protocol.jobs import JobSubmission, JobType
 from scenegems_tool.cluster.protocol.live import instance_topic, job_instance
 from scenegems_tool.cluster.protocol.routes import JOBS_PATH, LIVE_PATH
-from scenegems_tool.cluster.security.broker.broker_config import ClusterBrokerSettings
-from scenegems_tool.cluster.security.credentials.pairing_tokens import create_pairing_token
-from scenegems_tool.cluster.security.master_security import initialize_master_security
 from scenegems_tool.persistence.clock import utc_now
 from scenegems_tool.vessel_stack.simulation_layers.kinematic.kinematic_runner import run_kinematic_replay
 from tests.scenegems_tool.cluster.master.fake_stores import InMemoryJobStore, InMemoryNodeStore
 from tests.scenegems_tool.cluster.node.conftest import _vessel
-from tests.scenegems_tool.cluster.security.conftest import HOOK_SECRET, MASTER_PASSWORD, MASTER_USERNAME
 from utils.file_system_utils import REPO_ROOT
 
 pytestmark = [pytest.mark.docker, pytest.mark.slow]
@@ -80,29 +75,19 @@ def _image(subsystem: Subsystem) -> str:
 class Master:
     """The master's node API and operator listeners on one event loop in a thread."""
 
-    def __init__(self, security_dir: Path):
+    def __init__(self):
         self.node_port, self.operator_port = _free_port(), _free_port()
-        self.security = initialize_master_security(
-            security_dir,
-            master_id=f"m{uuid.uuid4().hex[:6]}",
-            addresses=["127.0.0.1", HOST],
-            master_broker_username=MASTER_USERNAME,
-            master_broker_password=MASTER_PASSWORD,
-            broker=ClusterBrokerSettings(auth_hook_url=f"http://{HOST}:1/unused", auth_hook_secret=HOOK_SECRET),
-            broker_public_host=HOST,
-        )
+        self.master_id = f"m{uuid.uuid4().hex[:6]}"
         nodes = InMemoryNodeStore(utc_now)
-        self.plane = ControlPlane(self.security.master_id, nodes, InMemoryJobStore(nodes, utc_now), ExpectedFingerprints.fixed({}))
-        apps = create_master_apps(self.plane, self.security, HOOK_SECRET, live=create_live_channel(self.plane))
+        self.plane = ControlPlane(self.master_id, nodes, InMemoryJobStore(nodes, utc_now), ExpectedFingerprints.fixed({}))
+        apps = create_master_apps(self.plane, live=create_live_channel(self.plane))
         settings = MasterSettings(
-            security_dir=security_dir,
+            master_id=self.master_id,
             database_url="postgresql://unused",
-            broker_hook_secret=HOOK_SECRET,
             node_api=Listener("0.0.0.0", self.node_port),
             operator=Listener("127.0.0.1", self.operator_port),
-            broker_hook=Listener("127.0.0.1", 0),
         )
-        self.servers = listeners(settings, apps)[:2]
+        self.servers = listeners(settings, apps)
         self.thread = threading.Thread(target=lambda: asyncio.run(self._serve()), name="master", daemon=True)
 
     async def _serve(self) -> None:
@@ -136,13 +121,13 @@ class Master:
 
 
 @pytest.fixture(scope="module")
-def master(tmp_path_factory):
+def master():
     if _docker("info", check=False).returncode != 0:
         pytest.skip("Docker engine is not reachable")
     for image in (f"scenegems-node:{NODE_IMAGE_TAG}", _image(Subsystem.SCENARIO_EXECUTION)):
         if _docker("image", "inspect", image, check=False).returncode != 0:
             pytest.fail(f"Image {image} is missing; build it from this checkout or set the test image tags")
-    master = Master(tmp_path_factory.mktemp("security")).start()
+    master = Master().start()
     try:
         yield master
     finally:
@@ -154,10 +139,8 @@ def node(master, tmp_path_factory):
     node_name = f"live-{uuid.uuid4().hex[:6]}"
     env_file = tmp_path_factory.mktemp("node") / "node.env"
     values = {
-        "SCENEGEMS_MASTER_URL": f"https://{HOST}:{master.node_port}",
-        "SCENEGEMS_MASTER_ID": master.security.master_id,
-        "SCENEGEMS_MASTER_CA_SHA256": certificate_sha256(master.security.ca_certificate_pem),
-        "SCENEGEMS_PAIRING_TOKEN": create_pairing_token(master.security.store).token,
+        "SCENEGEMS_MASTER_URL": f"http://{HOST}:{master.node_port}",
+        "SCENEGEMS_MASTER_ID": master.master_id,
         "SCENEGEMS_NODE_NAME": node_name,
         "SCENEGEMS_NODE_CAPABILITIES": "simulation.kinematic:1",
         "SCENEGEMS_NODE_IMAGE_TAG": NODE_IMAGE_TAG,
@@ -167,7 +150,7 @@ def node(master, tmp_path_factory):
     env_file.write_text("".join(f"{key}={value}\n" for key, value in values.items()))
     compose = ["docker", "compose", "-f", str(COMPOSE_FILE), "--env-file", str(env_file)]
     subprocess.run([*compose, "up", "-d"], capture_output=True, text=True, check=True, timeout=300)
-    container = f"scenegems-node-{master.security.master_id}-{node_name}"
+    container = f"scenegems-node-{master.master_id}-{node_name}"
     try:
         deadline = time.monotonic() + TIMEOUT_S
         while not [view for view in master.get(NODES_PATH) if view["connected"]]:

@@ -1,7 +1,7 @@
 """A scripted node on the master's control WebSocket, speaking through the protocol codec."""
 
 from contextlib import ExitStack
-from typing import Dict, List, Optional, Type, TypeVar
+from typing import List, Optional, Type, TypeVar
 
 import anyio
 from starlette.testclient import TestClient
@@ -23,7 +23,7 @@ from scenegems_tool.cluster.protocol.messages import (
     Welcome,
 )
 from scenegems_tool.cluster.protocol.model_base import ProtocolFrame
-from scenegems_tool.cluster.protocol.routes import AUTHORIZATION_HEADER, NODE_CONTROL_PATH, bearer
+from scenegems_tool.cluster.protocol.routes import NODE_CONTROL_PATH
 from tests.scenegems_tool.persistence.stores.builders import make_resources
 
 RECEIVE_TIMEOUT_S = 10.0  # a guard against a test that waits for a frame that never comes; never reached when the test passes
@@ -37,18 +37,15 @@ async def _receive_within(stream, timeout_s: float):
 
 
 class FakeNode:
-    def __init__(self, client: TestClient, credential: Optional[str], hello: Hello):
+    def __init__(self, client: TestClient, hello: Hello):
         self.client = client
-        self.credential = credential
         self.hello_frame = hello
         self.node_id = hello.node_id
         self._stack = ExitStack()
         self.socket = None
 
-    def open(self, headers: Optional[Dict[str, str]] = None) -> "FakeNode":
-        if headers is None:
-            headers = {AUTHORIZATION_HEADER: bearer(self.credential)} if self.credential else {}
-        self.socket = self._stack.enter_context(self.client.websocket_connect(NODE_CONTROL_PATH, headers=headers))
+    def open(self) -> "FakeNode":
+        self.socket = self._stack.enter_context(self.client.websocket_connect(NODE_CONTROL_PATH))
         return self
 
     def connect(self, running_lease_ids: List[str] = ()) -> Welcome:

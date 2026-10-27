@@ -29,9 +29,9 @@ def channel(plane):
 
 
 @pytest.fixture
-def client(plane, security, channel):
+def client(plane, channel):
     """The master's node API with the operator routes and the live channel on one test client."""
-    app = create_node_api_app(plane, security, run_timers=False)
+    app = create_node_api_app(plane, run_timers=False)
     app.include_router(operator_router(plane))
     app.include_router(live_router(channel))
     with TestClient(app) as client:

@@ -6,7 +6,9 @@
 # The values come from .env (template: deploy/node/.env.example). The project, the container,
 # the network and the volumes are all named scenegems-node-<master id>-<node name>, so one
 # machine can run nodes for several masters, and several nodes of one master, side by side.
-# Pairing state and the cache of downloaded artifacts live in the state volume; remove it to pair again.
+# The node needs no master to start: it dials SCENEGEMS_MASTER_URL and retries until the master is up.
+# Master and nodes trust the VPN, so there is nothing to pair. The cache of downloaded artifacts
+# lives in the state volume.
 name: scenegems-node-${SCENEGEMS_MASTER_ID:?set SCENEGEMS_MASTER_ID in the env file}-${SCENEGEMS_NODE_NAME:?set SCENEGEMS_NODE_NAME in the env file}
 
 services:
@@ -19,8 +21,7 @@ services:
     environment:
       SCENEGEMS_MASTER_URL: ${SCENEGEMS_MASTER_URL:?set SCENEGEMS_MASTER_URL in the env file}
       SCENEGEMS_MASTER_ID: ${SCENEGEMS_MASTER_ID}
-      SCENEGEMS_MASTER_CA_SHA256: ${SCENEGEMS_MASTER_CA_SHA256:?set SCENEGEMS_MASTER_CA_SHA256 in the env file}
-      SCENEGEMS_PAIRING_TOKEN: ${SCENEGEMS_PAIRING_TOKEN:-}
+      SCENEGEMS_BROKER_PORT: ${SCENEGEMS_BROKER_PORT:-1883}
       SCENEGEMS_NODE_NAME: ${SCENEGEMS_NODE_NAME}
       SCENEGEMS_NODE_MACHINE: ${SCENEGEMS_NODE_MACHINE:-}
       SCENEGEMS_NODE_CAPABILITIES: ${SCENEGEMS_NODE_CAPABILITIES:?set SCENEGEMS_NODE_CAPABILITIES in the env file}
@@ -31,8 +32,6 @@ services:
       # Paths inside this container and the Docker names job containers use; not for the env file.
       SCENEGEMS_NODE_STATE_DIR: /var/lib/scenegems-node
       SCENEGEMS_NODE_ARTIFACT_CACHE_DIR: /var/lib/scenegems-node/artifacts
-      SCENEGEMS_NODE_TRUST_DIR: /etc/scenegems/trust
-      SCENEGEMS_NODE_TRUST_SOURCE: scenegems-node-${SCENEGEMS_MASTER_ID}-${SCENEGEMS_NODE_NAME}-trust
       SCENEGEMS_DOCKER_NETWORK: scenegems-node-${SCENEGEMS_MASTER_ID}-${SCENEGEMS_NODE_NAME}
       SCENEGEMS_RUNTIME_VOLUME: scenegems-node-${SCENEGEMS_MASTER_ID}-${SCENEGEMS_NODE_NAME}-runtime
       # Subsystem images; empty means the locally built default (scenegems_tool/cluster/node/subsystem.py).
@@ -45,14 +44,12 @@ services:
       # Generated compose files and stack files of the node's instances; SITL and Gazebo mount it too.
       - runtime:/app/assets/runtime_assets
       - state:/var/lib/scenegems-node
-      # The master's CA certificate alone; job containers mount this volume read-only.
-      - trust:/etc/scenegems/trust
     networks:
       - node
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
-# Pooled services join this network to reach the master's broker; it is removed with the node.
+# Pooled services join this network; it is removed with the node.
 networks:
   node:
     name: scenegems-node-${SCENEGEMS_MASTER_ID}-${SCENEGEMS_NODE_NAME}
@@ -62,5 +59,3 @@ volumes:
     name: scenegems-node-${SCENEGEMS_MASTER_ID}-${SCENEGEMS_NODE_NAME}-runtime
   state:
     name: scenegems-node-${SCENEGEMS_MASTER_ID}-${SCENEGEMS_NODE_NAME}-state
-  trust:
-    name: scenegems-node-${SCENEGEMS_MASTER_ID}-${SCENEGEMS_NODE_NAME}-trust

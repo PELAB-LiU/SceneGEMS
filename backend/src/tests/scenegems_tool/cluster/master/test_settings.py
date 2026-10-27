@@ -5,16 +5,15 @@ import pytest
 from scenegems_tool.cluster.master.settings import DEFAULT_OPERATOR_ALLOWED_ORIGINS, ArtifactSettings, BrokerClientSettings, Listener, MasterSettings, SettingMissing, parse_allowed_origins
 
 REQUIRED = {
-    "SCENEGEMS_SECURITY_DIR": "/etc/scenegems/security",
+    "SCENEGEMS_MASTER_ID": "lab-master",
     "SCENEGEMS_DATABASE_URL": "postgresql+psycopg://scenegems:secret@postgres:5432/scenegems",
-    "SCENEGEMS_BROKER_AUTH_HOOK_SECRET": "hook-secret-0123456789abcdefghijklmnop",
 }
 
 
 def test_defaults():
     settings = MasterSettings.from_environment(REQUIRED)
-    assert settings.security_dir == Path("/etc/scenegems/security")
-    assert (settings.node_api, settings.operator, settings.broker_hook) == (Listener("0.0.0.0", 8443), Listener("127.0.0.1", 5174), Listener("127.0.0.1", 8090))
+    assert settings.master_id == "lab-master"
+    assert (settings.node_api, settings.operator) == (Listener("0.0.0.0", 8443), Listener("127.0.0.1", 5174))
     assert settings.release_manifest is None
     assert settings.artifacts == ArtifactSettings(Path("/var/lib/scenegems/artifacts"), 256 * 1024 * 1024, 600.0, 3600.0)
     assert settings.broker is None
@@ -45,12 +44,10 @@ def test_overrides():
         REQUIRED,
         SCENEGEMS_API_LISTEN_PORT="9443",
         SCENEGEMS_OPERATOR_LISTEN_HOST="0.0.0.0",
-        SCENEGEMS_BROKER_HOOK_LISTEN_HOST="0.0.0.0",
-        SCENEGEMS_BROKER_HOOK_LISTEN_PORT="8091",
         SCENEGEMS_RELEASE_MANIFEST="/etc/scenegems/release.json",
     )
     settings = MasterSettings.from_environment(environ)
-    assert settings.node_api == Listener("0.0.0.0", 9443) and settings.operator == Listener("0.0.0.0", 5174) and settings.broker_hook == Listener("0.0.0.0", 8091)
+    assert settings.node_api == Listener("0.0.0.0", 9443) and settings.operator == Listener("0.0.0.0", 5174)
     assert settings.release_manifest == Path("/etc/scenegems/release.json")
 
 
@@ -61,24 +58,22 @@ def test_required_settings(missing):
         MasterSettings.from_environment(environ)
 
 
-def test_a_relative_security_folder_is_relative_to_the_env_file(tmp_path):
-    settings = MasterSettings.from_environment(dict(REQUIRED, SCENEGEMS_SECURITY_DIR="./security_data"), env_file_folder=tmp_path)
-    assert settings.security_dir == tmp_path / "security_data"
+@pytest.mark.parametrize("master_id", ["Lab Master", "lab_master", "lab/master", "-lab", "a" * 64])
+def test_the_master_id_must_be_a_scope_name(master_id):
+    with pytest.raises(ValueError, match="SCENEGEMS_MASTER_ID"):
+        MasterSettings.from_environment(dict(REQUIRED, SCENEGEMS_MASTER_ID=master_id))
 
 
 def test_secrets_stay_out_of_the_repr():
     text = repr(MasterSettings.from_environment(REQUIRED))
-    assert REQUIRED["SCENEGEMS_DATABASE_URL"] not in text and REQUIRED["SCENEGEMS_BROKER_AUTH_HOOK_SECRET"] not in text
+    assert REQUIRED["SCENEGEMS_DATABASE_URL"] not in text
 
 
-def test_the_broker_login_needs_a_host_and_the_masters_password():
-    assert MasterSettings.from_environment(dict(REQUIRED, SCENEGEMS_BROKER_HOST="cluster-broker")).broker is None
-    assert MasterSettings.from_environment(dict(REQUIRED, SCENEGEMS_BROKER_MASTER_PASSWORD="broker-secret-0123456789")).broker is None
-    environ = dict(REQUIRED, SCENEGEMS_BROKER_HOST="cluster-broker", SCENEGEMS_BROKER_MASTER_PASSWORD="broker-secret-0123456789")
-    assert MasterSettings.from_environment(environ).broker == BrokerClientSettings("cluster-broker", 8883, "", "broker-secret-0123456789")
-    environ.update(SCENEGEMS_BROKER_PORT="18883", SCENEGEMS_BROKER_MASTER_USERNAME="observer")
-    settings = MasterSettings.from_environment(environ)
-    assert (settings.broker.port, settings.broker.username) == (18883, "observer")
-    assert "broker-secret" not in repr(settings)
+def test_the_cluster_broker_needs_only_a_host():
+    assert MasterSettings.from_environment(REQUIRED).broker is None
+    environ = dict(REQUIRED, SCENEGEMS_BROKER_HOST="cluster-broker")
+    assert MasterSettings.from_environment(environ).broker == BrokerClientSettings("cluster-broker", 1883)
+    environ.update(SCENEGEMS_BROKER_PORT="11883")
+    assert MasterSettings.from_environment(environ).broker.port == 11883
     with pytest.raises(ValueError, match="SCENEGEMS_BROKER_PORT"):
-        MasterSettings.from_environment(dict(environ, SCENEGEMS_BROKER_PORT="tls"))
+        MasterSettings.from_environment(dict(environ, SCENEGEMS_BROKER_PORT="plain"))

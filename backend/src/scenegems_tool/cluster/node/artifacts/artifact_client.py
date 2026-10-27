@@ -1,9 +1,8 @@
-"""The node's HTTPS client of the master's artifact routes (cluster/master/api/artifact_routes.py).
+"""The node's HTTP client of the master's artifact routes (cluster/master/api/artifact_routes.py).
 
-Like every other call to the master it verifies the server against the pinned CA, sends
-the node credential as a bearer header and bypasses proxies from the environment
-(daemon/pairing/ca_pinning.open_url). Both directions are gzip on the wire: downloads ask
-for the stored gzip bytes, uploads send a compressed body.
+Plain HTTP on the VPN: the node names itself in the node id header and bypasses proxies
+from the environment. Both directions are gzip on the wire: downloads ask for the stored
+gzip bytes, uploads send a compressed body.
 
 Errors are ArtifactTransferError with `retryable`, which the job runner hands on to the
 master: a lost connection, a timeout or a 5xx answer is retried here a few times with
@@ -16,17 +15,15 @@ import hashlib
 import http.client
 import json
 import logging
-import ssl
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import zlib
-from typing import Callable, Optional, Union
+from typing import Callable, Optional
 
-from scenegems_tool.cluster.node.daemon.pairing.ca_pinning import open_url
 from scenegems_tool.cluster.protocol.artifacts import JSON_MEDIA_TYPE, ArtifactKind, ArtifactRef
-from scenegems_tool.cluster.protocol.routes import ARTIFACTS_PATH, AUTHORIZATION_HEADER, bearer
+from scenegems_tool.cluster.protocol.routes import ARTIFACTS_PATH, NODE_ID_HEADER
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +33,11 @@ BACKOFF_S = 0.5  # doubles per attempt: 0.5, 1 and 2 s between four attempts
 COMPRESS_LEVEL = 6
 READ_CHUNK_BYTES = 1024 * 1024
 RETRIED_STATUSES = {408, 429, 500, 502, 503, 504}
+
+
+def open_url(request: urllib.request.Request, timeout_s: float):
+    """Open an HTTP request directly: proxies from the environment are not used for the master."""
+    return urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=timeout_s)
 
 
 class ArtifactTransferError(RuntimeError):
@@ -56,8 +58,7 @@ class ArtifactClient:
     def __init__(
         self,
         master_url: str,
-        credential: str,
-        context: Union[ssl.SSLContext, Callable[[], ssl.SSLContext]],  # or how to make it, on first use
+        node_id: str,
         *,
         timeout_s: float = TIMEOUT_S,
         attempts: int = ATTEMPTS,
@@ -65,18 +66,11 @@ class ArtifactClient:
         sleep: Callable[[float], None] = time.sleep,
     ):
         self.master_url = master_url.rstrip("/")
-        self._credential = credential
-        self._context_source = context
-        self._context: Optional[ssl.SSLContext] = context if isinstance(context, ssl.SSLContext) else None
+        self._node_id = node_id
         self._timeout_s = timeout_s
         self._attempts = max(1, attempts)
         self._backoff_s = backoff_s
         self._sleep = sleep
-
-    def context(self) -> ssl.SSLContext:
-        if self._context is None:
-            self._context = self._context_source()
-        return self._context
 
     def url(self, sha256: str, **query: Optional[str]) -> str:
         parameters = urllib.parse.urlencode({key: value for key, value in query.items() if value is not None})
@@ -89,10 +83,10 @@ class ArtifactClient:
         return self._with_retries(f"download artifact {sha256}", lambda: self._download_once(sha256, max_bytes))
 
     def _download_once(self, sha256: str, max_bytes: Optional[int]) -> bytes:
-        request = urllib.request.Request(self.url(sha256), method="GET", headers={AUTHORIZATION_HEADER: bearer(self._credential), "Accept-Encoding": "gzip"})
+        request = urllib.request.Request(self.url(sha256), method="GET", headers={NODE_ID_HEADER: self._node_id, "Accept-Encoding": "gzip"})
         digest = hashlib.sha256()
         content = bytearray()
-        with open_url(request, self.context(), self._timeout_s) as response:
+        with open_url(request, self._timeout_s) as response:
             encoding = (response.headers.get("Content-Encoding") or "identity").strip().lower()
             decompressor = zlib.decompressobj(wbits=31) if encoding == "gzip" else None
             while True:
@@ -122,11 +116,11 @@ class ArtifactClient:
         sha256 = hashlib.sha256(data).hexdigest()
         body = gzip.compress(data, compresslevel=COMPRESS_LEVEL, mtime=0)
         url = self.url(sha256, kind=kind.value, job_id=job_id, field=field)
-        headers = {AUTHORIZATION_HEADER: bearer(self._credential), "Content-Type": media_type, "Content-Encoding": "gzip", "Content-Length": str(len(body))}
+        headers = {NODE_ID_HEADER: self._node_id, "Content-Type": media_type, "Content-Encoding": "gzip", "Content-Length": str(len(body))}
 
         def upload_once() -> dict:
             request = urllib.request.Request(url, data=body, method="PUT", headers=headers)
-            with open_url(request, self.context(), self._timeout_s) as response:
+            with open_url(request, self._timeout_s) as response:
                 return json.loads(response.read())
 
         answer = self._with_retries(f"upload artifact {sha256}", upload_once)
@@ -148,8 +142,6 @@ class ArtifactClient:
                     raise ArtifactTransferError(f"Cannot {what}: the master answered HTTP {error.code}{detail}", retryable=error.code not in (404, 413), status=error.code) from error
                 failure = ArtifactTransferError(f"Cannot {what}: the master answered HTTP {error.code}{detail}", retryable=True, status=error.code)
             except urllib.error.URLError as error:
-                if isinstance(error.reason, ssl.SSLCertVerificationError):
-                    raise ArtifactTransferError(f"Cannot {what}: the master's certificate does not verify: {error.reason}", retryable=True) from error
                 failure = ArtifactTransferError(f"Cannot {what}: {error.reason}", retryable=True)
             except (OSError, http.client.HTTPException, zlib.error, ValueError) as error:
                 failure = ArtifactTransferError(f"Cannot {what}: {type(error).__name__}: {error}", retryable=True)

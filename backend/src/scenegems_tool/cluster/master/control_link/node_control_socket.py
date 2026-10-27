@@ -1,38 +1,34 @@
-"""The node's control WebSocket on the master: authentication, the Hello handshake, the frame loop.
+"""The node's control WebSocket on the master: the Hello handshake and the frame loop.
 
-A connection goes through four steps:
+Every machine on the VPN is trusted, so there is no authentication. A connection goes
+through three steps:
 
-    1. The node opens the socket with its credential as a bearer header (routes.py).
-       A missing or wrong credential gets ProtocolError(unauthorized) and close 1008.
-    2. The first frame must be Hello, within ControlTiming.hello_timeout_s, and must name
-       the node the credential belongs to. Another protocol version gets
-       ProtocolError(version_mismatch) and close 1002; anything else invalid gets
-       ProtocolError(malformed_frame) and close 1002.
-    3. The control plane registers the node, reconciles its leases and sends Welcome.
-    4. Every later frame goes to the control plane. A malformed frame is answered with
+    1. The first frame must be Hello, within ControlTiming.hello_timeout_s; it names the
+       node. Another protocol version gets ProtocolError(version_mismatch) and close 1002;
+       anything else invalid gets ProtocolError(malformed_frame) and close 1002.
+    2. The control plane registers the node, reconciles its leases and sends Welcome. A node
+       that connects again under the same id replaces its earlier connection.
+    3. Every later frame goes to the control plane. A malformed frame is answered with
        ProtocolError and the connection stays; a version change mid-connection closes it.
 """
 
 import asyncio
 import logging
-from typing import Awaitable, Callable, Optional, Union
+from typing import Optional, Union
 
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from scenegems_tool.cluster.master.control_plane import ControlPlane
 from scenegems_tool.cluster.master.registry.node_session import NodeSession
+from scenegems_tool.cluster.scope_names import is_scope_name
 from scenegems_tool.cluster.protocol.codec import MalformedFrame, decode_node_message, encode
 from scenegems_tool.cluster.protocol.messages import Hello, ProtocolError, ProtocolErrorCode
 from scenegems_tool.cluster.protocol.model_base import ProtocolFrame
-from scenegems_tool.cluster.protocol.routes import AUTHORIZATION_HEADER, credential_from_authorization
 from scenegems_tool.cluster.protocol.version import ProtocolVersionMismatch
 
 logger = logging.getLogger(__name__)
 
-CLOSE_POLICY_VIOLATION = 1008  # not authenticated, or the Hello names another node
 CLOSE_PROTOCOL_ERROR = 1002  # another protocol version, or no valid Hello
-
-Authenticate = Callable[[str], Awaitable[Optional[str]]]  # credential to node id, None when invalid
 
 
 class WebSocketControlSocket:
@@ -68,18 +64,11 @@ class WebSocketControlSocket:
         await self.close(close_code, code.value)
 
 
-async def serve_node_control(websocket: WebSocket, plane: ControlPlane, authenticate: Authenticate) -> None:
+async def serve_node_control(websocket: WebSocket, plane: ControlPlane) -> None:
     await websocket.accept()
     socket = WebSocketControlSocket(websocket)
-    node_id = await authenticate(credential_from_authorization(websocket.headers.get(AUTHORIZATION_HEADER, "")))
-    if node_id is None:
-        await socket.refuse(ProtocolErrorCode.UNAUTHORIZED, "Missing or invalid node credential", CLOSE_POLICY_VIOLATION)
-        return
     hello = await _receive_hello(socket, plane.timing.hello_timeout_s)
     if hello is None:
-        return
-    if hello.node_id != node_id:
-        await socket.refuse(ProtocolErrorCode.UNAUTHORIZED, f"The Hello names node {hello.node_id!r}, the credential belongs to {node_id!r}", CLOSE_POLICY_VIOLATION)
         return
 
     session = await plane.open_session(hello, socket)
@@ -125,5 +114,8 @@ async def _receive_hello(socket: WebSocketControlSocket, timeout_s: float) -> Op
         return None
     if not isinstance(frame, Hello):
         await socket.refuse(ProtocolErrorCode.MALFORMED_FRAME, f"The first frame must be hello, got {frame.type}", CLOSE_PROTOCOL_ERROR)
+        return None
+    if not is_scope_name(frame.node_id):  # it becomes a topic level and part of Docker names
+        await socket.refuse(ProtocolErrorCode.MALFORMED_FRAME, f"Invalid node id {frame.node_id!r}: use 1 to 63 lowercase letters, digits and hyphens", CLOSE_PROTOCOL_ERROR)
         return None
     return frame

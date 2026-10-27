@@ -10,9 +10,12 @@ kinematic simulation takes a live monitor, and calibration.deviation is a job ty
 
 Version 3 (Phase 5): Hello may name the node's machine, and running simulations are observed
 live (Observe from the master, ObservationFrames from the node).
+
+Version 4: no pairing, credentials or TLS. A node names itself in its Hello (its node id is its
+node name) and in the node id header of the artifact routes; master and nodes trust the VPN.
 """
 
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 
 
 class ProtocolVersionMismatch(ValueError):

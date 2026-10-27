@@ -7,16 +7,15 @@ from scenegems_tool.cluster.master.live.topics import NodesTopic, create_live_ch
 from scenegems_tool.cluster.protocol.routes import LIVE_PATH
 from tests.scenegems_tool.cluster.master.live.fake_broker import FakeBroker
 from tests.scenegems_tool.cluster.master.live.live_browser import LiveBrowser
-from tests.scenegems_tool.cluster.security.conftest import HOOK_SECRET
 
 
 def _paths(app):
     return {getattr(route, "path", None) for route in app.routes}
 
 
-def test_the_live_channel_is_on_the_operator_listener_only(plane, security):
-    apps = create_master_apps(plane, security, HOOK_SECRET)
-    assert LIVE_PATH in _paths(apps.operator) and LIVE_PATH not in _paths(apps.node_api) | _paths(apps.broker_hook)
+def test_the_live_channel_is_on_the_operator_listener_only(plane):
+    apps = create_master_apps(plane)
+    assert LIVE_PATH in _paths(apps.operator) and LIVE_PATH not in _paths(apps.node_api)
 
 
 def test_a_browser_subscribes_pings_and_leaves(plane):

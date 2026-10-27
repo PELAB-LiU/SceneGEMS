@@ -4,8 +4,6 @@ import pytest
 
 from scenegems_tool.cluster.node.daemon import __main__ as entry_point
 from scenegems_tool.cluster.node.daemon.node_daemon import DaemonStopped
-from scenegems_tool.cluster.node.daemon.pairing.ca_pinning import CaPinMismatch
-from scenegems_tool.cluster.node.daemon.pairing.node_pairing import NotPaired
 from scenegems_tool.cluster.protocol.version import ProtocolVersionMismatch
 from tests.scenegems_tool.cluster.node.daemon.configuration.test_node_configuration import VALID
 
@@ -24,10 +22,7 @@ def test_an_invalid_configuration_exits_with_2(environment, caplog):
     assert "SCENEGEMS_MASTER_URL is not set" in caplog.text
 
 
-@pytest.mark.parametrize(
-    "error, code",
-    [(NotPaired("no token"), 3), (CaPinMismatch("other CA"), 3), (DaemonStopped("revoked"), 4), (ProtocolVersionMismatch(2), 4), (None, 0)],
-)
+@pytest.mark.parametrize("error, code", [(DaemonStopped("another master"), 4), (ProtocolVersionMismatch(2), 4), (None, 0)])
 def test_daemon_outcomes_map_to_exit_codes(environment, monkeypatch, error, code, caplog):
     for key, value in VALID.items():
         monkeypatch.setenv(key, value)

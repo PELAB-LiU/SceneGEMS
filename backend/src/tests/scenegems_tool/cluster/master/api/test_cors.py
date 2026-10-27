@@ -6,8 +6,7 @@ from starlette.testclient import TestClient
 
 from scenegems_tool.cluster.master.api.master_apps import create_master_apps, create_operator_app
 from scenegems_tool.cluster.master.api.operator_routes import NODES_PATH, STATUS_PATH
-from scenegems_tool.cluster.protocol.routes import CAMPAIGNS_PATH, CATALOG_PATH, PAIRING_PATH
-from tests.scenegems_tool.cluster.security.conftest import HOOK_SECRET
+from scenegems_tool.cluster.protocol.routes import CAMPAIGNS_PATH, CATALOG_PATH, NODE_CONTROL_PATH
 
 UI = "http://localhost:5173"
 UI_BY_ADDRESS = "http://127.0.0.1:5173"
@@ -82,19 +81,17 @@ def test_the_workbench_gateway_behind_the_routes_is_covered_too(memory_plane):
         assert client.get("/health", headers={"Origin": UI}).headers["access-control-allow-origin"] == UI
 
 
-def test_the_node_api_and_the_broker_hook_have_no_cors(memory_plane, security):
-    apps = create_master_apps(memory_plane, security, HOOK_SECRET)
+def test_the_node_api_has_no_cors(memory_plane):
+    apps = create_master_apps(memory_plane)
     with TestClient(apps.node_api) as client:
-        response = preflight(client, PAIRING_PATH)
+        response = preflight(client, NODE_CONTROL_PATH)
         assert "access-control-allow-origin" not in response.headers and response.status_code != 200
-    with TestClient(apps.broker_hook) as client:
-        assert "access-control-allow-origin" not in preflight(client, "/cluster/broker/auth").headers
     with TestClient(apps.operator) as client:
         assert client.get(STATUS_PATH, headers={"Origin": UI}).headers["access-control-allow-origin"] == UI  # create_master_apps passes the default
 
 
-def test_create_master_apps_hands_the_origins_to_the_operator_app(memory_plane, security):
-    apps = create_master_apps(memory_plane, security, HOOK_SECRET, allowed_origins=("https://ui.lab.example",))
+def test_create_master_apps_hands_the_origins_to_the_operator_app(memory_plane):
+    apps = create_master_apps(memory_plane, allowed_origins=("https://ui.lab.example",))
     with TestClient(apps.operator) as client:
         assert client.get(STATUS_PATH, headers={"Origin": "https://ui.lab.example"}).headers["access-control-allow-origin"] == "https://ui.lab.example"
         assert "access-control-allow-origin" not in client.get(STATUS_PATH, headers={"Origin": UI}).headers

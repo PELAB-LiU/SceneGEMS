@@ -73,20 +73,20 @@ def test_an_interval_of_zero_turns_the_sweep_off(artifacts):
 
 
 def test_the_server_builds_the_store_on_the_artifact_folder(tmp_path):
-    settings = MasterSettings(security_dir=tmp_path, database_url="postgresql+psycopg://x@localhost/x", broker_hook_secret="s", artifacts=ArtifactSettings(tmp_path / "artifacts", 1000, 30, 90))
+    settings = MasterSettings(master_id="lab-master", database_url="postgresql+psycopg://x@localhost/x", artifacts=ArtifactSettings(tmp_path / "artifacts", 1000, 30, 90))
     built = server.build_artifacts(settings, sessions=None)
     assert isinstance(built.artifacts.store, FileArtifactStore) and built.artifacts.store.root == tmp_path / "artifacts"
     assert (built.max_bytes, built.sweep_interval_s, built.sweep_grace_s) == (1000, 30, 90)
     assert (tmp_path / "artifacts" / ".incoming").is_dir()
 
 
-def test_the_node_api_runs_the_sweep_with_its_timers(plane, security, artifacts):
+def test_the_node_api_runs_the_sweep_with_its_timers(plane, artifacts):
     from starlette.testclient import TestClient
 
     from scenegems_tool.cluster.master.api.master_apps import create_node_api_app
 
     for run_timers in (True, False):
         master_artifacts = MasterArtifacts(artifacts, sweep_interval_s=3600)
-        with TestClient(create_node_api_app(plane, security, run_timers=run_timers, artifacts=master_artifacts)):
+        with TestClient(create_node_api_app(plane, run_timers=run_timers, artifacts=master_artifacts)):
             assert (master_artifacts._task is not None) == run_timers
         assert master_artifacts._task is None

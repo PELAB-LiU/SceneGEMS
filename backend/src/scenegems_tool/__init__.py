@@ -18,8 +18,7 @@ Present now:
         control_layers/         ardupilot/, later custom/
         asv_software/           replay/, usv_navigation/ (in process), mission_planner/ (specs)
     cluster/        distributed integration layer
-        protocol/               typed, versioned master-node messages, jobs and pairing
-        security/               master CA, pairing tokens, node credentials, broker accounts and access rules
+        protocol/               typed, versioned master-node messages and jobs
         node/                   instance scopes, launchers, job types and the node daemon
         fingerprints/           image build fingerprints: label reader, comparison, images per job type
         release/                the release bundle a deployment tool installs: images, stacks, roles

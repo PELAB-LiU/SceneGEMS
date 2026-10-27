@@ -22,6 +22,6 @@ def test_mismatch_message_names_both_versions_and_the_fix():
     assert "same SceneGEMS revision" in message
 
 
-def test_phase_5_speaks_version_3():
-    # Version 3: the optional machine in Hello, Observe and ObservationFrames (live simulations)
-    assert PROTOCOL_VERSION == 3
+def test_the_trusted_vpn_protocol_is_version_4():
+    # Version 4: no pairing, credentials or TLS; a node names itself in its Hello and in the node id header
+    assert PROTOCOL_VERSION == 4

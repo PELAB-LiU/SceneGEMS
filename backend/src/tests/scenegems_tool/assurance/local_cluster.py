@@ -2,10 +2,10 @@
 deployment tool deploys them (cluster/release/roles.py).
 
 Each role gets a folder of its own with its stack and release.json, and a .env made of the
-role's values, its parameters and secrets generated here. The master's setup commands run in
-its folder, the master's pairing output goes into the node's .env, and each compose project
-is started and waited for until the role's ready services are up. Nodes reach the master
-through host.docker.internal, which stands in for the master's VPN address.
+role's values, its parameters and secrets generated here. There is no pairing: the node's .env
+holds the master's address and ports ({master.vpn_ip} and {master.<parameter>} of its role),
+and each compose project is started and waited for until the role's ready services are up.
+Nodes reach the master through host.docker.internal, which stands in for the master's VPN address.
 """
 
 import json
@@ -104,22 +104,24 @@ def deploy_master(release_dir: Path, release: Release, work_dir: Path, cluster: 
     return master
 
 
-def pairing_values(release: Release, master: LocalRole, cluster: str, dependent_name: str) -> Dict[str, str]:
-    """The master's pairing output for one node, as the KEY=VALUE lines the node's .env needs."""
-    command = release.roles["master"]["outputs"]["pairing"]["command"]
-    context = {"cluster": cluster, "dependent.name": dependent_name}
-    output = run([render(part, context) for part in command], master.folder)
-    keys = release.roles["node"]["requires"]["keys"]
-    values = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
-    return {key: values[key] for key in keys}
-
-
-def deploy_node(release_dir: Path, release: Release, work_dir: Path, cluster: str, name: str, pairing: Mapping[str, str], parameters: Optional[Mapping[str, str]] = None) -> LocalRole:
+def deploy_node(
+    release_dir: Path,
+    release: Release,
+    work_dir: Path,
+    cluster: str,
+    name: str,
+    parameters: Optional[Mapping[str, str]] = None,
+    master_parameters: Optional[Mapping[str, str]] = None,
+) -> LocalRole:
+    """A node of the cluster. It needs no deployed master, only the master's address and parameters, as Machine Hub passes them."""
     role = release.roles["node"]
-    context = {"cluster": cluster, "name": name, "machine.vpn_ip": MASTER_ADDRESS, "machine.name": "local", "release.revision": release.revision}
+    master_values = {key: definition["default"] for key, definition in release.roles["master"]["parameters"].items()}
+    master_values.update(master_parameters or {})
+    context = {"cluster": cluster, "name": name, "machine.vpn_ip": MASTER_ADDRESS, "machine.name": "local", "release.revision": release.revision, "master.vpn_ip": MASTER_ADDRESS}
+    context.update({f"master.{key}": value for key, value in master_values.items()})
     folder = work_dir / f"node-{cluster}-{name}"
     _install(release_dir, role, folder)
-    _write_env(folder, {**_role_env(role, context, parameters), **pairing})
+    _write_env(folder, _role_env(role, context, parameters))
     node = LocalRole(name=f"node {name}", folder=folder, ready=role["ready"])
     node.compose("up", "--detach")
     node.wait_ready()

@@ -53,11 +53,34 @@ def test_tls_without_a_ca_keeps_the_workbench_behaviour(allow_certificates, requ
     assert client.calls == [("tls_set", {"cert_reqs": requirement}), ("tls_insecure_set", True)]
 
 
-def test_ca_on_a_real_paho_client_enables_host_name_checks(tmp_path):
-    from scenegems_tool.cluster.security.certificates.certificate_authority import CertificateAuthority
+def _self_signed_ca_pem() -> bytes:
+    import datetime
 
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "lab-ca")])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(key, hashes.SHA256())
+    )
+    return certificate.public_bytes(serialization.Encoding.PEM)
+
+
+def test_ca_on_a_real_paho_client_enables_host_name_checks(tmp_path):
     ca_path = tmp_path / "ca.pem"
-    ca_path.write_bytes(CertificateAuthority.create("lab-master").certificate_pem)
+    ca_path.write_bytes(_self_signed_ca_pem())
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="t")
     _info(tls_connection=True, ca_certificate_path=str(ca_path)).apply_to(client)
     context = client._ssl_context

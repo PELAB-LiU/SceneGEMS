@@ -1,11 +1,10 @@
-"""The node container end to end: it pairs with a scripted master over TLS with a pinned CA and runs real jobs.
+"""The node container end to end: it connects to a scripted master over plain HTTP, with no pairing, and runs real jobs.
 
-Everything the node talks to is real except the master's control logic: the security folder
-and pairing (cluster/security), a NanoMQ cluster broker with TLS, the auth hook and per-node
-access rules, the node image started through deploy/node/docker-compose.yml, and the
-subsystem containers it starts (kinematic runners, the scene generation pool), and the
-master's artifact routes on a real artifact store. The test plays the master on the control
-WebSocket.
+Everything the node talks to is real except the master's control logic: the plain NanoMQ
+cluster broker the master's compose file runs, the node image started through
+deploy/node/docker-compose.yml, the subsystem containers it starts (kinematic runners, the
+scene generation pool), and the master's artifact routes on a real artifact store. The test
+plays the master on the control WebSocket.
 
 Images: scenegems-node:<SCENEGEMS_TEST_NODE_IMAGE_TAG>, the subsystem images with
 SCENEGEMS_TEST_IMAGE_TAG (both default latest), and SCENEGEMS_BROKER_IMAGE. Containers reach
@@ -23,18 +22,12 @@ import uuid
 from pathlib import Path
 
 import pytest
-import uvicorn
 
-from scenegems_tool.cluster.node.daemon.pairing.ca_pinning import certificate_sha256
 from scenegems_tool.cluster.node.instance_scope import InstanceScope
 from scenegems_tool.cluster.node.subsystem import IMAGE_ENVIRONMENT_VARIABLES, Subsystem, subsystem_image
 from scenegems_tool.cluster.protocol.artifacts import ArtifactContent, ArtifactKind, ArtifactRef, encode_document
 from scenegems_tool.cluster.protocol.jobs import JobOutcome, JobType
 from scenegems_tool.cluster.protocol.messages import Heartbeat, Hello, JobResult, JobStatus, LeaseAccept, LeaseReject, LeaseRelease, LeaseRenew, LogLines
-from scenegems_tool.cluster.security.broker.auth_hook import AUTH_HOOK_PATH, create_broker_auth_app
-from scenegems_tool.cluster.security.broker.broker_config import BROKER_CONFIG_MOUNT, CONFIG_FILE_NAME, TLS_PORT, ClusterBrokerSettings
-from scenegems_tool.cluster.security.credentials.pairing_tokens import create_pairing_token
-from scenegems_tool.cluster.security.master_security import initialize_master_security
 from scenegems_tool.persistence.artifacts.file_artifact_store import FileArtifactStore
 from scenegems_tool.persistence.artifacts.recorded_artifacts import RecordedArtifacts
 from scenegems_tool.persistence.clock import utc_now
@@ -42,7 +35,6 @@ from scenegems_tool.vessel_stack.simulation_layers.kinematic.kinematic_runner im
 from tests.scenegems_tool.cluster.node.daemon.conftest import make_job, make_offer
 from tests.scenegems_tool.cluster.node.daemon.fake_master import FakeMaster
 from tests.scenegems_tool.cluster.node.jobs.test_jobs_in_containers import _scene_generation_payload
-from tests.scenegems_tool.cluster.security.conftest import HOOK_SECRET, MASTER_PASSWORD, MASTER_USERNAME
 from tests.scenegems_tool.persistence.artifacts.fake_artifact_records import InMemoryArtifactRecords
 from utils.file_system_utils import REPO_ROOT
 
@@ -73,42 +65,24 @@ def _image(subsystem: Subsystem) -> str:
 
 @pytest.fixture(scope="module")
 def cluster(tmp_path_factory):
-    """Master security, auth hook, cluster broker and the fake master: what a node sees of its master."""
+    """The plain cluster broker and the fake master: what a node sees of its master."""
     if _docker("info", check=False).returncode != 0:
         pytest.skip("Docker engine is not reachable")
     for image in (f"scenegems-node:{NODE_IMAGE_TAG}", BROKER_IMAGE, _image(Subsystem.SCENARIO_EXECUTION), _image(Subsystem.SCENE_GENERATION)):
         if _docker("image", "inspect", image, check=False).returncode != 0:
             pytest.fail(f"Image {image} is missing; build it with ./build.sh --node --backend or set the test image tags")
 
-    hook_port, broker_port = _free_port(), _free_port()
-    security = initialize_master_security(
-        tmp_path_factory.mktemp("security"),
-        master_id=f"m{uuid.uuid4().hex[:6]}",
-        addresses=["127.0.0.1", HOST],
-        master_broker_username=MASTER_USERNAME,
-        master_broker_password=MASTER_PASSWORD,
-        broker=ClusterBrokerSettings(auth_hook_url=f"http://{HOST}:{hook_port}{AUTH_HOOK_PATH}", auth_hook_secret=HOOK_SECRET),
-        broker_public_host=HOST,
-        broker_public_port=broker_port,
-    )
-    hook = uvicorn.Server(uvicorn.Config(create_broker_auth_app(security.store, HOOK_SECRET), host="0.0.0.0", port=hook_port, log_level="warning"))
-    hook_thread = threading.Thread(target=hook.run, daemon=True)
-    hook_thread.start()
+    broker_port = _free_port()
     broker = f"scenegems-test-cluster-broker-{uuid.uuid4().hex[:8]}"
-    _docker(
-        "run", "-d", "--name", broker, "--add-host", f"{HOST}:host-gateway", "-p", f"{broker_port}:{TLS_PORT}",
-        "-v", f"{security.layout.broker_folder.resolve().as_posix()}:{BROKER_CONFIG_MOUNT}:ro",
-        BROKER_IMAGE, "nanomq", "start", "--conf", f"{BROKER_CONFIG_MOUNT}/{CONFIG_FILE_NAME}",
-    )  # fmt: skip
+    _docker("run", "-d", "--name", broker, "--add-host", f"{HOST}:host-gateway", "--tmpfs", "/data/broker", "-p", f"{broker_port}:1883", BROKER_IMAGE)
     artifacts = RecordedArtifacts(FileArtifactStore(tmp_path_factory.mktemp("artifacts")), InMemoryArtifactRecords(utc_now))
-    master = FakeMaster(security, host=HOST, heartbeat_interval_s=1.0, lease_timeout_s=30.0, artifacts=artifacts).start(bind="0.0.0.0")
+    master = FakeMaster(master_id=f"m{uuid.uuid4().hex[:6]}", host=HOST, heartbeat_interval_s=1.0, lease_timeout_s=30.0, artifacts=artifacts).start(bind="0.0.0.0")
+    master.broker_port = broker_port
     try:
         yield master
     finally:
         master.stop()
         _docker("rm", "-f", broker, check=False)
-        hook.should_exit = True
-        hook_thread.join(timeout=10)
 
 
 class NodeContainer:
@@ -130,9 +104,8 @@ def _node_container(cluster, tmp_path_factory):
     env_file = tmp_path_factory.mktemp("node") / "node.env"
     values = {
         "SCENEGEMS_MASTER_URL": cluster.url,
-        "SCENEGEMS_MASTER_ID": cluster.security.master_id,
-        "SCENEGEMS_MASTER_CA_SHA256": certificate_sha256(cluster.security.ca_certificate_pem),
-        "SCENEGEMS_PAIRING_TOKEN": create_pairing_token(cluster.security.store).token,
+        "SCENEGEMS_MASTER_ID": cluster.master_id,
+        "SCENEGEMS_BROKER_PORT": str(cluster.broker_port),
         "SCENEGEMS_NODE_NAME": node_name,
         "SCENEGEMS_NODE_CAPABILITIES": "simulation.kinematic:2,scene_generation:1",
         "SCENEGEMS_NODE_LABELS": "test=docker",
@@ -141,7 +114,7 @@ def _node_container(cluster, tmp_path_factory):
         **{variable: _image(subsystem) for subsystem, variable in IMAGE_ENVIRONMENT_VARIABLES.items()},
     }
     env_file.write_text("".join(f"{key}={value}\n" for key, value in values.items()))
-    container = NodeContainer(env_file, f"scenegems-node-{cluster.security.master_id}-{node_name}")
+    container = NodeContainer(env_file, f"scenegems-node-{cluster.master_id}-{node_name}")
     container.compose("up", "-d")
     try:
         yield container
@@ -210,20 +183,19 @@ def _results(connection, count: int, payload: dict) -> dict:
     return results
 
 
-def test_the_node_container_pairs_and_runs_jobs_within_its_slots(cluster, node, head_on_trajectories):
+def test_the_node_container_connects_without_pairing_and_runs_jobs_within_its_slots(cluster, node, head_on_trajectories):
     try:
         connection = cluster.wait_for_connection(timeout_s=120)
     except AssertionError:
         pytest.fail(f"The node never connected:\n{node.logs()}")
     hello = connection.expect(Hello)
-    master_id, node_id = cluster.security.master_id, hello.node_id
-    assert hello.node_name == node.name.rsplit(f"{master_id}-", 1)[1] and hello.labels == {"test": "docker"}
+    master_id, node_id = cluster.master_id, hello.node_id
+    assert hello.node_name == node.name.rsplit(f"{master_id}-", 1)[1] == node_id and hello.labels == {"test": "docker"}  # the node id is its name
     assert hello.software_revision == "docker-test" and hello.resources.cpus >= 1 and hello.resources.memory_mb > 0
     assert {offer.job_type: offer.slots for offer in hello.capabilities} == {JobType.SIMULATION_KINEMATIC: 2, JobType.SCENE_GENERATION: 1}
 
-    # The pairing state is owner-only inside the node's volume, and the token is used up.
-    assert _docker("exec", node.name, "stat", "-c", "%a", "/var/lib/scenegems-node/pairing.json").stdout.strip() == "600"
-    assert len(cluster.pairing_requests) == 1
+    # Nothing was paired: the node's volume holds no pairing state.
+    assert "pairing.json" not in _docker("exec", node.name, "ls", "/var/lib/scenegems-node").stdout.split()
 
     payload = {"trajectories": head_on_trajectories.to_dict(), "include_trajectories": False}
     with RunnerWatch(master_id, node_id) as runners:
@@ -249,10 +221,12 @@ def test_the_node_container_pairs_and_runs_jobs_within_its_slots(cluster, node, 
     assert 1 <= runners.most <= 2
     assert max(sum(heartbeat.slots_in_use.values()) for heartbeat in connection.received(Heartbeat)) <= 3
 
-    # The scene generation pool reached the broker over TLS with the CA from the trust volume.
+    # The scene generation pool dials the plain broker with no account and mounts no certificate.
     pool = InstanceScope.pooled(master_id, node_id, Subsystem.SCENE_GENERATION.value).docker_name
-    mounts = _docker("inspect", "--format", "{{range .Mounts}}{{.Name}}:{{.Destination}} {{end}}", pool).stdout
-    assert f"{node.name}-trust:/etc/scenegems/trust" in mounts
+    mounts = _docker("inspect", "--format", "{{range .Mounts}}{{.Destination}} {{end}}", pool).stdout
+    assert "/etc/scenegems/trust" not in mounts
+    environment = _docker("inspect", "--format", "{{range .Config.Env}}{{println .}}{{end}}", pool).stdout.split("\n")
+    assert "MQTT_TLS=0" in environment and "MQTT_USER=" in environment
 
     # Stopping the node removes its pool and leaves nothing of its instances behind.
     node.compose("stop", "--timeout", "60")
@@ -336,7 +310,7 @@ models = {
 for job_type, payload in payloads.items():
     model = getattr(job_types.job_type_module(job_type), models[job_type])
     parse_payload(model, JobSpec(job_id="check", job_type=job_type, payload=payload, attempt=1, idempotency_key="check"))
-node = NodeContext("m1", "n1", MQttConnectionInfo("u", "p", "broker", "broker", 8883, True, False), Geofence(57.7, 11.9, 2000.0), slots={JobType.SIMULATION_ARDUPILOT: 1})
+node = NodeContext("m1", "n1", MQttConnectionInfo("", "", "broker", "broker", 1883, False, False), Geofence(57.7, 11.9, 2000.0), slots={JobType.SIMULATION_ARDUPILOT: 1})
 job = JobSpec(job_id="check", job_type=JobType.SIMULATION_ARDUPILOT, payload=payloads[JobType.SIMULATION_ARDUPILOT], attempt=1, idempotency_key="check")
 stack = simulation_ardupilot_job.build_job_stack(job, node, parse_payload(simulation_ardupilot_job.ArduPilotSimulationPayload, job))
 assert "runner" in stack.compose["services"] and len(stack.compose["services"]) >= 3, stack.compose["services"].keys()

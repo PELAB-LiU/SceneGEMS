@@ -1,10 +1,10 @@
-"""The master process: its three listeners in one event loop (api/master_apps.py says why three).
+"""The master process: its two listeners in one event loop (api/master_apps.py says why two).
 
     python -m scenegems_tool.cluster.master [--env-file deploy/master/.env]
 
 The database must be migrated first (`python -m scenegems_tool.persistence.migrate upgrade
-head`; the compose service does both) and the security folder initialized
-(`python -m scenegems_tool.cluster.security init`).
+head`; the compose service does both). Nodes and the master trust each other on the VPN: there
+is no security folder, certificate or credential to set up.
 """
 
 import argparse
@@ -29,9 +29,6 @@ from scenegems_tool.cluster.master.live.topics import create_live_channel
 from scenegems_tool.cluster.master.master_artifacts import MasterArtifacts
 from scenegems_tool.cluster.master.scheduling.fingerprint_policy import ExpectedFingerprints
 from scenegems_tool.cluster.master.settings import MasterSettings, SettingMissing
-from scenegems_tool.cluster.security.command_line import load_env_file
-from scenegems_tool.cluster.security.master_security import MasterSecurity
-from scenegems_tool.cluster.security.security_layout import SecurityLayout
 from scenegems_tool.persistence.artifacts.file_artifact_store import FileArtifactStore
 from scenegems_tool.persistence.artifacts.recorded_artifacts import RecordedArtifacts
 from scenegems_tool.persistence.database import create_database_engine, create_session_factory
@@ -56,21 +53,31 @@ def build_assurance_stores(sessions: sessionmaker[Session]) -> AssuranceStores:
     return AssuranceStores.create(sessions)
 
 
+def load_env_file(path: Path, environ: dict) -> None:
+    """KEY=VALUE lines into `environ`; variables already set keep their value."""
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        key, value = key.strip(), value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        environ.setdefault(key, value)
+
+
 def build_master(settings: MasterSettings, with_gateway: bool = True) -> MasterApps:
-    security = MasterSecurity.load(settings.security_dir)
     sessions = create_session_factory(create_database_engine(settings.database_url))
-    plane = ControlPlane(security.master_id, NodeStore(sessions), JobStore(sessions), ExpectedFingerprints.of_release(settings.release_manifest))
+    plane = ControlPlane(settings.master_id, NodeStore(sessions), JobStore(sessions), ExpectedFingerprints.of_release(settings.release_manifest))
     assurance = build_assurance_stores(sessions)
     plane.attach_pipeline(assurance)  # the pipeline engine, a timer of the control plane, on the master's one AssuranceStores
     gateway = None
     if with_gateway:
         from scenegems_tool.gateway.websocket_app import app as gateway
 
-    live = build_live_channel(settings, security, plane, assurance)
+    live = build_live_channel(settings, plane, assurance)
     return create_master_apps(
         plane,
-        security,
-        settings.broker_hook_secret,
         gateway=gateway,
         artifacts=build_artifacts(settings, sessions),
         assurance=assurance,
@@ -79,14 +86,13 @@ def build_master(settings: MasterSettings, with_gateway: bool = True) -> MasterA
     )
 
 
-def build_live_channel(settings: MasterSettings, security: MasterSecurity, plane: ControlPlane, assurance: AssuranceStores) -> LiveChannel:
-    """The browsers' live channel; it observes pools on the cluster broker when the master has its broker login."""
+def build_live_channel(settings: MasterSettings, plane: ControlPlane, assurance: AssuranceStores) -> LiveChannel:
+    """The browsers' live channel; it observes pools on the cluster broker when the master knows where it is."""
     broker = None
     if settings.broker is not None:
-        username = settings.broker.username or security.identity.master_broker_username
-        broker = paho_broker(settings.broker.host, settings.broker.port, username, settings.broker.password, str(security.layout.ca_certificate))
+        broker = paho_broker(settings.broker.host, settings.broker.port)
     else:
-        logger.info("No broker login for the master (SCENEGEMS_BROKER_HOST, SCENEGEMS_BROKER_MASTER_PASSWORD): the live channel observes jobs, not pools")
+        logger.info("No cluster broker for the master (SCENEGEMS_BROKER_HOST): the live channel observes jobs, not pools")
     return create_live_channel(plane, assurance, broker)
 
 
@@ -97,9 +103,8 @@ def build_artifacts(settings: MasterSettings, sessions) -> MasterArtifacts:
 
 
 def listeners(settings: MasterSettings, apps: MasterApps) -> List[uvicorn.Server]:
-    layout = SecurityLayout(settings.security_dir)
-    # uvicorn's loggers are process-wide, so all three listeners share one log setup. Access logs
-    # are off: the health check and every broker login would fill them; the master logs its own events.
+    # uvicorn's loggers are process-wide, so both listeners share one log setup. Access logs
+    # are off: the health check would fill them; the master logs its own events.
     logging_options = dict(log_level="info", access_log=False)
     return [
         _Listener(
@@ -107,15 +112,12 @@ def listeners(settings: MasterSettings, apps: MasterApps) -> List[uvicorn.Server
                 apps.node_api,
                 host=settings.node_api.host,
                 port=settings.node_api.port,
-                ssl_certfile=str(layout.api_certificate),
-                ssl_keyfile=str(layout.api_key),
                 ws_max_size=MAX_NODE_FRAME_BYTES,
                 **logging_options,
             )
         ),
         # The workbench frontend expects no WebSocket pings, as the gateway's own main runs it
         _Listener(uvicorn.Config(apps.operator, host=settings.operator.host, port=settings.operator.port, ws_ping_interval=None, **logging_options)),
-        _Listener(uvicorn.Config(apps.broker_hook, host=settings.broker_hook.host, port=settings.broker_hook.port, **logging_options)),
     ]
 
 
@@ -137,7 +139,7 @@ async def serve(servers: Sequence[uvicorn.Server]) -> None:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m scenegems_tool.cluster.master", description="Run a SceneGEMS master: node API, operator API with the workbench, broker login hook.")
+    parser = argparse.ArgumentParser(prog="python -m scenegems_tool.cluster.master", description="Run a SceneGEMS master: node API and operator API with the workbench.")
     parser.add_argument("--env-file", type=Path, help="read settings from this .env file (variables already set win)")
     parser.add_argument("--no-workbench", action="store_true", help="do not mount the workbench gateway on the operator listener")
     arguments = parser.parse_args(argv)
@@ -147,7 +149,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         if arguments.env_file:
             load_env_file(arguments.env_file, environ)
-        settings = MasterSettings.from_environment(environ, env_file_folder=arguments.env_file.resolve().parent if arguments.env_file else None)
+        settings = MasterSettings.from_environment(environ)
         apps = build_master(settings, with_gateway=not arguments.no_workbench)
     except (SettingMissing, FileNotFoundError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)

@@ -1,6 +1,6 @@
 import pytest
 
-from scenegems_tool.cluster.security.scope_names import InvalidScopeName, ensure_scope_name, is_scope_name, slug_from_name
+from scenegems_tool.cluster.scope_names import InvalidScopeName, ensure_scope_name, is_scope_name, slug_from_name
 
 
 @pytest.mark.parametrize("value", ["a", "lab-master", "node-1-a1b2c3", "0", "a" * 63])

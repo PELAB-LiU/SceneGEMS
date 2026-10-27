@@ -10,16 +10,13 @@ from scenegems_tool.cluster.node.daemon.configuration.node_configuration import 
     parse_geofence,
     parse_labels,
     parse_master_url,
-    parse_sha256,
+    parse_port,
 )
 from scenegems_tool.cluster.protocol.jobs import JobType
 
-HASH = "0123456789abcdef" * 4
 VALID = {
-    "SCENEGEMS_MASTER_URL": "https://192.168.1.10:8443",
+    "SCENEGEMS_MASTER_URL": "http://192.168.1.10:8443",
     "SCENEGEMS_MASTER_ID": "lab-master",
-    "SCENEGEMS_MASTER_CA_SHA256": HASH,
-    "SCENEGEMS_PAIRING_TOKEN": "token-value",
     "SCENEGEMS_NODE_NAME": "worker-1",
     "SCENEGEMS_NODE_CAPABILITIES": "simulation.kinematic:4,scene_generation:1",
     "SCENEGEMS_NODE_STATE_DIR": "/var/lib/scenegems-node",
@@ -38,13 +35,13 @@ def values(**changes):
 
 def test_a_complete_configuration_parses():
     configuration = NodeConfiguration.from_values(values(SCENEGEMS_NODE_LABELS="gpu=true, site=lab"))
-    assert configuration.master_url == "https://192.168.1.10:8443"
+    assert configuration.master_url == "http://192.168.1.10:8443"
     assert configuration.master_id == "lab-master"
-    assert configuration.master_ca_sha256 == HASH
+    assert configuration.node_id == configuration.node_name == "worker-1"
+    assert (configuration.broker_host, configuration.broker_port) == ("192.168.1.10", 1883)
     assert configuration.capabilities == {JobType.SIMULATION_KINEMATIC: 4, JobType.SCENE_GENERATION: 1}
     assert configuration.labels == {"gpu": "true", "site": "lab"}
     assert configuration.state_dir == Path("/var/lib/scenegems-node")
-    assert configuration.trust_dir == Path("/var/lib/scenegems-node/trust")
     assert configuration.reference_geofence == DEFAULT_REFERENCE_GEOFENCE
     assert configuration.docker_name == "scenegems-node-lab-master-worker-1"
 
@@ -60,23 +57,35 @@ def test_a_machine_name_longer_than_the_registry_column_is_refused():
         NodeConfiguration.from_values(values(SCENEGEMS_NODE_MACHINE="m" * 257))
 
 
-def test_the_token_is_hidden_from_repr():
-    assert "token-value" not in repr(NodeConfiguration.from_values(VALID))
+def test_a_node_needs_no_token_certificate_hash_or_trust_folder():
+    configuration = NodeConfiguration.from_values(VALID)
+    for name in ("pairing_token", "master_ca_sha256", "trust_dir", "trust_source"):
+        assert not hasattr(configuration, name), name
+    assert "SCENEGEMS_PAIRING_TOKEN" not in VALID and "SCENEGEMS_MASTER_CA_SHA256" not in VALID
 
 
-def test_the_token_is_optional_once_paired():
-    assert NodeConfiguration.from_values(values(SCENEGEMS_PAIRING_TOKEN=None)).pairing_token is None
+def test_the_broker_port_is_optional_and_checked():
+    assert NodeConfiguration.from_values(values(SCENEGEMS_BROKER_PORT="11883")).broker_port == 11883
+    assert NodeConfiguration.from_values(values(SCENEGEMS_BROKER_PORT="")).broker_port == 1883
+    with pytest.raises(ConfigurationError, match="SCENEGEMS_BROKER_PORT"):
+        NodeConfiguration.from_values(values(SCENEGEMS_BROKER_PORT="mqtt"))
+
+
+@pytest.mark.parametrize("text", ["0", "65536", "-1", "x"])
+def test_invalid_ports_fail(text):
+    with pytest.raises(ValueError):
+        parse_port(text)
 
 
 def test_every_problem_is_reported_at_once():
     with pytest.raises(ConfigurationError) as raised:
         NodeConfiguration.from_values(
-            values(SCENEGEMS_MASTER_URL="http://master", SCENEGEMS_MASTER_ID=None, SCENEGEMS_MASTER_CA_SHA256="abc", SCENEGEMS_NODE_CAPABILITIES="unknown:1", SCENEGEMS_NODE_STATE_DIR=None)
+            values(SCENEGEMS_MASTER_URL="https://master", SCENEGEMS_MASTER_ID=None, SCENEGEMS_BROKER_PORT="0", SCENEGEMS_NODE_CAPABILITIES="unknown:1", SCENEGEMS_NODE_STATE_DIR=None)
         )
     problems = raised.value.problems
     assert len(problems) == 5
     message = str(raised.value)
-    for name in ("SCENEGEMS_MASTER_URL", "SCENEGEMS_MASTER_ID", "SCENEGEMS_MASTER_CA_SHA256", "SCENEGEMS_NODE_CAPABILITIES", "SCENEGEMS_NODE_STATE_DIR"):
+    for name in ("SCENEGEMS_MASTER_URL", "SCENEGEMS_MASTER_ID", "SCENEGEMS_BROKER_PORT", "SCENEGEMS_NODE_CAPABILITIES", "SCENEGEMS_NODE_STATE_DIR"):
         assert name in message
 
 
@@ -94,43 +103,28 @@ def test_a_master_id_must_be_a_scope_name():
 def test_optional_values_are_read():
     configuration = NodeConfiguration.from_values(
         values(
-            SCENEGEMS_NODE_TRUST_DIR="/etc/scenegems/trust",
-            SCENEGEMS_NODE_TRUST_SOURCE="scenegems-node-lab-master-worker-1-trust",
             SCENEGEMS_DOCKER_NETWORK="scenegems-node-lab-master-worker-1",
             SCENEGEMS_NODE_REFERENCE_GEOFENCE="57.7, 11.9, 2000",
             SCENEGEMS_SOFTWARE_REVISION="abc123",
         )
     )
-    assert configuration.trust_dir == Path("/etc/scenegems/trust")
-    assert configuration.trust_source == "scenegems-node-lab-master-worker-1-trust"
     assert configuration.docker_network == "scenegems-node-lab-master-worker-1"
     assert configuration.reference_geofence == (57.7, 11.9, 2000.0)
     assert configuration.software_revision == "abc123"
 
 
-def test_without_a_trust_source_job_containers_mount_the_trust_folder_itself(tmp_path):
-    configuration = NodeConfiguration.from_values(values(SCENEGEMS_NODE_STATE_DIR=str(tmp_path)))
-    assert configuration.trust_source == (tmp_path / "trust").resolve().as_posix()
-
-
 @pytest.mark.parametrize(
     "text, expected",
-    [("https://master.lan", "https://master.lan"), ("https://Master.LAN:8443/", "https://master.lan:8443"), ("https://[::1]:8443", "https://[::1]:8443")],
+    [("http://master.lan", "http://master.lan"), ("http://Master.LAN:8443/", "http://master.lan:8443"), ("http://[::1]:8443", "http://[::1]:8443")],
 )
 def test_master_urls_are_normalised(text, expected):
     assert parse_master_url(text) == expected
 
 
-@pytest.mark.parametrize("text", ["http://master.lan", "https://", "https://master.lan/api", "https://user@master.lan", "https://master.lan:99999", "master.lan:8443"])
+@pytest.mark.parametrize("text", ["https://master.lan", "http://", "http://master.lan/api", "http://user@master.lan", "http://master.lan:99999", "master.lan:8443"])
 def test_invalid_master_urls_fail(text):
     with pytest.raises(ValueError):
         parse_master_url(text)
-
-
-def test_sha256_accepts_colons_and_upper_case():
-    assert parse_sha256(":".join(HASH.upper()[index : index + 2] for index in range(0, 64, 2))) == HASH
-    with pytest.raises(ValueError):
-        parse_sha256(HASH[:-1] + "g")
 
 
 @pytest.mark.parametrize(

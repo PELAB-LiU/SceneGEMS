@@ -1,9 +1,8 @@
-"""A scripted master for the node daemon tests: HTTPS and the control WebSocket on one TLS port.
+"""A scripted master for the node daemon tests: plain HTTP and the control WebSocket on one port.
 
-It serves the master's routes from cluster/protocol/routes.py with a real security
-folder (cluster/security): the CA certificate, pairing through pair_node and node
-authentication through authenticate_node. It runs uvicorn in a thread; the test drives
-each node connection from its own thread through FakeNodeConnection:
+It serves the master's routes from cluster/protocol/routes.py, trusting every node as the
+real master does on the VPN: a node is named by its Hello. It runs uvicorn in a thread; the test
+drives each node connection from its own thread through FakeNodeConnection:
 
     connection = master.wait_for_connection()
     hello = connection.expect(Hello)
@@ -11,7 +10,7 @@ each node connection from its own thread through FakeNodeConnection:
     accept = connection.expect(LeaseAccept)
 
 By default the master answers Hello with Welcome and LeaseRenew with LeaseRenewed, the
-behaviour the node relies on (design doc 13.8.4); both can be switched off or replaced.
+behaviour the node relies on; both can be switched off or replaced.
 
 With `artifacts` it also serves the real artifact routes (cluster/master/api/artifact_routes.py)
 on that store; a job offered on a connection counts as leased to its node (`leased_jobs`).
@@ -26,18 +25,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
 
 import uvicorn
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from scenegems_tool.cluster.master.api.artifact_routes import DEFAULT_MAX_ARTIFACT_BYTES, node_artifact_router
 from scenegems_tool.cluster.protocol.codec import decode_node_message, encode
 from scenegems_tool.cluster.protocol.messages import Heartbeat, Hello, JobStatus, LeaseOffer, LeaseRenew, LeaseRenewed, LogLines, Welcome
 from scenegems_tool.cluster.protocol.model_base import ProtocolFrame
-from scenegems_tool.cluster.protocol.pairing import PairingRequest
-from scenegems_tool.cluster.protocol.routes import CA_CERTIFICATE_PATH, NODE_CONTROL_PATH, PAIRING_PATH, credential_from_authorization
-from scenegems_tool.cluster.security.credentials.node_credentials import authenticate_node
-from scenegems_tool.cluster.security.master_security import MasterSecurity
-from scenegems_tool.cluster.security.pairing import PairingTokenRejected, pair_node
+from scenegems_tool.cluster.protocol.routes import NODE_CONTROL_PATH
 from scenegems_tool.persistence.artifacts.recorded_artifacts import RecordedArtifacts
 
 TIMEOUT_S = 10.0
@@ -52,8 +46,8 @@ def _utc_now() -> datetime:
 
 
 class FakeNodeConnection:
-    def __init__(self, loop: asyncio.AbstractEventLoop, node_id: str, leased_jobs: Optional[Dict[str, str]] = None):
-        self.node_id = node_id
+    def __init__(self, loop: asyncio.AbstractEventLoop, leased_jobs: Optional[Dict[str, str]] = None):
+        self.node_id = ""  # named by the Hello
         self._leased_jobs = leased_jobs if leased_jobs is not None else {}
         self._loop = loop
         self._outbox: asyncio.Queue = asyncio.Queue()
@@ -101,23 +95,24 @@ class FakeNodeConnection:
     # The master's side, on the event loop
 
     def _received(self, frame: ProtocolFrame) -> None:
+        if isinstance(frame, Hello):
+            self.node_id = frame.node_id
         self.history.append(frame)
         self._inbox.put(frame)
 
 
 @dataclass
 class FakeMaster:
-    security: MasterSecurity
+    master_id: str = "lab-master"
     host: str = "127.0.0.1"
     heartbeat_interval_s: float = 0.2
     lease_timeout_s: float = 3.0
-    served_ca_certificate_pem: Optional[str] = None  # serve another CA than the real one, for the pin test
     hello_reply: Optional[HelloReply] = None  # replaces the Welcome
     renew_leases: bool = True
-    pairing_requests: List[PairingRequest] = field(default_factory=list)
     connections: "queue.Queue[FakeNodeConnection]" = field(default_factory=queue.Queue)  # handed out by wait_for_connection
     all_connections: List[FakeNodeConnection] = field(default_factory=list)  # every connection, in order
     port: int = 0
+    broker_port: int = 0  # of a cluster broker next to the master, for the tests that run one
     artifacts: Optional[RecordedArtifacts] = None
     leased_jobs: Dict[str, str] = field(default_factory=dict)  # job id to the node it was offered to, for uploads
     max_artifact_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES
@@ -129,10 +124,10 @@ class FakeMaster:
 
     @property
     def url(self) -> str:
-        return f"https://{self.host}:{self.port}"
+        return f"http://{self.host}:{self.port}"
 
     def welcome(self) -> Welcome:
-        return Welcome(master_id=self.security.master_id, heartbeat_interval_s=self.heartbeat_interval_s, lease_timeout_s=self.lease_timeout_s)
+        return Welcome(master_id=self.master_id, heartbeat_interval_s=self.heartbeat_interval_s, lease_timeout_s=self.lease_timeout_s)
 
     def wait_for_connection(self, timeout_s: float = TIMEOUT_S) -> FakeNodeConnection:
         try:
@@ -147,8 +142,6 @@ class FakeMaster:
             self._app(),
             host=bind,
             port=self.port,
-            ssl_certfile=str(self.security.layout.api_certificate),
-            ssl_keyfile=str(self.security.layout.api_key),
             ws="websockets-sansio",
             timeout_graceful_shutdown=2,
             ws_max_size=64 * 1024 * 1024,
@@ -182,29 +175,10 @@ class FakeMaster:
         master = self
         self._include_artifact_routes(app)
 
-        @app.get(CA_CERTIFICATE_PATH)
-        def ca_certificate() -> PlainTextResponse:
-            return PlainTextResponse(master.served_ca_certificate_pem or master.security.ca_certificate_pem, media_type="application/x-pem-file")
-
-        @app.post(PAIRING_PATH)
-        async def pairing(request: Request) -> JSONResponse:
-            pairing_request = PairingRequest.model_validate_json(await request.body())
-            master.pairing_requests.append(pairing_request)
-            try:
-                response = pair_node(master.security, pairing_request)
-            except PairingTokenRejected:
-                return JSONResponse({"detail": "pairing token rejected"}, status_code=403)
-            return JSONResponse(response.model_dump(mode="json"))
-
         @app.websocket(NODE_CONTROL_PATH)
         async def control(websocket: WebSocket) -> None:
-            credential = credential_from_authorization(websocket.headers.get("authorization", ""))
-            node_id = authenticate_node(master.security.store, credential)
-            if node_id is None:
-                await websocket.close(code=1008)  # before accept: the handshake is answered with HTTP 403
-                return
             await websocket.accept()
-            connection = FakeNodeConnection(asyncio.get_running_loop(), node_id, master.leased_jobs)
+            connection = FakeNodeConnection(asyncio.get_running_loop(), master.leased_jobs)
             master.all_connections.append(connection)
             master.connections.put(connection)
             sender = asyncio.create_task(master._send_loop(websocket, connection))
@@ -223,7 +197,7 @@ class FakeMaster:
 
     def _include_artifact_routes(self, app: FastAPI) -> None:
         if self.artifacts is not None:
-            app.include_router(node_artifact_router(self.artifacts, self.security, self.leased_jobs.get, self.max_artifact_bytes))
+            app.include_router(node_artifact_router(self.artifacts, self.leased_jobs.get, self.max_artifact_bytes))
 
     async def _send_loop(self, websocket: WebSocket, connection: FakeNodeConnection) -> None:
         while True:

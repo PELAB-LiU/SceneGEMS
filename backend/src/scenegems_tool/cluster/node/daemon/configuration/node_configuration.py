@@ -2,17 +2,15 @@
 
 Variables (deploy/node/.env.example is the template):
 
-    SCENEGEMS_MASTER_URL          https://<host>[:<port>] of the master's cluster API
-    SCENEGEMS_MASTER_ID           the master's id; names the node's compose project and is checked at pairing
-    SCENEGEMS_MASTER_CA_SHA256    SHA-256 of the master's CA certificate (DER), 64 hex digits
-    SCENEGEMS_PAIRING_TOKEN       one-time token, needed only until the node is paired
-    SCENEGEMS_NODE_NAME           this node's name on the master and in Docker names
+    SCENEGEMS_MASTER_URL          http://<host>[:<port>] of the master's cluster API; the node dials it and keeps
+                                  retrying while the master is not up. Master and nodes trust the VPN: no TLS, no pairing.
+    SCENEGEMS_MASTER_ID           the master's id; names the node's compose project and is checked against the master's Welcome
+    SCENEGEMS_BROKER_PORT         optional, the port of the master's cluster broker on the master's host (1883)
+    SCENEGEMS_NODE_NAME           this node's name and node id on the master and in Docker names
     SCENEGEMS_NODE_CAPABILITIES   job types with slots, for example simulation.kinematic:4,scene_generation:1
     SCENEGEMS_NODE_LABELS         optional key=value pairs, for example gpu=true,site=lab
     SCENEGEMS_NODE_MACHINE        optional, the name of the machine the node runs on (the deployment tool writes it); shown in the UI
-    SCENEGEMS_NODE_STATE_DIR      folder on the node's volume for the pairing state
-    SCENEGEMS_NODE_TRUST_DIR      optional, folder the CA file is written to for job containers (<state>/trust)
-    SCENEGEMS_NODE_TRUST_SOURCE   optional, the Docker volume or host folder behind the trust folder
+    SCENEGEMS_NODE_STATE_DIR      folder on the node's volume for the artifact cache
     SCENEGEMS_DOCKER_NETWORK      optional, the Docker network pooled services join
     SCENEGEMS_NODE_REFERENCE_GEOFENCE  optional, latitude,longitude,radius of the pools' local frame
     SCENEGEMS_SOFTWARE_REVISION   optional, the revision the node reports (its release's revision)
@@ -33,17 +31,17 @@ from urllib.parse import urlsplit
 
 from scenegems_tool.cluster.node.daemon.configuration.env_file import EnvFileError, read_env_file
 from scenegems_tool.cluster.protocol.jobs import JobType
-from scenegems_tool.cluster.security.scope_names import is_scope_name
+from scenegems_tool.cluster.scope_names import is_scope_name
 
 ENV_FILE_VARIABLE = "SCENEGEMS_ENV_FILE"  # read from the process environment only
 DEFAULT_ENV_FILE = ".env"
 # The workbench's default reference geofence (frontend referenceGeofence.ts).
 DEFAULT_REFERENCE_GEOFENCE = (57.76080082972655, 16.680965995056, 20.0)
 DEFAULT_ARTIFACT_CACHE_MAX_BYTES = 2 * 1024 * 1024 * 1024
+DEFAULT_BROKER_PORT = 1883  # the cluster broker's plain MQTT port (deploy/master/nanomq.conf)
 ARTIFACT_CACHE_FOLDER = "artifacts"  # under the state folder
 MAX_MACHINE_LENGTH = 256  # the registry column
 
-_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _LABEL_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 _JOB_TYPES = {job_type.value: job_type for job_type in JobType}
 
@@ -56,15 +54,12 @@ class ConfigurationError(ValueError):
 
 @dataclass(frozen=True)
 class NodeConfiguration:
-    master_url: str  # https://host[:port], without a trailing slash
+    master_url: str  # http://host[:port], without a trailing slash
     master_id: str
-    master_ca_sha256: str  # lowercase hex
     node_name: str
     capabilities: Dict[JobType, int]  # job type to slots
     state_dir: Path
-    trust_dir: Path
-    trust_source: str  # what job containers mount for the CA file
-    pairing_token: Optional[str] = field(default=None, repr=False)
+    broker_port: int = DEFAULT_BROKER_PORT  # on the master's host
     labels: Dict[str, str] = field(default_factory=dict)
     docker_network: Optional[str] = None
     reference_geofence: Tuple[float, float, float] = DEFAULT_REFERENCE_GEOFENCE
@@ -76,6 +71,16 @@ class NodeConfiguration:
     @property
     def artifact_cache_folder(self) -> Path:
         return self.artifact_cache_dir or Path(self.state_dir) / ARTIFACT_CACHE_FOLDER
+
+    @property
+    def node_id(self) -> str:
+        """The node's id on the master: its name, which the operator keeps unique among the nodes of a master."""
+        return self.node_name
+
+    @property
+    def broker_host(self) -> str:
+        """The master's host: the cluster broker runs next to the master API."""
+        return urlsplit(self.master_url).hostname or ""
 
     @property
     def docker_name(self) -> str:
@@ -124,8 +129,6 @@ class NodeConfiguration:
         master_id = required("SCENEGEMS_MASTER_ID")
         if master_id and not is_scope_name(master_id):
             problems.append(f"SCENEGEMS_MASTER_ID: {master_id!r} is not a master id (1 to 63 lowercase letters, digits and hyphens)")
-        ca_sha256 = required("SCENEGEMS_MASTER_CA_SHA256")
-        ca_sha256 = parsed("SCENEGEMS_MASTER_CA_SHA256", parse_sha256, ca_sha256) if ca_sha256 else ""
         node_name = required("SCENEGEMS_NODE_NAME")
         if node_name and not is_scope_name(node_name):
             problems.append(f"SCENEGEMS_NODE_NAME: {node_name!r} must be 1 to 63 lowercase letters, digits and hyphens, since it names Docker objects")
@@ -133,6 +136,8 @@ class NodeConfiguration:
         capabilities = parsed("SCENEGEMS_NODE_CAPABILITIES", parse_capabilities, capabilities_text, {}) if capabilities_text else {}
         labels = parsed("SCENEGEMS_NODE_LABELS", parse_labels, get("SCENEGEMS_NODE_LABELS"), {})
         state_text = required("SCENEGEMS_NODE_STATE_DIR")
+        broker_port_text = get("SCENEGEMS_BROKER_PORT")
+        broker_port = parsed("SCENEGEMS_BROKER_PORT", parse_port, broker_port_text, DEFAULT_BROKER_PORT) if broker_port_text else DEFAULT_BROKER_PORT
         geofence_text = get("SCENEGEMS_NODE_REFERENCE_GEOFENCE")
         geofence = parsed("SCENEGEMS_NODE_REFERENCE_GEOFENCE", parse_geofence, geofence_text, DEFAULT_REFERENCE_GEOFENCE) if geofence_text else DEFAULT_REFERENCE_GEOFENCE
         machine = parsed("SCENEGEMS_NODE_MACHINE", parse_machine, get("SCENEGEMS_NODE_MACHINE"))
@@ -141,18 +146,13 @@ class NodeConfiguration:
         if problems:
             raise ConfigurationError(problems)
 
-        state_dir = Path(state_text)
-        trust_dir = Path(get("SCENEGEMS_NODE_TRUST_DIR") or state_dir / "trust")
         return cls(
             master_url=master_url,
             master_id=master_id,
-            master_ca_sha256=ca_sha256,
             node_name=node_name,
             capabilities=capabilities,
-            state_dir=state_dir,
-            trust_dir=trust_dir,
-            trust_source=get("SCENEGEMS_NODE_TRUST_SOURCE") or trust_dir.resolve().as_posix(),
-            pairing_token=get("SCENEGEMS_PAIRING_TOKEN") or None,
+            state_dir=Path(state_text),
+            broker_port=broker_port,
             labels=labels,
             docker_network=get("SCENEGEMS_DOCKER_NETWORK") or None,
             reference_geofence=geofence,
@@ -165,18 +165,18 @@ class NodeConfiguration:
 
 def parse_master_url(text: str) -> str:
     parts = urlsplit(text.strip())
-    if parts.scheme != "https":
-        raise ValueError(f"{text!r} must start with https://; the node talks to its master over TLS only")
+    if parts.scheme != "http":
+        raise ValueError(f"{text!r} must start with http://; the node and its master trust the VPN and use no TLS")
     if not parts.hostname:
         raise ValueError(f"{text!r} names no host")
     if parts.username or parts.password or parts.query or parts.fragment or parts.path not in ("", "/"):
-        raise ValueError(f"{text!r} must be https://<host>[:<port>] without a path, query or user")
+        raise ValueError(f"{text!r} must be http://<host>[:<port>] without a path, query or user")
     try:
         port = parts.port
     except ValueError as error:
         raise ValueError(f"{text!r} has an invalid port") from error
     host = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname
-    return f"https://{host}" + (f":{port}" if port is not None else "")
+    return f"http://{host}" + (f":{port}" if port is not None else "")
 
 
 def parse_machine(text: str) -> str:
@@ -185,11 +185,14 @@ def parse_machine(text: str) -> str:
     return text
 
 
-def parse_sha256(text: str) -> str:
-    value = text.strip().lower().replace(":", "")
-    if not _SHA256.match(value):
-        raise ValueError(f"{text!r} is not a SHA-256 value (64 hex digits, colons allowed)")
-    return value
+def parse_port(text: str) -> int:
+    try:
+        port = int(text.strip())
+    except ValueError:
+        raise ValueError(f"{text!r} must be a port number") from None
+    if not 1 <= port <= 65535:
+        raise ValueError(f"{text!r} is not a port (1 to 65535)")
+    return port
 
 
 def parse_capabilities(text: str) -> Dict[JobType, int]:

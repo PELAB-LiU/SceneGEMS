@@ -3,7 +3,6 @@
 from typing import Optional
 
 from scenegems_tool.cluster.node.instance_scope import InstanceScope
-from scenegems_tool.cluster.node.launchers.ca_certificate_mount import CaCertificateMount
 from scenegems_tool.cluster.node.launchers.pooled.pooled_service import SERVICE_CPUS, PooledService, PoolNames
 from scenegems_tool.cluster.node.subsystem import Subsystem
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
@@ -40,7 +39,6 @@ class SceneGenerationPool(PooledService):
         reference_geofence: Geofence,
         workers: int,
         broker_network: Optional[str] = None,
-        ca_certificate_mount: Optional[CaCertificateMount] = None,
     ) -> "SceneGenerationPool":
         return cls(
             PoolNames.for_scope(scope, _SERVICE_KEY),
@@ -49,5 +47,4 @@ class SceneGenerationPool(PooledService):
             cpus=workers + SERVICE_CPUS,
             workers=workers,
             broker_network=broker_network,
-            ca_certificate_mount=ca_certificate_mount,
         )

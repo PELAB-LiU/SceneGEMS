@@ -1,31 +1,17 @@
 """Paths and headers of the master's cluster API, shared by master and node.
 
-The node reaches the master over HTTPS. Before pairing it trusts nothing: it fetches the
-CA certificate, checks its SHA-256 against the value it was given with the pairing token,
-and from then on verifies every connection against that CA.
+The node reaches the master over plain HTTP and WebSocket: every machine on the VPN is
+trusted, so there is no pairing, no credential and no TLS. A node names itself in its Hello
+and, on the artifact routes, in the NODE_ID_HEADER.
 """
 
-CA_CERTIFICATE_PATH = "/cluster/ca-certificate"  # GET, unauthenticated: the CA certificate as PEM
-PAIRING_PATH = "/cluster/pairing"  # POST PairingRequest, answered with PairingResponse or 403
 NODE_CONTROL_PATH = "/cluster/node/control"  # WebSocket opened by the node, frames from messages.py
 JOBS_PATH = "/cluster/jobs"  # POST JobSubmission; GET lists jobs, GET <JOBS_PATH>/<job id> one job
-# GET and PUT <ARTIFACTS_PATH>/<sha256> on the node API (node credential); GET and HEAD on the operator API
+# GET and PUT <ARTIFACTS_PATH>/<sha256> on the node API (NODE_ID_HEADER); GET and HEAD on the operator API
 ARTIFACTS_PATH = "/cluster/artifacts"
 CAMPAIGNS_PATH = "/cluster/campaigns"  # operator API: POST a campaign config; GET lists campaigns, GET <CAMPAIGNS_PATH>/<campaign id> one (campaign_routes.py)
 LIVE_PATH = "/cluster/live"  # operator API: the browser's live channel WebSocket (live.py)
 
 CATALOG_PATH = "/cluster/catalog"  # operator API: GET <CATALOG_PATH>/classes the class catalog, GET <CATALOG_PATH>/stacks what a campaign run may use (catalog_routes.py)
 
-AUTHORIZATION_HEADER = "Authorization"
-BEARER_SCHEME = "Bearer"  # the node credential from PairingResponse.node_credential, which names the node
-
-
-def bearer(credential: str) -> str:
-    """The Authorization header value for a node credential."""
-    return f"{BEARER_SCHEME} {credential}"
-
-
-def credential_from_authorization(value: str) -> str:
-    """The credential in an Authorization header value, or "" when it is not a bearer value."""
-    scheme, _, credential = (value or "").partition(" ")
-    return credential.strip() if scheme == BEARER_SCHEME else ""
+NODE_ID_HEADER = "X-Node-Id"  # the node's id on the artifact routes; on the control socket the Hello names it

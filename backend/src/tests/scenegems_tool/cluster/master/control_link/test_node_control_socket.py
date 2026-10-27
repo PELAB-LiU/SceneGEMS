@@ -3,10 +3,11 @@
 import json
 from datetime import timedelta
 
-from scenegems_tool.cluster.master.control_link.node_control_socket import CLOSE_POLICY_VIOLATION, CLOSE_PROTOCOL_ERROR
+import pytest
+
+from scenegems_tool.cluster.master.control_link.node_control_socket import CLOSE_PROTOCOL_ERROR
 from scenegems_tool.cluster.protocol.jobs import JobOutcome, JobState, JobSubmission
 from scenegems_tool.cluster.protocol.messages import Cancel, Heartbeat, LeaseOffer, LeaseRenewed, ProtocolError, ProtocolErrorCode, Welcome
-from scenegems_tool.cluster.protocol.routes import AUTHORIZATION_HEADER, bearer
 from scenegems_tool.cluster.protocol.version import PROTOCOL_VERSION
 from scenegems_tool.persistence.schema import NodeStatus
 from tests.scenegems_tool.cluster.master.conftest import EXPECTED, SCENE
@@ -48,29 +49,22 @@ def test_offer_accept_renew_result(make_node, plane, stores, on_loop, schedule, 
     assert stored.state == JobState.SUCCEEDED and stored.result == {"valid": True}
 
 
-def test_bad_credential_is_refused(make_node):
+def test_a_node_connects_without_any_credential_and_the_hello_names_it(make_node, stores):
     node = make_node("lab 1")
-    node.credential = node.node_id + ".not-the-secret"
+    node.connect()  # no header, no pairing: the master trusts the VPN
+    assert stores.nodes.get(node.node_id).node_id == node.node_id
+
+
+@pytest.mark.parametrize("node_id", ["Lab 1", "lab/1", "lab+", "#", "-lab", ""])
+def test_a_hello_with_an_unusable_node_id_is_refused(make_node, stores, node_id):
+    node = make_node("lab 1")
+    node.hello_frame = node.hello_frame.model_copy(update={"node_id": node_id})
     node.open()
+    node.send(node.hello_frame)  # the id becomes a topic level and part of Docker names
     error = node.expect(ProtocolError)
-    assert error.code == ProtocolErrorCode.UNAUTHORIZED
-    assert node.expect_close() == CLOSE_POLICY_VIOLATION
-
-
-def test_missing_credential_is_refused(make_node):
-    node = make_node("lab 1")
-    node.open(headers={})
-    assert node.expect(ProtocolError).code == ProtocolErrorCode.UNAUTHORIZED
-    assert node.expect_close() == CLOSE_POLICY_VIOLATION
-
-
-def test_hello_must_name_the_credentials_node(make_node):
-    first, second = make_node("lab 1"), make_node("lab 2")
-    second.open(headers={AUTHORIZATION_HEADER: bearer(first.credential)})
-    second.send(second.hello_frame)
-    error = second.expect(ProtocolError)
-    assert error.code == ProtocolErrorCode.UNAUTHORIZED and first.node_id in error.message
-    assert second.expect_close() == CLOSE_POLICY_VIOLATION
+    assert error.code == ProtocolErrorCode.MALFORMED_FRAME and "node id" in error.message
+    assert node.expect_close() == CLOSE_PROTOCOL_ERROR
+    assert stores.nodes.get(node_id) is None
 
 
 def test_version_mismatch_is_refused_with_a_clear_error(make_node, stores):

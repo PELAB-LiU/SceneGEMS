@@ -1,38 +1,35 @@
-"""The node daemon: pairing, the control connection to the master, and the job runtime.
+"""The node daemon: the control connection to the master, and the job runtime.
+
+The node needs no master to start, and no pairing: master and nodes trust the VPN. Its id is
+its name, and it dials the configured master and keeps retrying while that is not up.
 
 Start-up order:
-    1. pair on first start, or load the stored pairing (pairing/);
-    2. build the NodeContext and remove instances a crashed predecessor left;
-    3. connect: Hello, then the master's Welcome sets the heartbeat interval and lease timeout;
-    4. serve lease messages until the connection drops, then reconnect with backoff.
+    1. build the NodeContext and remove instances a crashed predecessor left;
+    2. connect: Hello, then the master's Welcome sets the heartbeat interval and lease timeout;
+    3. serve lease messages until the connection drops, then reconnect with backoff.
 
 Running jobs belong to the LeaseManager, not to a connection, so they keep running
 while the daemon reconnects; the next Hello names their leases. A ticker thread renews
 leases, sends heartbeats and streams reports whether or not a connection is up; a relay
 thread sends the frames of observed simulations, about 10 batches a second at most.
 
-Conditions that no retry can fix stop the daemon with DaemonStopped: the master refused
-the credential, speaks another protocol version, or is not the paired master.
+Conditions that no retry can fix stop the daemon with DaemonStopped: the master speaks
+another protocol version, or is not the master the node is configured for.
 """
 
 import logging
-import ssl
 import threading
 import time
-import urllib.error
 from typing import Callable, Optional
 
 from scenegems_tool.cluster.node.daemon.configuration.node_configuration import NodeConfiguration
-from scenegems_tool.cluster.node.daemon.control.control_link import ControlLink, CredentialRejected, LinkClosed
+from scenegems_tool.cluster.node.daemon.control.control_link import ControlLink, LinkClosed
 from scenegems_tool.cluster.node.daemon.control.reconnect_backoff import ReconnectBackoff
 from scenegems_tool.cluster.node.daemon.control.status_frames import StatusFrames, software_revision
 from scenegems_tool.cluster.node.daemon.leases.lease_manager import LeaseManager
 from scenegems_tool.cluster.node.daemon.leases.lease_worker import JobRunner
 from scenegems_tool.cluster.node.daemon.leases.slot_table import SlotTable
 from scenegems_tool.cluster.node.daemon.node_runtime import build_node_context, remove_leftover_instances
-from scenegems_tool.cluster.node.daemon.pairing.ca_pinning import verified_context
-from scenegems_tool.cluster.node.daemon.pairing.node_pairing import PairingCall, ensure_paired, pair_with_master
-from scenegems_tool.cluster.node.daemon.pairing.pairing_state import StoredPairing
 from scenegems_tool.cluster.node.daemon.resource_probe import ResourceProbe
 from scenegems_tool.cluster.node.node_context import NodeContext
 from scenegems_tool.cluster.protocol.codec import MalformedFrame
@@ -75,7 +72,6 @@ class NodeDaemon:
         self,
         configuration: NodeConfiguration,
         *,
-        pair: PairingCall = pair_with_master,
         run: Optional[JobRunner] = None,
         probe: Optional[ResourceProbe] = None,
         fingerprints: Optional[Callable[[], dict]] = None,
@@ -87,7 +83,6 @@ class NodeDaemon:
         shutdown_timeout_s: float = SHUTDOWN_TIMEOUT_S,
     ):
         self.configuration = configuration
-        self._pair = pair
         self._run = run
         self._probe = probe or ResourceProbe(disk_path=RUNTIME_ASSETS_FOLDER)
         self._fingerprints = fingerprints
@@ -100,7 +95,6 @@ class NodeDaemon:
         self._current = _CurrentLink()
         self._heartbeat_interval_s: Optional[float] = None
         self._next_heartbeat = 0.0
-        self.pairing: Optional[StoredPairing] = None
         self.manager: Optional[LeaseManager] = None
         self.status: Optional[StatusFrames] = None
         self.connected = threading.Event()  # set while a connection is past its Welcome; for tests and health checks
@@ -109,16 +103,13 @@ class NodeDaemon:
 
     def run(self, stop: threading.Event) -> None:
         """Run until stop is set (then release the running leases) or DaemonStopped is raised."""
-        self.pairing = self._paired(stop)
-        if self.pairing is None:
-            return
-        response = self.pairing.response
-        node = self._node_context(self.configuration, response)
+        master_id, node_id = self.configuration.master_id, self.configuration.node_id
+        node = self._node_context(self.configuration)
         if self._clean_leftovers:
-            remove_leftover_instances(response.master_id, response.node_id)
+            remove_leftover_instances(master_id, node_id)
         self.manager = LeaseManager(SlotTable(self.configuration.capabilities), node, self._current, run=self._run)
         self.status = StatusFrames(
-            node_id=response.node_id,
+            node_id=node_id,
             node_name=self.configuration.node_name,
             software_revision=software_revision(self.configuration.software_revision),
             machine=self.configuration.machine,
@@ -133,7 +124,7 @@ class NodeDaemon:
         ticker.start()
         relay = threading.Thread(target=self._relay_loop, args=(ticker_stop,), name="node-observation-relay", daemon=True)
         relay.start()
-        _logger.info("Node %s (%s) of master %s starts with slots %s", response.node_id, self.configuration.node_name, response.master_id, _slots_text(self.configuration))
+        _logger.info("Node %s of master %s at %s starts with slots %s", node_id, master_id, self.configuration.master_url, _slots_text(self.configuration))
         try:
             self._connection_loop(stop)
         finally:
@@ -147,43 +138,22 @@ class NodeDaemon:
                 link.close()
             node.shutdown()
             if self._clean_leftovers:
-                remove_leftover_instances(response.master_id, response.node_id)
-            _logger.info("Node %s stopped", response.node_id)
-
-    def _paired(self, stop: threading.Event) -> Optional[StoredPairing]:
-        """The pairing, retried while the master is unreachable; refusals are final."""
-        while not stop.is_set():
-            try:
-                return ensure_paired(self.configuration, pair=self._pair)
-            except (urllib.error.URLError, OSError, TimeoutError) as error:
-                if isinstance(error, urllib.error.HTTPError):
-                    raise
-                if isinstance(getattr(error, "reason", error), ssl.SSLCertVerificationError):
-                    raise DaemonStopped(
-                        f"The master's server certificate does not verify against its pinned CA: {error}. " "Check that SCENEGEMS_MASTER_URL uses an address the master's certificate lists."
-                    ) from error
-                delay = self._backoff.next_delay_s()
-                _logger.warning("Cannot reach the master at %s to pair (%s); retrying in %.1f s", self.configuration.master_url, error, delay)
-                stop.wait(delay)
-        return None
+                remove_leftover_instances(master_id, node_id)
+            _logger.info("Node %s stopped", node_id)
 
     # Connection
 
     def _connection_loop(self, stop: threading.Event) -> None:
-        response = self.pairing.response
-        context = verified_context(response.ca_certificate_pem)
         while not stop.is_set():
-            link = self._link_factory(self.configuration.master_url, response.node_credential, context)
+            link = self._link_factory(self.configuration.master_url)
             try:
                 link.open()
                 self._handshake(link)
                 self._current.link = link
                 self.connected.set()
                 self._backoff.reset()
-                _logger.info("Connected to master %s at %s", response.master_id, link.url)
+                _logger.info("Connected to master %s at %s", self.configuration.master_id, link.url)
                 self._serve(link, stop)
-            except CredentialRejected as error:
-                raise DaemonStopped(str(error)) from error
             except ProtocolVersionMismatch as error:
                 raise DaemonStopped(str(error)) from error
             except (LinkClosed, MalformedFrame) as error:
@@ -218,9 +188,11 @@ class NodeDaemon:
                 _logger.warning("Ignoring %s before the master's Welcome", message.type)
 
     def _welcome(self, welcome: Welcome) -> None:
-        paired_master = self.pairing.response.master_id
-        if welcome.master_id != paired_master:
-            raise DaemonStopped(f"The master at {self.configuration.master_url} is {welcome.master_id!r}, but this node is paired with {paired_master!r}")
+        configured_master = self.configuration.master_id
+        if welcome.master_id != configured_master:
+            raise DaemonStopped(
+                f"The master at {self.configuration.master_url} is {welcome.master_id!r}, but this node is configured for {configured_master!r}: check SCENEGEMS_MASTER_URL and SCENEGEMS_MASTER_ID"
+            )
         self.manager.set_lease_timeout(welcome.lease_timeout_s)
         self._heartbeat_interval_s = welcome.heartbeat_interval_s
         self._next_heartbeat = time.monotonic() + welcome.heartbeat_interval_s
@@ -246,7 +218,7 @@ class NodeDaemon:
 
     def _protocol_error(self, error: ProtocolError) -> None:
         if error.code == ProtocolErrorCode.UNAUTHORIZED:
-            raise DaemonStopped(f"The master refused this node: {error.message}. Remove the node's state volume and pair again with a new token.")
+            raise DaemonStopped(f"The master refused this node: {error.message}")
         if error.code == ProtocolErrorCode.VERSION_MISMATCH:
             raise DaemonStopped(f"The master speaks another protocol version: {error.message}")
 

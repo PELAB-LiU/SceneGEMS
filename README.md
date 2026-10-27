@@ -87,7 +87,7 @@ A cluster is one master and any number of nodes:
         |  SSH
         v
  machines on the VPN 10.88.0.0/24
-   master   postgres | cluster-broker (MQTT over TLS, 8883) | master-api: node API (HTTPS, 8443),
+   master   postgres | cluster-broker (plain MQTT, 1883) | master-api: node API (HTTP, 8443),
             operator API and workbench gateway (127.0.0.1:5174), scheduler, pipeline engine, artifact store
    nodes    node daemon, which starts a subsystem container per job or pool
 ```
@@ -116,16 +116,16 @@ SceneGEMS does not install machines or set up their network. Machine Hub, a sepa
    | `stacks/node/docker-compose.yml` | copy of `deploy/node/docker-compose.yml` |
 
 3. **Create the cluster.** In **Clusters**, create a cluster from the bundle folder. Its name becomes the master id: lowercase letters, digits and hyphens. It names the cluster's topics, containers and volumes.
-4. **Add the master.** Give one machine the role `master`. Its parameters have defaults: node API port 8443, broker port 8883, operator port 5174, Postgres port 5432, the browser origins the operator API allows (`http://localhost:5173,http://127.0.0.1:5173`) and the artifact limits. The master's address is the machine's VPN address.
-5. **Add the nodes.** Give any number of machines (the master's machine too) the role `node`. Set `SCENEGEMS_NODE_CAPABILITIES` to the job types the node runs and their slots, for example `scene_generation:2,trajectory_generation:9,simulation.kinematic:2,monitoring.post_hoc:2,calibration.deviation:1` on a 12-core machine (trajectory generation slots: cores minus 3). Job types: `scene_generation`, `trajectory_generation`, `simulation.kinematic`, `simulation.ardupilot`, `monitoring.post_hoc`, `calibration.deviation`. Optional: labels that jobs can require (`key=value`) and the artifact cache bound.
-6. **Deploy all.** Machine Hub deploys the master first, then the nodes. For each member it:
+4. **Add the master.** Give one machine the role `master`. Its parameters have defaults: node API port 8443, broker port 1883, operator port 5174, Postgres port 5432, the browser origins the operator API allows (`http://localhost:5173,http://127.0.0.1:5173`) and the artifact limits. The master's address is the machine's VPN address.
+5. **Add the nodes.** Give any number of machines (the master's machine too) the role `node`. A node needs nothing from a deployed master: it only needs the master added to the cluster, because its `.env` gets the master's VPN address and ports from it. Set `SCENEGEMS_NODE_CAPABILITIES` to the job types the node runs and their slots, for example `scene_generation:2,trajectory_generation:9,simulation.kinematic:2,monitoring.post_hoc:2,calibration.deviation:1` on a 12-core machine (trajectory generation slots: cores minus 3). Job types: `scene_generation`, `trajectory_generation`, `simulation.kinematic`, `simulation.ardupilot`, `monitoring.post_hoc`, `calibration.deviation`. Optional: labels that jobs can require (`key=value`) and the artifact cache bound.
+6. **Deploy all.** Machine Hub deploys every member; a node does not wait for the master, since it keeps retrying its connection. For each member it:
    1. loads the role's images from the PC, skipping images the machine already has;
    2. copies the role's compose file and `release.json` to `~/machine_hub/stacks/<project>/` on the machine;
-   3. writes `.env` with mode 600: the role's fixed values, your parameters and the secrets. The master's Postgres password, broker password and broker hook secret are generated on the machine once and kept on later deploys;
-   4. runs the role's setup commands: on the master `docker compose --profile tools run --rm -T security init`, which creates the CA and the certificates for its VPN address; for a node it runs the master's `security pairing-token create --note <node>` and writes the four pairing values it prints (master URL, master id, CA hash, one-time token) into the node's `.env`, without logging them;
+   3. writes `.env` with mode 600: the role's fixed values, your parameters and the secrets. The master's Postgres password is generated on the machine once and kept on later deploys;
+   4. runs the role's setup commands (none in this release);
    5. runs `docker compose up -d` and waits until the role's services are ready.
 
-   A node pairs with its master on its first start and keeps its credentials in its state volume.
+   There is no pairing, no certificate and no token: master and nodes trust everything on the VPN. A node's id is its name, so keep node names unique within a cluster.
 7. **Reach the master from the PC.** The operator API has no authentication, so the master publishes it on its loopback address only. Open an SSH tunnel and keep it open while you use the web console or the command line:
 
    ```bash
@@ -157,29 +157,27 @@ SceneGEMS does not install machines or set up their network. Machine Hub, a sepa
 
 ### Updating and removing a cluster
 
-- **New release**: commit, build a new bundle (`./build.sh --release <folder>`), choose it for the cluster in Machine Hub and press **Deploy all**. The database, the CA and the node credentials stay. A node whose image fingerprints differ from the master's `release.json` gets no jobs until it runs the release's images. When `PROTOCOL_VERSION` (`backend/src/scenegems_tool/cluster/protocol/version.py`) changes, update the master and all its nodes together.
-- **Remove**: Machine Hub's Remove stops a member's stack and deletes its volumes and folder. For a master that deletes its database and CA, so every node must pair again.
+- **New release**: commit, build a new bundle (`./build.sh --release <folder>`), choose it for the cluster in Machine Hub and press **Deploy all**. The database stays. A node whose image fingerprints differ from the master's `release.json` gets no jobs until it runs the release's images. When `PROTOCOL_VERSION` (`backend/src/scenegems_tool/cluster/protocol/version.py`) changes, update the master and all its nodes together.
+- **Remove**: Machine Hub's Remove stops a member's stack and deletes its volumes and folder. For a master that deletes its database. Nodes need no re-pairing: they reconnect when a master with the same id is back.
 
 ### Without Machine Hub
 
 The same steps by hand, which is also what the single-host rehearsal test (`backend/src/tests/scenegems_tool/assurance/local_cluster.py`) does:
 
 1. Copy the images of each role in `release.json` to its machine, for example `docker save <images> | ssh <user>@<machine> docker load`. The master needs `scenegems-backend`, `scenegems-mqtt-broker` and `postgres:16.10-alpine`; a node needs `scenegems-node` and the subsystem image of each job type it offers (`scenegems-scenario-generation-subsystem`, `scenegems-trajectory-generation-subsystem`, `scenegems-scenario-execution-subsystem` for simulations and calibration, `scenegems-monitoring-subsystem`, plus `scenegems-ardupilot-sitl` and `scenegems-gazebo-harmonic` for ArduPilot runs).
-2. On the master, in a folder of its own with `stacks/master/docker-compose.yml` and `release.json`: write `.env` from [`deploy/master/.env.example`](deploy/master/.env.example) (master id, project name, the machine's address, generated passwords and hook secret), `chmod 600 .env`, then:
+2. On the master, in a folder of its own with `stacks/master/docker-compose.yml` and `release.json`: write `.env` from [`deploy/master/.env.example`](deploy/master/.env.example) (master id, project name, a generated Postgres password), `chmod 600 .env`, then:
 
    ```bash
-   docker compose --profile tools run --rm -T security init
    docker compose up -d
-   docker compose --profile tools run --rm -T security pairing-token create --note worker-1
    ```
 
-3. On each node, in a folder of its own with `stacks/node/docker-compose.yml`: write `.env` from [`deploy/node/.env.example`](deploy/node/.env.example) with the four lines `pairing-token create` printed, the node name, its capabilities and the release revision, then `docker compose up -d`.
+3. On each node, in a folder of its own with `stacks/node/docker-compose.yml`: write `.env` from [`deploy/node/.env.example`](deploy/node/.env.example) with the master's URL and id, the node name, its capabilities and the release revision, then `docker compose up -d`. This works before or after the master is up.
 
 A test keeps the roles in `backend/src/scenegems_tool/cluster/release/roles.py`, both compose files and both `.env.example` files in agreement.
 
 ### Secrets
 
-Real `.env` files are gitignored and stay on the machines. The master's secrets are generated on the master. A node's pairing token is used once; the node then keeps its credentials in its state volume. Losing a master's `security_data` folder (the CA key) means pairing every node again.
+Real `.env` files are gitignored and stay on the machines. The master's Postgres password is generated on the master. There are no other secrets: the node API and the cluster broker are open to every machine on the VPN, which is trusted. Do not publish them beyond it.
 
 ### Ports
 
@@ -188,8 +186,8 @@ Real `.env` files are gitignored and stay on the machines. The master's secrets 
 | 5173 | operator PC | web console (Vite) |
 | 5174 | workbench PC; master loopback | workbench backend; operator API and workbench gateway of a master |
 | 1882, 8082 | workbench PC, loopback | workbench MQTT broker (1883) and its WebSocket (8083) |
-| 8443 | master | node API over HTTPS: CA certificate, pairing, control WebSocket, artifacts |
-| 8883 | master | cluster broker, MQTT over TLS with an account per node |
+| 8443 | master | node API over HTTP: control WebSocket, artifacts |
+| 1883 | master | cluster broker, plain anonymous MQTT |
 | 5432 | master loopback | Postgres |
 | 8080 | operator PC, loopback | Machine Hub |
 | 51820/udp | every machine | WireGuard |

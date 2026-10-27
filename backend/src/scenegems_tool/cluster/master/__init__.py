@@ -20,12 +20,12 @@ loses only what the nodes resend on reconnect.
     leases/
         lease_manager.py          accept, renew, reject, release, result, expiry sweep, reconnect
     control_link/
-        node_control_socket.py    the node's WebSocket: credential, Hello, frame loop
+        node_control_socket.py    the node's WebSocket: Hello, frame loop
     api/                the HTTP side, one app per listener
-        master_apps.py            node API (HTTPS), operator (workbench and jobs), broker hook
-        node_routes.py            CA certificate, pairing, control WebSocket
+        master_apps.py            node API (plain HTTP), operator (workbench and jobs)
+        node_routes.py            control WebSocket
         operator_routes.py        jobs and nodes
         views.py                  JSON views of jobs and nodes
     settings.py         environment settings of the master process
-    server.py           the master process: three listeners in one event loop (`python -m scenegems_tool.cluster.master`)
+    server.py           the master process: two listeners in one event loop (`python -m scenegems_tool.cluster.master`)
 """

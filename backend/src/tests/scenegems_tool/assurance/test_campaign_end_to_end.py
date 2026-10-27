@@ -24,7 +24,7 @@ import pytest
 
 from scenegems_tool.cluster.release.__main__ import checkout_revision
 from scenegems_tool.cluster.release.bundle import build_bundle
-from tests.scenegems_tool.assurance.local_cluster import LocalRole, deploy_master, deploy_node, pairing_values, remove_cluster_containers
+from tests.scenegems_tool.assurance.local_cluster import LocalRole, deploy_master, deploy_node, remove_cluster_containers
 
 pytestmark = [pytest.mark.docker, pytest.mark.slow]
 
@@ -32,7 +32,7 @@ REPO_ROOT = Path(__file__).resolve().parents[5]
 CLUSTER = "p4-rehearsal"
 NODE = "local"
 OPERATOR_PORT = 15174
-MASTER_PARAMETERS = {"SCENEGEMS_API_PORT": "18443", "SCENEGEMS_BROKER_TLS_PORT": "18883", "SCENEGEMS_OPERATOR_PORT": str(OPERATOR_PORT), "POSTGRES_HOST_PORT": "15432"}
+MASTER_PARAMETERS = {"SCENEGEMS_API_PORT": "18443", "SCENEGEMS_BROKER_PORT": "18883", "SCENEGEMS_OPERATOR_PORT": str(OPERATOR_PORT), "POSTGRES_HOST_PORT": "15432"}
 NODE_PARAMETERS = {"SCENEGEMS_NODE_CAPABILITIES": "scene_generation:2,trajectory_generation:2,simulation.kinematic:2,monitoring.post_hoc:2"}
 STRAIGHT_CLASSES = [f"2vessel_0obstacle_scenarios/functional_model{index}" for index in range(5)]
 RRT_CLASSES = [f"2vessel_0obstacle_scenarios/functional_model{index}" for index in (5, 6)]
@@ -115,8 +115,7 @@ def cluster(tmp_path_factory):
     try:
         master = deploy_master(work / "release", release, work, CLUSTER, MASTER_PARAMETERS)
         roles.append(master)
-        pairing = pairing_values(release, master, CLUSTER, NODE)
-        roles.append(deploy_node(work / "release", release, work, CLUSTER, NODE, pairing, NODE_PARAMETERS))
+        roles.append(deploy_node(work / "release", release, work, CLUSTER, NODE, NODE_PARAMETERS, MASTER_PARAMETERS))
         yield master
     finally:
         for role in reversed(roles):

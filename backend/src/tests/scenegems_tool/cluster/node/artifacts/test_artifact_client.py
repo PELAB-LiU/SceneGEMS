@@ -1,4 +1,4 @@
-"""The node's artifact client against the real artifact routes, served over TLS by the scripted master."""
+"""The node's artifact client against the real artifact routes, served over plain HTTP by the scripted master."""
 
 import gzip
 import hashlib
@@ -11,15 +11,10 @@ import pytest
 from scenegems_tool.cluster.master.api import artifact_routes
 from scenegems_tool.cluster.node.artifacts import artifact_client
 from scenegems_tool.cluster.node.artifacts.artifact_client import ArtifactClient, ArtifactHashMismatch, ArtifactTransferError
-from scenegems_tool.cluster.node.daemon.pairing.ca_pinning import verified_context
 from scenegems_tool.cluster.protocol.artifacts import ArtifactKind, ArtifactRef
-from scenegems_tool.cluster.protocol.pairing import PairingRequest
-from scenegems_tool.cluster.security.credentials.pairing_tokens import create_pairing_token
-from scenegems_tool.cluster.security.pairing import pair_node
 from scenegems_tool.persistence.artifacts.file_artifact_store import FileArtifactStore
 from scenegems_tool.persistence.artifacts.recorded_artifacts import RecordedArtifacts
 from tests.scenegems_tool.cluster.node.daemon.fake_master import FakeMaster
-from tests.scenegems_tool.cluster.security.conftest import make_master_security
 from tests.scenegems_tool.persistence.artifacts.fake_artifact_records import InMemoryArtifactRecords
 from tests.scenegems_tool.persistence.stores.builders import ManualClock
 
@@ -34,15 +29,9 @@ def records():
 
 @pytest.fixture
 def master(tmp_path, records):
-    security = make_master_security(tmp_path / "security", addresses=("127.0.0.1", "localhost"))
     artifacts = RecordedArtifacts(FileArtifactStore(tmp_path / "artifacts"), records)
-    with FakeMaster(security, artifacts=artifacts, max_artifact_bytes=10 * 1024 * 1024) as master:
+    with FakeMaster(artifacts=artifacts, max_artifact_bytes=10 * 1024 * 1024) as master:
         yield master
-
-
-@pytest.fixture
-def paired(master):
-    return pair_node(master.security, PairingRequest(token=create_pairing_token(master.security.store).token, node_name="lab"))
 
 
 @pytest.fixture
@@ -51,8 +40,8 @@ def sleeps():
 
 
 @pytest.fixture
-def client(master, paired, sleeps):
-    return ArtifactClient(master.url, paired.node_credential, verified_context(master.security.ca_certificate_pem), sleep=sleeps.append, timeout_s=10)
+def client(master, sleeps):
+    return ArtifactClient(master.url, "lab-1", sleep=sleeps.append, timeout_s=10)
 
 
 def test_an_upload_and_its_download_round_trip_gzip_on_the_wire(client, master, records):
@@ -64,8 +53,8 @@ def test_an_upload_and_its_download_round_trip_gzip_on_the_wire(client, master, 
     assert client.upload(DOCUMENT, ArtifactKind.TRAJECTORIES) == reference  # stored already: the same reference
 
 
-def test_an_upload_for_a_leased_job_becomes_the_job_s_reference(client, master, paired, records):
-    master.leased_jobs["job-1"] = paired.node_id
+def test_an_upload_for_a_leased_job_becomes_the_job_s_reference(client, master, records):
+    master.leased_jobs["job-1"] = "lab-1"
     client.upload(DOCUMENT, ArtifactKind.TRAJECTORIES, job_id="job-1", field="trajectories")
     assert records.references == {(SHA, "job", "job-1", "result:trajectories")}
     with pytest.raises(ArtifactTransferError) as refused:
@@ -97,11 +86,26 @@ def test_an_upload_over_the_limit_is_not_retryable(client, master):
     assert too_large.value.status == 413 and not too_large.value.retryable
 
 
-def test_a_refused_credential_is_retryable_for_the_job_but_not_retried_here(master, sleeps):
-    client = ArtifactClient(master.url, "lab-1.wrong", verified_context(master.security.ca_certificate_pem), sleep=sleeps.append)
+def test_a_node_id_the_master_cannot_use_is_refused_and_not_retried_here(master, sleeps):
+    client = ArtifactClient(master.url, "Lab 1", sleep=sleeps.append)
     with pytest.raises(ArtifactTransferError) as refused:
         client.download(SHA)
-    assert refused.value.status == 401 and refused.value.retryable and sleeps == []
+    assert refused.value.status == 400 and refused.value.retryable and sleeps == []
+
+
+def test_the_node_names_itself_in_the_node_id_header(master, monkeypatch):
+    seen = []
+    real_open = artifact_client.open_url
+
+    def recording_open(request, timeout_s):
+        seen.append(request.get_header("X-node-id"))
+        return real_open(request, timeout_s)
+
+    monkeypatch.setattr(artifact_client, "open_url", recording_open)
+    client = ArtifactClient(master.url, "lab-7", sleep=lambda _s: None)
+    client.upload(DOCUMENT, ArtifactKind.TRAJECTORIES)
+    client.download(SHA)
+    assert seen == ["lab-7", "lab-7"]
 
 
 def test_connection_failures_and_server_errors_are_retried_with_backoff(client, monkeypatch, sleeps):
@@ -109,10 +113,10 @@ def test_connection_failures_and_server_errors_are_retried_with_backoff(client, 
     failures = [urllib.error.URLError(ConnectionResetError("reset")), urllib.error.HTTPError(client.url(SHA), 503, "unavailable", {}, None), TimeoutError("read timed out")]
     real_open = artifact_client.open_url
 
-    def flaky_open(request, context, timeout_s):
+    def flaky_open(request, timeout_s):
         if failures:
             raise failures.pop(0)
-        return real_open(request, context, timeout_s)
+        return real_open(request, timeout_s)
 
     monkeypatch.setattr(artifact_client, "open_url", flaky_open)
     assert client.download(SHA) == DOCUMENT
@@ -120,21 +124,13 @@ def test_connection_failures_and_server_errors_are_retried_with_backoff(client, 
 
 
 def test_a_transfer_that_keeps_failing_is_retryable_for_the_job(client, monkeypatch, sleeps):
-    def broken(request, context, timeout_s):
+    def broken(request, timeout_s):
         raise urllib.error.URLError(ConnectionRefusedError("refused"))
 
     monkeypatch.setattr(artifact_client, "open_url", broken)
     with pytest.raises(ArtifactTransferError) as failed:
         client.upload(DOCUMENT, ArtifactKind.TRAJECTORIES)
     assert failed.value.retryable and sleeps == [0.5, 1.0, 2.0] and "refused" in str(failed.value)
-
-
-def test_another_ca_is_not_trusted(master, paired, tmp_path):
-    other = make_master_security(tmp_path / "other", addresses=("127.0.0.1",))
-    client = ArtifactClient(master.url, paired.node_credential, lambda: verified_context(other.ca_certificate_pem), sleep=lambda _s: None)
-    with pytest.raises(ArtifactTransferError) as untrusted:
-        client.download(SHA)
-    assert "does not verify" in str(untrusted.value)
 
 
 def test_the_master_writes_an_upload_as_it_arrives(client, master, monkeypatch):

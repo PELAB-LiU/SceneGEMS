@@ -1,19 +1,17 @@
-"""The node's control WebSocket to its master: TLS against the master's CA, the node credential as bearer.
+"""The node's control WebSocket to its master: plain `ws://` on the VPN, no credential.
 
 One ControlLink is one connection. The connection thread opens it and reads frames; any
 thread may send. A send on a closed link returns False instead of raising, so callers
 treat a lost connection the same way wherever they notice it.
 
 The WebSocket runs on a private asyncio loop in its own thread, and the other threads
-hand it work. A TLS connection must not be read and written from two threads at once
-(OpenSSL's rule for one connection); websockets' threading client does exactly that and
-under TLS 1.3 now and then stalls its opening handshake, which the tests reproduced.
+hand it work: websockets' threading client reads and writes one connection from two
+threads, which stalled its opening handshake under TLS, so the asyncio client stays.
 """
 
 import asyncio
 import logging
 import queue
-import ssl
 import threading
 from concurrent.futures import TimeoutError as FutureTimeout
 from typing import Optional
@@ -24,7 +22,7 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus, WebSocketExce
 from scenegems_tool.cluster.protocol.codec import decode_master_message, encode
 from scenegems_tool.cluster.protocol.messages import MasterMessage
 from scenegems_tool.cluster.protocol.model_base import ProtocolFrame
-from scenegems_tool.cluster.protocol.routes import AUTHORIZATION_HEADER, NODE_CONTROL_PATH, bearer
+from scenegems_tool.cluster.protocol.routes import NODE_CONTROL_PATH
 
 _logger = logging.getLogger(__name__)
 
@@ -34,23 +32,17 @@ MAX_FRAME_BYTES = 64 * 1024 * 1024  # a lease offer or a result can carry whole 
 _CLOSED = object()  # end of the received frames
 
 
-class CredentialRejected(RuntimeError):
-    """The master refused the node credential; the node must be paired again."""
-
-
 class LinkClosed(RuntimeError):
     """The connection is gone; the daemon reconnects."""
 
 
 def control_url(master_url: str) -> str:
-    return "wss://" + master_url[len("https://") :] + NODE_CONTROL_PATH
+    return "ws://" + master_url[len("http://") :] + NODE_CONTROL_PATH
 
 
 class ControlLink:
-    def __init__(self, master_url: str, credential: str, context: ssl.SSLContext, *, open_timeout_s: float = OPEN_TIMEOUT_S):
+    def __init__(self, master_url: str, *, open_timeout_s: float = OPEN_TIMEOUT_S):
         self.url = control_url(master_url)
-        self._credential = credential
-        self._context = context
         self._open_timeout_s = open_timeout_s
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._thread: Optional[threading.Thread] = None
@@ -70,10 +62,6 @@ class ControlLink:
         except InvalidStatus as error:
             self.close()
             status = error.response.status_code
-            if status in (401, 403):
-                raise CredentialRejected(
-                    f"The master refused this node's credential (HTTP {status}). The node was revoked or paired again elsewhere: remove its state volume and pair with a new token."
-                ) from error
             raise LinkClosed(f"The master refused the control connection with HTTP {status}") from error
         except (OSError, WebSocketException, TimeoutError, FutureTimeout) as error:
             self.close()
@@ -133,8 +121,6 @@ class ControlLink:
     async def _open(self) -> ClientConnection:
         return await connect(
             self.url,
-            ssl=self._context,
-            additional_headers={AUTHORIZATION_HEADER: bearer(self._credential)},
             open_timeout=self._open_timeout_s,
             max_size=MAX_FRAME_BYTES,
             user_agent_header="scenegems-node",

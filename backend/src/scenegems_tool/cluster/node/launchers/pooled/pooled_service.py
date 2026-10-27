@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from typing import Optional
 
 from scenegems_tool.cluster.node.instance_scope import InstanceScope
-from scenegems_tool.cluster.node.launchers.ca_certificate_mount import CaCertificateMount
 from scenegems_tool.cluster.node.launchers.compose_project import ComposeProject
 from scenegems_tool.cluster.node.launchers.container_environment import subsystem_environment
 from scenegems_tool.cluster.node.subsystem import Subsystem, subsystem_image
@@ -65,7 +64,6 @@ class PooledService:
         cpus: float,
         workers: Optional[int] = None,
         broker_network: Optional[str] = None,
-        ca_certificate_mount: Optional[CaCertificateMount] = None,
     ):
         self.names = names
         # Every client of this instance, inside the container and outside, uses the instance prefix.
@@ -74,7 +72,6 @@ class PooledService:
         self.cpus = cpus
         self.workers = workers
         self.broker_network = broker_network
-        self.ca_certificate_mount = ca_certificate_mount  # the cluster broker's CA; None for the workbench
         self.project = ComposeProject(names.compose_project, f"{names.folder}/docker-compose.yml")
         self.compose_filename = self.project.compose_filename
         self._shutdown = threading.Event()
@@ -96,7 +93,7 @@ class PooledService:
             "cpus": self.cpus,
             "networks": [self.names.network_key],
         }
-        compose = merge_compose_volumes(
+        return merge_compose_volumes(
             attach_broker_network_to_compose(
                 {
                     "services": {
@@ -112,9 +109,6 @@ class PooledService:
                 self.broker_network,
             )
         )
-        if self.ca_certificate_mount is not None:
-            self.ca_certificate_mount.apply(compose, self.names.service_key)
-        return compose
 
     def _run_container_lifecycle_startup(self, docker_compose: dict) -> None:
         try:

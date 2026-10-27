@@ -25,7 +25,6 @@ Broker messages arrive on the broker client's thread and are handed to the event
 import asyncio
 import json
 import logging
-import ssl
 import threading
 import uuid
 from dataclasses import dataclass
@@ -55,7 +54,7 @@ from scenegems_tool.cluster.protocol.live import (
     job_instance,
     parse_instance,
 )
-from scenegems_tool.cluster.security.broker.access_rules import node_topic_scope
+from scenegems_tool.cluster.node.instance_scope import node_topic_scope
 from scenegems_tool.persistence.stores import JobRecord
 from scenegems_tool.subsystems.scene_generation.scenario_generation_types import SCENARIO_GENERATION_SERVICE_TOPIC
 from scenegems_tool.subsystems.trajectory_generation.trajectory_generation_types import TRAJECTORY_GENERATION_SERVICE_TOPIC
@@ -91,14 +90,11 @@ BrokerClientFactory = Callable[[], BrokerClient]
 
 
 class PahoBrokerClient:
-    """paho over TLS with the master's broker account; resubscribes its filters after every reconnect."""
+    """paho on the cluster broker, which is plain and anonymous on the VPN; resubscribes its filters after every reconnect."""
 
-    def __init__(self, host: str, port: int, username: str, password: str, ca_certificate: Optional[str] = None, client_id: Optional[str] = None):
+    def __init__(self, host: str, port: int, client_id: Optional[str] = None):
         self.host = host
         self.port = port
-        self._username = username
-        self._password = password
-        self._ca_certificate = ca_certificate
         self._client_id = client_id or f"scenegems-master-observer-{uuid.uuid4().hex[:8]}"
         self._filters: Set[str] = set()
         self._lock = threading.Lock()
@@ -108,9 +104,6 @@ class PahoBrokerClient:
         import paho.mqtt.client as mqtt
 
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=self._client_id)
-        client.username_pw_set(self._username, self._password)
-        if self._ca_certificate:
-            client.tls_set(ca_certs=self._ca_certificate, cert_reqs=ssl.CERT_REQUIRED)
         client.on_connect = self._on_connect
         client.on_message = lambda _client, _userdata, message: on_message(message.topic, message.payload)
         client.reconnect_delay_set(min_delay=1, max_delay=30)
@@ -120,7 +113,7 @@ class PahoBrokerClient:
 
     def _on_connect(self, client, _userdata, _flags, reason_code, _properties) -> None:
         if reason_code.is_failure:
-            logger.warning("The observation hub's broker login at %s:%d failed: %s", self.host, self.port, reason_code)
+            logger.warning("The observation hub's connection to the broker at %s:%d failed: %s", self.host, self.port, reason_code)
             return
         with self._lock:
             filters = sorted(self._filters)
@@ -276,7 +269,7 @@ class ObservationHub:
             return
         if not self.broker_configured:
             return
-        observed.prefix = f"{node_topic_scope(self._plane.master_id, topic.node_id)}/{topic.instance}/"
+        observed.prefix = f"{node_topic_scope(self._plane.master_id, topic.node_id)}{topic.instance}/"
         observed.filters = tuple(observed.prefix + suffix for suffix in POOL_TOPICS[name.kind])
         self._pools[observed.prefix] = observed
         broker = self._ensure_broker()
@@ -410,6 +403,6 @@ class ObservationHub:
             await anyio.to_thread.run_sync(broker.stop)
 
 
-def paho_broker(host: str, port: int, username: str, password: str, ca_certificate: Optional[str]) -> BrokerClientFactory:
+def paho_broker(host: str, port: int) -> BrokerClientFactory:
     """The factory of the hub's real broker client."""
-    return partial(PahoBrokerClient, host, port, username, password, ca_certificate)
+    return partial(PahoBrokerClient, host, port)

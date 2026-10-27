@@ -6,6 +6,8 @@ from scenegems_tool.cluster.release.roles import NAME_PATTERN, NODE_IMAGE, POSTG
 
 FIELDS = {"description", "count", "stack", "project", "images", "env", "parameters", "secrets", "setup", "outputs", "ready"}
 PLACEHOLDERS = {"cluster", "name", "machine.vpn_ip", "machine.name", "release.revision", "dependent.name"}
+# {<role>.vpn_ip} and {<role>.<parameter>}: the machine of another role of the cluster
+MASTER_PLACEHOLDERS = {"master.vpn_ip"} | {f"master.{key}" for key in scenegems_roles()["master"]["parameters"]}
 
 
 def _texts(role):
@@ -27,7 +29,7 @@ def test_every_role_has_the_contract_fields():
 def test_placeholders_are_the_documented_ones():
     for role in scenegems_roles().values():
         for text in _texts(role):
-            assert set(re.findall(r"\{([^{}]+)\}", text)) <= PLACEHOLDERS, text
+            assert set(re.findall(r"\{([^{}]+)\}", text)) <= PLACEHOLDERS | MASTER_PLACEHOLDERS, text
 
 
 def test_secrets_parameters_and_fixed_values_do_not_overlap():
@@ -38,11 +40,18 @@ def test_secrets_parameters_and_fixed_values_do_not_overlap():
         assert sum(len(group) for group in groups) == len(set().union(*groups))
 
 
-def test_the_node_requires_an_output_the_master_has():
+def test_the_node_needs_nothing_from_a_deployed_master():
     roles = scenegems_roles()
-    requires = roles["node"]["requires"]
-    assert requires["output"] in roles[requires["role"]]["outputs"]
-    assert roles[requires["role"]]["count"] == "one"
+    assert "requires" not in roles["node"] and roles["master"]["outputs"] == {} and roles["master"]["setup"] == []
+    assert roles["master"]["count"] == "one"  # {master.*} names the one master machine of the cluster
+    env = roles["node"]["env"]
+    assert env["SCENEGEMS_MASTER_ID"] == "{cluster}"
+    assert env["SCENEGEMS_MASTER_URL"] == "http://{master.vpn_ip}:{master.SCENEGEMS_API_PORT}"
+    assert env["SCENEGEMS_BROKER_PORT"] == "{master.SCENEGEMS_BROKER_PORT}"
+
+
+def test_there_are_no_secrets_but_the_database_password():
+    assert scenegems_roles()["master"]["secrets"] == ["POSTGRES_PASSWORD"] and scenegems_roles()["node"]["secrets"] == []
 
 
 def test_capability_items_cover_every_job_type_and_ardupilot_gets_gazebo():
@@ -76,7 +85,7 @@ def test_the_node_reports_its_machine_from_the_machine_name():
 
     node = scenegems_roles()["node"]
     assert node["env"]["SCENEGEMS_NODE_MACHINE"] == "{machine.name}"
-    values = {"SCENEGEMS_MASTER_URL": "https://10.88.0.2:8443", "SCENEGEMS_MASTER_ID": "lab", "SCENEGEMS_MASTER_CA_SHA256": "0" * 64}
+    values = {"SCENEGEMS_MASTER_URL": "http://10.88.0.2:8443", "SCENEGEMS_MASTER_ID": "lab"}
     values.update({"SCENEGEMS_NODE_NAME": "worker-1", "SCENEGEMS_NODE_CAPABILITIES": node["parameters"]["SCENEGEMS_NODE_CAPABILITIES"]["default"], "SCENEGEMS_NODE_STATE_DIR": "/state"})
     values["SCENEGEMS_NODE_MACHINE"] = node["env"]["SCENEGEMS_NODE_MACHINE"].replace("{machine.name}", "lab-pc-3")
     assert NodeConfiguration.from_values(values).machine == "lab-pc-3"

@@ -17,13 +17,10 @@ from scenegems_tool.cluster.master.api.operator_routes import operator_router
 from scenegems_tool.cluster.master.control_plane import ControlPlane
 from scenegems_tool.cluster.master.scheduling.fingerprint_policy import ExpectedFingerprints
 from scenegems_tool.cluster.protocol.jobs import JobType
-from scenegems_tool.cluster.protocol.pairing import PairingRequest
-from scenegems_tool.cluster.security.credentials.pairing_tokens import create_pairing_token
-from scenegems_tool.cluster.security.pairing import pair_node
+from scenegems_tool.cluster.scope_names import slug_from_name
 from scenegems_tool.persistence.stores import JobStore, NodeStore
 from tests.scenegems_tool.cluster.master.fake_node import FakeNode
 from tests.scenegems_tool.cluster.master.fake_stores import InMemoryJobStore, InMemoryNodeStore
-from tests.scenegems_tool.cluster.security.conftest import make_master_security
 from tests.scenegems_tool.persistence.stores.builders import ManualClock, make_hello
 
 # The master's expected fingerprints in these tests; a node built from the same checkout reports them
@@ -61,18 +58,13 @@ def stores(request, clock) -> Stores:
 
 
 @pytest.fixture
-def security(tmp_path):
-    return make_master_security(tmp_path / "security")
-
-
-@pytest.fixture
 def plane(stores, clock) -> ControlPlane:
     return ControlPlane("lab-master", stores.nodes, stores.jobs, ExpectedFingerprints.fixed(EXPECTED), clock=clock)
 
 
 @pytest.fixture
-def client(plane, security) -> Iterator[TestClient]:
-    app = create_node_api_app(plane, security, run_timers=False)
+def client(plane) -> Iterator[TestClient]:
+    app = create_node_api_app(plane, run_timers=False)
     app.include_router(operator_router(plane))
     with TestClient(app) as client:
         yield client
@@ -94,17 +86,14 @@ def schedule(on_loop, plane) -> Callable[[], int]:
 
 
 @pytest.fixture
-def make_node(client, security) -> Iterator[Callable[..., FakeNode]]:
-    """Pairs a node with the master (one-time token to credential) and returns it as a scripted node."""
+def make_node(client) -> Iterator[Callable[..., FakeNode]]:
+    """A scripted node of the master. Its id is its name's slug and a counter, so two nodes of one name stay apart."""
     nodes = []
 
     def make(name: str, slots: Optional[Dict[JobType, int]] = None, labels=None, fingerprints: Optional[Dict[str, str]] = None, resources=None, machine: Optional[str] = None) -> FakeNode:
-        token = create_pairing_token(security.store).token
-        response = pair_node(security, PairingRequest(token=token, node_name=name, labels=labels or {}))
-        hello = make_hello(
-            response.node_id, slots=slots or {SCENE: 2}, labels=labels, fingerprints=dict(EXPECTED) if fingerprints is None else fingerprints, resources=resources, name=name, machine=machine
-        )
-        nodes.append(FakeNode(client, response.node_credential, hello))
+        node_id = f"{slug_from_name(name)}-{len(nodes) + 1}"
+        hello = make_hello(node_id, slots=slots or {SCENE: 2}, labels=labels, fingerprints=dict(EXPECTED) if fingerprints is None else fingerprints, resources=resources, name=name, machine=machine)
+        nodes.append(FakeNode(client, hello))
         return nodes[-1]
 
     yield make

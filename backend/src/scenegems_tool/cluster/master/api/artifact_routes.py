@@ -1,6 +1,6 @@
 """The artifact routes: nodes download job inputs and upload job results; the operator reads artifacts.
 
-Node API (HTTPS, the node credential as a bearer header, as the control socket):
+Node API (plain HTTP on the VPN; the node names itself in the X-Node-Id header, nothing is authenticated):
 
     GET <ARTIFACTS_PATH>/<sha256>   the content; with `Accept-Encoding: gzip` the stored gzip bytes
                                     as `Content-Encoding: gzip` (the node client asks for it), otherwise
@@ -35,9 +35,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from scenegems_tool.cluster.protocol.artifacts import JSON_MEDIA_TYPE, SHA256_PATTERN, ArtifactKind
 from scenegems_tool.cluster.protocol.jobs import JobState
-from scenegems_tool.cluster.protocol.routes import ARTIFACTS_PATH, AUTHORIZATION_HEADER, credential_from_authorization
-from scenegems_tool.cluster.security.credentials.node_credentials import authenticate_node
-from scenegems_tool.cluster.security.master_security import MasterSecurity
+from scenegems_tool.cluster.protocol.routes import ARTIFACTS_PATH, NODE_ID_HEADER
+from scenegems_tool.cluster.scope_names import is_scope_name
 from scenegems_tool.persistence.artifacts.artifact_store import COMPRESSED_ENCODING, ArtifactHashMismatch, ArtifactNotFound, ArtifactTooLarge, ArtifactWriter
 from scenegems_tool.persistence.artifacts.recorded_artifacts import ArtifactHolder, RecordedArtifacts, result_role
 from scenegems_tool.persistence.schema import ArtifactHolderKind
@@ -66,15 +65,13 @@ def lease_holder_of(job_store) -> JobHolder:
     return holder
 
 
-def node_artifact_router(artifacts: RecordedArtifacts, security: MasterSecurity, job_holder: JobHolder, max_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES) -> APIRouter:
+def node_artifact_router(artifacts: RecordedArtifacts, job_holder: JobHolder, max_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES) -> APIRouter:
     router = APIRouter()
 
     async def node_of(request: Request) -> str:
-        credential = credential_from_authorization(request.headers.get(AUTHORIZATION_HEADER, ""))
-        # scrypt takes tens of milliseconds; keep it off the event loop
-        node_id = await anyio.to_thread.run_sync(authenticate_node, security.store, credential) if credential else None
-        if node_id is None:
-            raise HTTPException(status_code=401, detail="missing or invalid node credential", headers={"WWW-Authenticate": "Bearer"})
+        node_id = request.headers.get(NODE_ID_HEADER, "")
+        if not is_scope_name(node_id):
+            raise HTTPException(status_code=400, detail=f"send the node's id in the {NODE_ID_HEADER} header (1 to 63 lowercase letters, digits and hyphens)")
         return node_id
 
     @router.get(ARTIFACT_PATH)

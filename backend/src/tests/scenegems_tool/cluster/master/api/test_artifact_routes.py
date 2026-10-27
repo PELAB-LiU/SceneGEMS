@@ -17,7 +17,7 @@ from scenegems_tool.cluster.master.api.operator_routes import operator_router
 from scenegems_tool.cluster.master.master_artifacts import MasterArtifacts
 from scenegems_tool.cluster.protocol.jobs import JobSubmission, JobType
 from scenegems_tool.cluster.protocol.messages import LeaseOffer
-from scenegems_tool.cluster.protocol.routes import ARTIFACTS_PATH, AUTHORIZATION_HEADER, bearer
+from scenegems_tool.cluster.protocol.routes import ARTIFACTS_PATH, NODE_ID_HEADER
 from scenegems_tool.persistence.artifacts.artifact_store import sha256_hex
 from scenegems_tool.persistence.artifacts.file_artifact_store import FileArtifactStore
 from scenegems_tool.persistence.artifacts.recorded_artifacts import RecordedArtifacts
@@ -44,9 +44,9 @@ def master_artifacts(tmp_path, records) -> MasterArtifacts:
 
 
 @pytest.fixture
-def client(plane, security, master_artifacts) -> Iterator[TestClient]:
-    """The node API with the artifact routes; it replaces the master conftest's client, so make_node pairs against it."""
-    app = create_node_api_app(plane, security, run_timers=False, artifacts=master_artifacts)
+def client(plane, master_artifacts) -> Iterator[TestClient]:
+    """The node API with the artifact routes; it replaces the master conftest's client, so make_node connects to it."""
+    app = create_node_api_app(plane, run_timers=False, artifacts=master_artifacts)
     app.include_router(operator_router(plane))
     with TestClient(app) as client:
         yield client
@@ -66,7 +66,7 @@ def node(make_node):
 
 
 def _auth(node) -> dict:
-    return {AUTHORIZATION_HEADER: bearer(node.credential)}
+    return {NODE_ID_HEADER: node.node_id}
 
 
 def _url(sha256: str = SHA) -> str:
@@ -85,21 +85,20 @@ def _put(client, node, data: bytes = DOCUMENT, sha256: str = None, gzipped: bool
 # Authentication
 
 
-def test_both_node_routes_need_the_node_credential(client, node):
-    for headers in ({}, {AUTHORIZATION_HEADER: bearer("lab-x.wrong")}, {AUTHORIZATION_HEADER: "Basic abc"}):
-        assert client.get(_url(), headers=headers).status_code == 401
-        response = client.put(_url(), params={"kind": "trajectories"}, content=DOCUMENT, headers=headers)
-        assert response.status_code == 401 and response.headers["www-authenticate"] == "Bearer"
+def test_both_node_routes_need_a_node_id(client, node):
+    for headers in ({}, {NODE_ID_HEADER: "Lab 1"}, {NODE_ID_HEADER: "lab/../x"}, {NODE_ID_HEADER: "#"}):
+        assert client.get(_url(), headers=headers).status_code == 400
+        assert client.put(_url(), params={"kind": "trajectories"}, content=DOCUMENT, headers=headers).status_code == 400
     assert _put(client, node).status_code == 201
 
 
-def test_the_listeners_serve_their_own_artifact_routes(plane, security, master_artifacts):
-    node_paths = {(route.path, method) for route in create_node_api_app(plane, security, artifacts=master_artifacts).routes for method in getattr(route, "methods", ())}
+def test_the_listeners_serve_their_own_artifact_routes(plane, master_artifacts):
+    node_paths = {(route.path, method) for route in create_node_api_app(plane, artifacts=master_artifacts).routes for method in getattr(route, "methods", ())}
     operator_paths = {(route.path, method) for route in create_operator_app(plane, artifacts=master_artifacts).routes for method in getattr(route, "methods", ())}
     path = ARTIFACTS_PATH + "/{sha256}"
     assert {(path, "GET"), (path, "PUT")} <= node_paths and (path, "HEAD") not in node_paths
     assert {(path, "GET"), (path, "HEAD")} <= operator_paths and (path, "PUT") not in operator_paths
-    assert path not in {route.path for route in create_node_api_app(plane, security).routes}  # no store, no routes
+    assert path not in {route.path for route in create_node_api_app(plane).routes}  # no store, no routes
 
 
 # Upload

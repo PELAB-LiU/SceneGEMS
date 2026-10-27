@@ -13,8 +13,6 @@ from scenegems_tool.cluster.release.roles import POSTGRES_IMAGE, scenegems_roles
 
 REPO_ROOT = Path(__file__).resolve().parents[6]
 ENV_TEMPLATES = {"master": "deploy/master/.env.example", "node": "deploy/node/.env.example"}
-# Read by the master's security tool, not by compose; both may stay empty
-SECURITY_TOOL_OPTIONAL = {"SCENEGEMS_MASTER_URL", "SCENEGEMS_BROKER_PUBLIC_HOST"}
 _INTERPOLATION = re.compile(r"(?<!\$)\$\{([A-Z_][A-Z0-9_]*)(:?[-?][^}]*)?\}")
 
 
@@ -53,7 +51,7 @@ def test_the_env_template_lists_every_key_the_role_writes_and_nothing_unknown(ro
     role = scenegems_roles()[role_name]
     template = _template_keys(role_name)
     assert _role_keys(role) <= template
-    known = _role_keys(role) | {name for name, _ in _compose_variables(role_name)} | SECURITY_TOOL_OPTIONAL
+    known = _role_keys(role) | {name for name, _ in _compose_variables(role_name)}
     assert template <= known
 
 
@@ -66,12 +64,22 @@ def test_ready_services_exist(role_name):
         assert "healthcheck" in services[name], name
 
 
-def test_the_master_stack_has_the_security_tool_the_commands_run():
-    services = _compose("master")["services"]
-    assert services["security"]["profiles"] == ["tools"]
+def _settings_of(compose: dict) -> str:
+    """The environment, volumes and ports of every service: what a stack is configured with, without its comments."""
+    parts = []
+    for service in compose["services"].values():
+        parts += [str(key) for key in service.get("environment", {})] + [str(volume) for volume in service.get("volumes", [])] + [str(port) for port in service.get("ports", [])]
+    return " ".join(parts).lower()
+
+
+def test_the_master_stack_has_no_security_tool_certificates_or_tokens():
+    compose = _compose("master")
+    assert set(compose["services"]) == {"postgres", "cluster-broker", "master-api"}
+    settings = _settings_of(compose)
+    for word in ("security", "pairing", "certificate", "auth_hook", "broker_master", "8883"):
+        assert word not in settings, word
     role = scenegems_roles()["master"]
-    for command in role["setup"] + [output["command"] for output in role["outputs"].values()]:
-        assert command[command.index("run") + 1 :][:3] == ["--rm", "-T", "security"]
+    assert role["setup"] == [] and role["outputs"] == {}
 
 
 def test_postgres_is_the_same_image_everywhere():
@@ -92,9 +100,17 @@ def _example_env(role_name: str) -> str:
     values = {key: "value" for key in _role_keys(role)}
     values.update({key: parameter["default"] for key, parameter in role["parameters"].items()})
     values.update(
-        {key: text.replace("{cluster}", "lab").replace("{name}", "worker-1").replace("{machine.vpn_ip}", "10.88.0.2").replace("{release.revision}", "abc") for key, text in role["env"].items()}
+        {
+            key: text.replace("{cluster}", "lab")
+            .replace("{name}", "worker-1")
+            .replace("{machine.vpn_ip}", "10.88.0.2")
+            .replace("{release.revision}", "abc")
+            .replace("{master.vpn_ip}", "10.88.0.2")
+            .replace("{master.SCENEGEMS_API_PORT}", "8443")
+            .replace("{master.SCENEGEMS_BROKER_PORT}", "1883")
+            for key, text in role["env"].items()
+        }
     )
-    values.update({"SCENEGEMS_MASTER_ID": "lab", "SCENEGEMS_MASTER_CA_SHA256": "0" * 64, "SCENEGEMS_MASTER_URL": "https://10.88.0.2:8443"})
     return "".join(f"{key}={value}\n" for key, value in sorted(values.items()))
 
 
@@ -142,9 +158,21 @@ def test_the_node_caches_artifacts_in_its_state_volume():
     assert service["environment"]["SCENEGEMS_NODE_ARTIFACT_CACHE_MAX_BYTES"] == f"${{SCENEGEMS_NODE_ARTIFACT_CACHE_MAX_BYTES:-{default}}}"
 
 
-def test_the_master_logs_in_to_its_broker_with_its_own_account():
-    environment = _compose("master")["services"]["master-api"]["environment"]
-    assert (environment["SCENEGEMS_BROKER_HOST"], environment["SCENEGEMS_BROKER_PORT"]) == ("cluster-broker", "8883")
-    role = scenegems_roles()["master"]
-    assert environment["SCENEGEMS_BROKER_MASTER_USERNAME"] == "${SCENEGEMS_BROKER_MASTER_USERNAME:-" + role["env"]["SCENEGEMS_BROKER_MASTER_USERNAME"] + "}"
-    assert "SCENEGEMS_BROKER_MASTER_PASSWORD" in role["secrets"] and environment["SCENEGEMS_BROKER_MASTER_PASSWORD"] == "${SCENEGEMS_BROKER_MASTER_PASSWORD:-}"
+def test_the_master_observes_the_plain_cluster_broker_on_the_compose_network():
+    compose = _compose("master")
+    environment = compose["services"]["master-api"]["environment"]
+    assert (environment["SCENEGEMS_BROKER_HOST"], environment["SCENEGEMS_BROKER_PORT"]) == ("cluster-broker", "1883")
+    default = scenegems_roles()["master"]["parameters"]["SCENEGEMS_BROKER_PORT"]["default"]
+    assert default == "1883"
+    ports = compose["services"]["cluster-broker"]["ports"]
+    assert ports == ["${SCENEGEMS_BROKER_BIND_ADDRESS:-0.0.0.0}:${SCENEGEMS_BROKER_PORT:-" + default + "}:1883"]
+
+
+def test_the_node_stack_has_no_pairing_token_ca_or_trust_volume_and_dials_the_master_url():
+    compose = _compose("node")
+    service = compose["services"]["node"]
+    assert "SCENEGEMS_MASTER_URL" in service["environment"] and "SCENEGEMS_BROKER_PORT" in service["environment"]
+    settings = _settings_of(compose)
+    for word in ("pairing", "ca_sha256", "trust", "token"):
+        assert word not in settings, word
+    assert set(compose["volumes"]) == {"runtime", "state"}

@@ -10,7 +10,7 @@ holds no source code, only what the machine runs:
     manifest.py   the release file: read, write, validate; the master reads its expected
                   image fingerprints from it
     roles.py      the roles of a SceneGEMS cluster: stack, images, env, generated secrets,
-                  setup and pairing commands (the contract with the deployment tool)
+                  setup commands (the contract with the deployment tool)
     bundle.py     write a bundle from the built images of this checkout
     __main__.py   command line used by deploy/scripts/build.sh --release
 """

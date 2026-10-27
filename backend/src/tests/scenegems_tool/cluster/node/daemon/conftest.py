@@ -10,14 +10,11 @@ import pytest
 from scenegems_tool.cluster.node.daemon.configuration.node_configuration import NodeConfiguration
 from scenegems_tool.cluster.node.daemon.control.reconnect_backoff import ReconnectBackoff
 from scenegems_tool.cluster.node.daemon.node_daemon import NodeDaemon
-from scenegems_tool.cluster.node.daemon.pairing.ca_pinning import certificate_sha256
 from scenegems_tool.cluster.node.daemon.resource_probe import ResourceProbe
 from scenegems_tool.cluster.node.job_report import JobFailed
 from scenegems_tool.cluster.protocol.jobs import JobSpec, JobType
 from scenegems_tool.cluster.protocol.messages import LeaseOffer
-from scenegems_tool.cluster.security.credentials.pairing_tokens import create_pairing_token
 from tests.scenegems_tool.cluster.node.daemon.fake_master import FakeMaster
-from tests.scenegems_tool.cluster.security.conftest import make_master_security
 
 TIMEOUT_S = 10.0
 FINGERPRINTS = {"scenegems-scenario-execution-subsystem:latest": "f" * 64}
@@ -111,22 +108,15 @@ class DaemonThread:
 
 
 @pytest.fixture
-def master_security(tmp_path):
-    return make_master_security(tmp_path / "security", addresses=("127.0.0.1", "localhost"))
-
-
-@pytest.fixture
-def fake_master(master_security):
-    with FakeMaster(master_security) as master:
+def fake_master():
+    with FakeMaster() as master:
         yield master
 
 
 def node_values(master: FakeMaster, state_dir, **overrides) -> Dict[str, str]:
     values = {
         "SCENEGEMS_MASTER_URL": master.url,
-        "SCENEGEMS_MASTER_ID": master.security.master_id,
-        "SCENEGEMS_MASTER_CA_SHA256": certificate_sha256(master.security.ca_certificate_pem),
-        "SCENEGEMS_PAIRING_TOKEN": create_pairing_token(master.security.store).token,
+        "SCENEGEMS_MASTER_ID": master.master_id,
         "SCENEGEMS_NODE_NAME": "test-node",
         "SCENEGEMS_NODE_CAPABILITIES": "simulation.kinematic:2,scene_generation:1",
         "SCENEGEMS_NODE_LABELS": "site=lab",

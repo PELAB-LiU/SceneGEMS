@@ -1,10 +1,8 @@
-"""The job runtime the daemon hands to run_job: a NodeContext built from configuration and pairing.
+"""The job runtime the daemon hands to run_job: a NodeContext built from the configuration.
 
-The broker is the master's central broker over TLS, verified against the paired CA, with
-the node's own broker account. This process dials it with the CA file from its state
-folder; job containers get the trust folder mounted and their own path to the same file.
-Artifacts travel over the master's node API with the node credential, verified against
-the same CA, through a cache in the state volume.
+The broker is the master's cluster broker, plain and anonymous on the VPN, on the master's
+host. This process and the job containers dial the same address. Artifacts travel over the
+master's node API, naming the node in the node id header, through a cache in the state volume.
 """
 
 import logging
@@ -16,50 +14,42 @@ from scenegems_tool.cluster.node.artifacts.artifact_cache import ArtifactCache
 from scenegems_tool.cluster.node.artifacts.artifact_client import ArtifactClient
 from scenegems_tool.cluster.node.artifacts.node_artifacts import NodeArtifacts
 from scenegems_tool.cluster.node.daemon.configuration.node_configuration import NodeConfiguration
-from scenegems_tool.cluster.node.daemon.pairing.ca_pinning import verified_context
-from scenegems_tool.cluster.node.daemon.pairing.pairing_state import PairingState
 from scenegems_tool.cluster.node.instance_scope import INSTANCES_FOLDER, SCOPE_ROOT
-from scenegems_tool.cluster.node.launchers.ca_certificate_mount import CaCertificateMount
 from scenegems_tool.cluster.node.launchers.compose_project import ComposeProject
 from scenegems_tool.cluster.node.node_context import NodeContext
-from scenegems_tool.cluster.protocol.pairing import PairingResponse
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
 
 _logger = logging.getLogger(__name__)
 
 
-def broker_connection(response: PairingResponse, ca_certificate_path: str) -> MQttConnectionInfo:
-    broker = response.broker
+def broker_connection(configuration: NodeConfiguration) -> MQttConnectionInfo:
     return MQttConnectionInfo(
-        user=broker.username,
-        password=broker.password,
-        agent_broker=broker.host,  # containers and this process dial the same central broker
-        client_broker=broker.host,
-        port=broker.port,
-        tls_connection=broker.tls,
+        user="",
+        password="",
+        agent_broker=configuration.broker_host,  # containers and this process dial the same cluster broker
+        client_broker=configuration.broker_host,
+        port=configuration.broker_port,
+        tls_connection=False,
         allow_certificates=False,
-        ca_certificate_path=ca_certificate_path,
     )
 
 
-def build_node_context(configuration: NodeConfiguration, response: PairingResponse) -> NodeContext:
-    ca_certificate_path = str(PairingState(configuration.state_dir).ca_certificate_file)
+def build_node_context(configuration: NodeConfiguration) -> NodeContext:
     latitude, longitude, radius = configuration.reference_geofence
     return NodeContext(
-        master_id=response.master_id,
-        node_id=response.node_id,
-        mqtt_connection=broker_connection(response, ca_certificate_path),
+        master_id=configuration.master_id,
+        node_id=configuration.node_id,
+        mqtt_connection=broker_connection(configuration),
         reference_geofence=Geofence(latitude, longitude, radius),
         slots=dict(configuration.capabilities),
         broker_network=configuration.docker_network,
-        ca_certificate_mount=CaCertificateMount(configuration.trust_source),
-        artifacts=node_artifacts(configuration, response),
+        artifacts=node_artifacts(configuration),
     )
 
 
-def node_artifacts(configuration: NodeConfiguration, response: PairingResponse) -> NodeArtifacts:
-    client = ArtifactClient(configuration.master_url, response.node_credential, lambda: verified_context(response.ca_certificate_pem))
+def node_artifacts(configuration: NodeConfiguration) -> NodeArtifacts:
+    client = ArtifactClient(configuration.master_url, configuration.node_id)
     cache = ArtifactCache(configuration.artifact_cache_folder, configuration.artifact_cache_max_bytes) if configuration.artifact_cache_max_bytes > 0 else None
     return NodeArtifacts(client, cache)
 

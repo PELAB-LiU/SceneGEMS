@@ -334,7 +334,7 @@ def test_a_reconnect_reconciles_the_reported_leases(make_node, client, plane, st
     # runs `kept` and had accepted `unconfirmed` (that accept never arrived); its daemon restarted `lost`
     # away, and `forgotten` was never accepted. It also names a lease nobody knows.
     clock.advance(5)
-    again = FakeNode(client, node.credential, node.hello_frame)
+    again = FakeNode(client, node.hello_frame)
     again.connect(running_lease_ids=[kept.lease_id, unconfirmed.lease_id, "no-such-lease"])
     frames = [again.receive() for _ in range(3)]
     renewed = {frame.lease_id: frame for frame in frames if isinstance(frame, LeaseRenewed)}
@@ -362,7 +362,7 @@ def test_a_newer_connection_replaces_the_older_one(make_node, client, plane, sto
     offer = node.expect(LeaseOffer)
     node.accept(offer)
 
-    second = FakeNode(client, node.credential, node.hello_frame)
+    second = FakeNode(client, node.hello_frame)
     assert isinstance(second.connect(running_lease_ids=[offer.lease_id]), Welcome)
     assert second.expect(LeaseRenewed).lease_id == offer.lease_id
     assert node.expect_close() == 4000

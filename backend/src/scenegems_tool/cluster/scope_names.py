@@ -1,7 +1,7 @@
 """Master ids, node ids and broker usernames.
 
 Each one becomes a single MQTT topic level (`scenegems/<master_id>/<node_id>/...`), a part
-of Docker container names and a file name in the security folder. The rule below keeps
+of Docker container names and a file name. The rule below keeps
 all three safe: lowercase letters, digits and hyphens, so no MQTT wildcard (`+`, `#`),
 no level separator and no path component can ever appear in one.
 """
