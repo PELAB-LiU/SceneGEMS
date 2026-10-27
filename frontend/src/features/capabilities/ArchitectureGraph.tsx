@@ -1,11 +1,12 @@
 import { useMemo } from "react";
-import { Background, BaseEdge, Controls, EdgeLabelRenderer, MarkerType, MiniMap, ReactFlow, type Edge, type EdgeProps, type EdgeTypes, type NodeTypes } from "@xyflow/react";
+import { Background, BaseEdge, Controls, EdgeLabelRenderer, MarkerType, MiniMap, ReactFlow, type Edge, type EdgeProps, type EdgeTypes, type NodeChange, type NodeTypes } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { usePersistedState } from "../../app/usePersistedState";
 import type { ArchitectureDocument } from "../../domain/cluster/architectureApi";
 import { highlightFor, parallelIndex, shortId, words, type GraphView } from "./capabilitiesModel";
 import { CONCRETE_WIDTH, META_WIDTH, concreteHeight, metaHeight } from "./cardSizes";
 import { ConcreteNode, LaneBand, MetaNode, type ConcreteFlowNode, type LaneFlowNode, type MetaFlowNode } from "./GraphNodes";
-import { layoutGraph, type GraphLayout, type LayoutEdge, type LayoutNode } from "./graphLayout";
+import { laneBands, layoutGraph, type LayoutEdge, type LayoutNode } from "./graphLayout";
 
 export type Selection = { kind: "node" | "edge"; id: string };
 
@@ -78,15 +79,35 @@ function describeGraph(document: ArchitectureDocument, view: GraphView): Graph {
   };
 }
 
-function useLayout(document: ArchitectureDocument, view: GraphView): GraphLayout {
+type Point = { x: number; y: number };
+
+/** Where the operator dragged cards to, per document and view, kept per browser. */
+type MovedCards = Record<string, Record<string, Point>>;
+
+const SNAP = 12;
+const NO_MOVES: Record<string, Point> = {};
+
+/** The laid-out positions with the cards the operator moved put where they left them, and the lane bands around the result. */
+function usePlacement(document: ArchitectureDocument, view: GraphView, moved: Record<string, Point>) {
+  const graph = useMemo(() => describeGraph(document, view), [document, view]);
+  const laid = useMemo(
+    () =>
+      layoutGraph(
+        document.lanes.map((lane) => lane.id),
+        graph.layoutNodes,
+        graph.layoutEdges
+      ),
+    [document.lanes, graph]
+  );
   return useMemo(() => {
-    const graph = describeGraph(document, view);
-    return layoutGraph(
-      document.lanes.map((lane) => lane.id),
-      graph.layoutNodes,
-      graph.layoutEdges
-    );
-  }, [document, view]);
+    const positions = new Map(laid.positions);
+    for (const [id, point] of Object.entries(moved)) {
+      if (positions.has(id)) {
+        positions.set(id, point);
+      }
+    }
+    return { positions, bands: laneBands(document.lanes.map((lane) => lane.id), graph.layoutNodes, positions) };
+  }, [document.lanes, graph, laid, moved]);
 }
 
 interface ArchitectureGraphProps {
@@ -100,8 +121,18 @@ interface ArchitectureGraphProps {
 
 /** One document as a left-to-right graph: lanes as columns, cards as the layers or interfaces, curves as the adapters between them. */
 export function ArchitectureGraph({ document, view, selection, onSelect, showRuledOut }: ArchitectureGraphProps) {
-  const layout = useLayout(document, view);
+  const scope = `${document.id}:${view}`;
+  const [movedCards, setMovedCards] = usePersistedState<MovedCards>("capabilities-positions", {});
+  const moved = movedCards[scope] ?? NO_MOVES;
+  const layout = usePlacement(document, view, moved);
+  const movedCount = Object.keys(moved).length;
   const concrete = view === "concrete";
+  const onNodesChange = (changes: NodeChange[]) => {
+    const moves = changes.flatMap((change) => (change.type === "position" && change.position !== undefined ? [[change.id, change.position] as const] : []));
+    if (moves.length > 0) {
+      setMovedCards((current) => ({ ...current, [scope]: { ...current[scope], ...Object.fromEntries(moves) } }));
+    }
+  };
   const lit = useMemo(() => highlightFor(concrete ? document.edges : document.metamodel_edges, selection), [concrete, document, selection]);
 
   const { nodes, edges } = useMemo(() => {
@@ -126,7 +157,6 @@ export function ArchitectureGraph({ document, view, selection, onSelect, showRul
           width: CONCRETE_WIDTH,
           height: concreteHeight(node),
           data: { node, height: concreteHeight(node), selected: selection?.kind === "node" && selection.id === node.id, dimmed: lit !== null && !lit.nodes.has(node.id) },
-          draggable: false,
         }))
       : document.metamodel_nodes.map((node) => ({
           id: node.id,
@@ -141,14 +171,13 @@ export function ArchitectureGraph({ document, view, selection, onSelect, showRul
             selected: selection?.kind === "node" && selection.id === node.id,
             dimmed: lit !== null && !lit.nodes.has(node.id),
           },
-          draggable: false,
         }));
     return { nodes: [...laneNodes, ...cards], edges: buildEdges(document, view, selection, lit, showRuledOut, onSelect) };
   }, [concrete, document, layout, lit, onSelect, selection, showRuledOut, view]);
 
   return (
     <div className="cap-graph" data-testid="architecture-graph">
-      <Legend concrete={concrete} showRuledOut={showRuledOut} />
+      <Legend concrete={concrete} showRuledOut={showRuledOut} movedCount={movedCount} onReset={() => setMovedCards((current) => ({ ...current, [scope]: {} }))} />
       <div className="cap-graph-canvas">
       <ReactFlow
         key={`${document.id}:${view}`}
@@ -161,7 +190,10 @@ export function ArchitectureGraph({ document, view, selection, onSelect, showRul
         fitViewOptions={{ padding: 0.08 }}
         minZoom={0.2}
         maxZoom={1.6}
-        nodesDraggable={false}
+        nodesDraggable
+        snapToGrid
+        snapGrid={[SNAP, SNAP]}
+        onNodesChange={onNodesChange}
         nodesConnectable={false}
         elementsSelectable={false}
         proOptions={{ hideAttribution: true }}
@@ -248,7 +280,7 @@ function offsetOf(placed: { index: number; count: number } | undefined): number 
   return placed === undefined ? 0 : (placed.index - (placed.count - 1) / 2) * PARALLEL_SPACING;
 }
 
-function Legend({ concrete, showRuledOut }: { concrete: boolean; showRuledOut: boolean }) {
+function Legend({ concrete, showRuledOut, movedCount, onReset }: { concrete: boolean; showRuledOut: boolean; movedCount: number; onReset: () => void }) {
   return (
     <ul className="cap-legend" aria-label="Legend">
       {concrete ? (
@@ -279,6 +311,14 @@ function Legend({ concrete, showRuledOut }: { concrete: boolean; showRuledOut: b
           <li>Click a card or arrow for what an implementation must provide</li>
         </>
       )}
+      <li className="cap-legend-edit">
+        Drag cards to rearrange them
+        {movedCount > 0 && (
+          <button type="button" className="cap-link cap-legend-reset" onClick={onReset}>
+            Reset layout
+          </button>
+        )}
+      </li>
     </ul>
   );
 }

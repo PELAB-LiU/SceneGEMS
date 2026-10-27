@@ -64,7 +64,7 @@ export function layoutGraph(lanes: readonly string[], nodes: readonly LayoutNode
     }
     x += Math.max(...column.nodes.map((node) => node.width));
   });
-  return withBands(usedLanes, nodes, positions);
+  return { positions, bands: laneBands(usedLanes, nodes, positions) };
 }
 
 /** One column per lane and depth: the depth of a card is the longest chain of arrows from another card of its lane that ends at it. */
@@ -156,19 +156,18 @@ export function stackedLayout(lanes: readonly string[], nodes: readonly LayoutNo
     }
     x += width + LANE_GAP;
   }
-  return withBands(lanes, nodes, positions);
+  return { positions, bands: laneBands(lanes, nodes, positions) };
 }
 
-/** The column of each lane around its cards, all as tall as the whole graph. */
-function withBands(lanes: readonly string[], nodes: readonly LayoutNode[], positions: Map<string, { x: number; y: number }>): GraphLayout {
+/** The column of each lane around its cards as they are placed now, all as tall as the whole graph. A lane without cards has none. */
+export function laneBands(lanes: readonly string[], nodes: readonly LayoutNode[], positions: ReadonlyMap<string, { x: number; y: number }>): LaneBand[] {
   const boxes = nodes.map((node) => ({ node, ...(positions.get(node.id) as { x: number; y: number }) }));
   const top = Math.min(...boxes.map((box) => box.y));
   const bottom = Math.max(...boxes.map((box) => box.y + box.node.height));
-  const bands: LaneBand[] = lanes.map((lane) => {
+  return lanes.filter((lane) => boxes.some((box) => box.node.lane === lane)).map((lane) => {
     const members = boxes.filter((box) => box.node.lane === lane);
     const left = Math.min(...members.map((box) => box.x));
     const right = Math.max(...members.map((box) => box.x + box.node.width));
     return { lane, x: left - LANE_PADDING, y: top - LANE_HEADER_HEIGHT - LANE_PADDING, width: right - left + 2 * LANE_PADDING, height: bottom - top + LANE_HEADER_HEIGHT + 2 * LANE_PADDING };
   });
-  return { positions, bands };
 }

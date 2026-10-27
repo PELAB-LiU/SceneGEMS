@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { layoutGraph, stackedLayout, type LayoutEdge, type LayoutNode } from "./graphLayout";
+import { laneBands, layoutGraph, stackedLayout, type LayoutEdge, type LayoutNode } from "./graphLayout";
 
 const NODES: LayoutNode[] = [
   { id: "a", lane: "one", width: 200, height: 100 },
@@ -55,5 +55,25 @@ describe("stackedLayout", () => {
     expect(positions.get("a")).toEqual({ x: 0, y: 0 });
     expect(positions.get("b")?.y).toBeGreaterThan(100);
     expect(positions.get("c")?.x).toBeGreaterThan(200);
+  });
+});
+
+describe("laneBands", () => {
+  it("follows a card that was moved: its lane grows to hold it and the bands stay as tall as the graph", () => {
+    const { positions, bands } = layoutGraph(["one", "two", "three"], NODES, EDGES);
+    const moved = new Map(positions);
+    const a = positions.get("a") as { x: number; y: number };
+    moved.set("a", { x: a.x - 300, y: a.y + 400 });
+    const after = laneBands(["one", "two", "three"], NODES, moved);
+    expect(after[0].x).toBeLessThan(bands[0].x);
+    expect(after[0].width).toBeGreaterThan(bands[0].width);
+    expect(new Set(after.map((band) => band.height)).size).toBe(1);
+    expect(after[0].height).toBeGreaterThan(bands[0].height);
+    expect([after[1].x, after[1].width]).toEqual([bands[1].x, bands[1].width]);
+  });
+
+  it("leaves out a lane without cards", () => {
+    const { positions } = layoutGraph(["one", "two", "three"], NODES, EDGES);
+    expect(laneBands(["one", "none", "two"], NODES, positions).map((band) => band.lane)).toEqual(["one", "two"]);
   });
 });
