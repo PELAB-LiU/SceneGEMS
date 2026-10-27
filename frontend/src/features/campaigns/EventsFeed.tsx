@@ -54,13 +54,10 @@ export function EventsFeed({ events, live }: { events: readonly CampaignEvent[];
   };
 
   return (
-    <section className="panel camp-events" aria-label="Events">
-      <div className="camp-section-head">
-        <h3>Events</h3>
-        <span className="meta">
-          {events.length} {events.length === 1 ? "event" : "events"}, oldest first, {live ? "pushed live" : "polled every 4 s"}
-        </span>
-      </div>
+    <section className="camp-events" aria-label="Events">
+      <p className="meta">
+        {events.length} {events.length === 1 ? "event" : "events"}, oldest first, {live ? "pushed live" : "polled every 4 s"}
+      </p>
       {events.length === 0 ? (
         <p className="meta">No events yet.</p>
       ) : (

@@ -1,4 +1,5 @@
 import { describeOperatorError } from "../../../domain/cluster/operatorApi";
+import { Disclosure } from "../../../components/Disclosure";
 import { Field, FieldIssues, ParameterInput } from "./fields";
 import { reasonsOfEntry, splitByField } from "./reasons";
 import type { CatalogState, StepProps } from "./stepTypes";
@@ -57,8 +58,13 @@ export function TrajectoriesStep({ draft, update, reasons, catalog }: StepProps 
       </fieldset>
 
       {generator && (
-        <section className="wiz-card" aria-label={`${generator.label} parameters`}>
-          <h4>{generator.label} parameters</h4>
+        <Disclosure
+          id="wizard:trajectories:parameters"
+          title={`${generator.label} parameters`}
+          hint={`${Object.keys(draft.trajectories.parameters).length} changed from the defaults`}
+          forceOpen={generator.parameters.some((parameter) => (issuesOfParameter(parameter.key)?.length ?? 0) > 0)}
+          headingLevel={4}
+        >
           <p className="meta">
             {generator.params_field
               ? "Only the values you enter are written to the config; the others keep the search's own defaults."
@@ -83,7 +89,7 @@ export function TrajectoriesStep({ draft, update, reasons, catalog }: StepProps 
               />
             ))}
           </div>
-        </section>
+        </Disclosure>
       )}
 
       {generator?.common_parameters.map((parameter) => (

@@ -1,3 +1,4 @@
+import { Disclosure } from "../../../components/Disclosure";
 import { Field, FieldIssues, NumberField } from "./fields";
 import { reasonsOfEntry, splitByField } from "./reasons";
 import type { StepProps } from "./stepTypes";
@@ -43,8 +44,13 @@ export function PolicyStep({ draft, update, reasons }: StepProps) {
         </Field>
       </div>
 
-      <section className="wiz-card" aria-label="Stop conditions">
-        <h4>Stop conditions</h4>
+      <Disclosure
+        id="wizard:policy:stop"
+        title="Stop conditions"
+        hint="optional, none set by default"
+        forceOpen={own.byField.has("stop")}
+        headingLevel={4}
+      >
         <p className="meta">Optional. The first one reached ends the campaign: no new cases after the case limit, a drain after the failed verdict limit or the duration.</p>
         <div className="wiz-row">
           <Field label="Most cases" htmlFor="wiz-max-cases" hint="No new cases after this many, over all classes." issues={stopIssues("max_cases")}>
@@ -57,7 +63,7 @@ export function PolicyStep({ draft, update, reasons }: StepProps) {
             <NumberField id="wiz-max-duration" min={1} suffix="s" value={policy.maxDurationS} placeholder="no limit" onChange={(value) => update((next) => void (next.policy.maxDurationS = value))} />
           </Field>
         </div>
-      </section>
+      </Disclosure>
       <FieldIssues reasons={own.rest} showField />
     </div>
   );

@@ -3149,3 +3149,13 @@ pre {
 .initial-scene-line.is-ok {
   color: #86efac;
 }
+
+/* Text for assistive technology only. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

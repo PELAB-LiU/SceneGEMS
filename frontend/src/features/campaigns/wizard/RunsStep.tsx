@@ -1,3 +1,4 @@
+import { Disclosure } from "../../../components/Disclosure";
 import { describeOperatorError } from "../../../domain/cluster/operatorApi";
 import type { CatalogStack, CatalogStacks } from "../../../domain/cluster/campaignApi";
 import { findStack, supportsEnvironment } from "./configBuilder";
@@ -180,20 +181,35 @@ function RunCard({
       </div>
 
       {stack && stack.parameters.length > 0 && (
-        <div className="wiz-subsection">
-          <h5>Stack parameters</h5>
+        <Disclosure
+          id={`wizard:run:${run.id}:stack-parameters`}
+          title="Stack parameters"
+          hint={`${stack.parameters.length} values`}
+          defaultOpen={stack.parameters.some((parameter) => parameter.required)}
+          forceOpen={stack.parameters.some((parameter) => (byField.get(`stack.${parameter.key}`)?.length ?? 0) > 0)}
+          variant="plain"
+          headingLevel={5}
+        >
           {stack.parameters.map((parameter) => (
             <ParameterInput key={parameter.key} parameter={parameter} value={run.stackParameters[parameter.key]} issues={byField.get(`stack.${parameter.key}`)} onChange={(value) => setStackParameter(parameter.key, value)} />
           ))}
-        </div>
+        </Disclosure>
       )}
 
       {stack?.groups.map((group) => {
         const values = run.groups[group.key];
         const set = values !== undefined;
         return (
-          <div key={group.key} className="wiz-subsection" role="group" aria-label={group.label}>
-            <h5>{group.label}</h5>
+          <Disclosure
+            key={group.key}
+            id={`wizard:run:${run.id}:group:${group.key}`}
+            title={group.label}
+            hint={group.optional ? (set ? "set" : "optional") : "required"}
+            defaultOpen={!group.optional}
+            forceOpen={underGroup(group.key).length > 0}
+            variant="plain"
+            headingLevel={5}
+          >
             {group.optional && (
               <label className="wiz-check">
                 <input
@@ -233,13 +249,19 @@ function RunCard({
                 />
               ))}
             <FieldIssues reasons={underGroup(group.key).filter((reason) => !group.parameters.some((parameter) => reason.field === `stack.${group.key}.${parameter.key}`))} />
-          </div>
+          </Disclosure>
         );
       })}
 
       {(support.wind || support.waves) && (
-        <div className="wiz-subsection">
-          <h5>Environment</h5>
+        <Disclosure
+          id={`wizard:run:${run.id}:environment`}
+          title="Environment"
+          hint="wind and waves"
+          forceOpen={byField.has("environment.wind_vector") || (byField.get("environment.waves")?.length ?? 0) > 0}
+          variant="plain"
+          headingLevel={5}
+        >
           {support.wind && (
             <ParameterInput
               parameter={{ key: "environment.wind_vector", type: "number_triple", default: null, required: false, description: "Wind [east, north, up].", unit: "m/s" }}
@@ -255,7 +277,7 @@ function RunCard({
               onChange={(waves) => onChange((item) => void (item.waves = waves))}
             />
           )}
-        </div>
+        </Disclosure>
       )}
       <FieldIssues reasons={rest} showField />
     </section>

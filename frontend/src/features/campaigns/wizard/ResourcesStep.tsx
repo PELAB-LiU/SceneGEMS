@@ -1,3 +1,4 @@
+import { Disclosure } from "../../../components/Disclosure";
 import { Field, FieldIssues, NumberField } from "./fields";
 import { reasonsOfEntry, splitByField } from "./reasons";
 import type { StepProps } from "./stepTypes";
@@ -10,8 +11,13 @@ export function ResourcesStep({ draft, update, reasons }: StepProps) {
 
   return (
     <div className="wiz-step">
-      <section className="wiz-card" aria-label="Required labels">
-        <h4>Required node labels</h4>
+      <Disclosure
+        id="wizard:resources:labels"
+        title="Required node labels"
+        hint={resources.labels.length === 0 ? "any node" : `${resources.labels.length} set`}
+        forceOpen={own.byField.has("required_labels")}
+        headingLevel={4}
+      >
         <p className="meta">Every job of the campaign runs only on nodes that carry all of these labels (for example site: lab). Leave it empty to use any node.</p>
         {resources.labels.map((label, index) => (
           <div key={index} className="wiz-map-row">
@@ -40,10 +46,15 @@ export function ResourcesStep({ draft, update, reasons }: StepProps) {
           </button>
         </div>
         <FieldIssues reasons={own.byField.get("required_labels")} />
-      </section>
+      </Disclosure>
 
-      <section className="wiz-card" aria-label="Queue depth">
-        <h4>Queue depth per stage</h4>
+      <Disclosure
+        id="wizard:resources:queue-depth"
+        title="Queue depth per stage"
+        hint="defaults unless changed"
+        forceOpen={own.byField.has("queue_depth")}
+        headingLevel={4}
+      >
         <p className="meta">A new case starts only while every stage has fewer queued jobs of this campaign than its cap. Smaller caps keep the campaign from flooding the cluster.</p>
         <div className="wiz-row">
           {Object.entries(QUEUE_DEPTH_LABELS).map(([stage, label]) => (
@@ -66,7 +77,7 @@ export function ResourcesStep({ draft, update, reasons }: StepProps) {
           ))}
         </div>
         <FieldIssues reasons={own.byField.get("queue_depth")?.filter((reason) => reason.field === "queue_depth")} />
-      </section>
+      </Disclosure>
 
       <Field label="Priority" htmlFor="wiz-priority" hint="Base priority of the campaign's jobs. Later stages run above it, so a higher value moves the whole campaign ahead of others." issues={own.byField.get("priority")}>
         <NumberField id="wiz-priority" integer value={resources.priority} invalid={own.byField.has("priority")} onChange={(value) => update((next) => void (next.resources.priority = value))} />

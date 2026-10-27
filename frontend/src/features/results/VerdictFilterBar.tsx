@@ -1,3 +1,4 @@
+import { Disclosure } from "../../components/Disclosure";
 import { hasActiveFilters, runIndexesOf, type SensitiveFilter, type VerdictFilterState } from "../../domain/cluster/resultsApi";
 import type { CampaignDetail, VerdictState } from "../../domain/cluster/schemas";
 
@@ -15,7 +16,30 @@ export function VerdictFilterBar({ detail, filters, onChange, onReset, csvUrl, t
   const classes = (detail?.classes ?? []).map((view) => view.class_id).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   const runs = runIndexesOf(detail);
   const active = hasActiveFilters(filters);
+  const activeCount =
+    (filters.classId !== "" ? 1 : 0) +
+    (filters.state !== "any" ? 1 : 0) +
+    (filters.runIndex !== null ? 1 : 0) +
+    (filters.sensitive !== "any" ? 1 : 0);
   return (
+    <div className="results-filters-wrap">
+      <div className="results-filters-head">
+        <span className="meta">{total !== null ? `${total} ${total === 1 ? "verdict" : "verdicts"}${active ? " match the filters" : ""}` : "Loading the verdicts"}</span>
+        {csvUrl ? (
+          <a className="results-csv" href={csvUrl} download title="Every verdict the filters match, as CSV, in the table's columns plus the case id">
+            Download CSV{total !== null ? ` (${total})` : ""}
+          </a>
+        ) : (
+          <span className="meta">CSV unavailable</span>
+        )}
+      </div>
+      <Disclosure
+        id="results:filters"
+        title="Filters"
+        hint={activeCount > 0 ? `${activeCount} active` : "none, showing every verdict"}
+        forceOpen={active}
+        headingLevel={3}
+      >
     <section className="results-filters" aria-label="Filters">
       <label className="results-field results-field--wide">
         <span>Class</span>
@@ -62,14 +86,9 @@ export function VerdictFilterBar({ detail, filters, onChange, onReset, csvUrl, t
         <button type="button" onClick={onReset} disabled={!active}>
           Clear filters
         </button>
-        {csvUrl ? (
-          <a className="results-csv" href={csvUrl} download title="Every verdict the filters match, as CSV, in the table's columns plus the case id">
-            Download CSV{total !== null ? ` (${total})` : ""}
-          </a>
-        ) : (
-          <span className="meta">CSV unavailable</span>
-        )}
       </div>
     </section>
+      </Disclosure>
+    </div>
   );
 }

@@ -10,6 +10,8 @@ export interface DisclosureProps {
   /** A short summary at the right of the toggle, such as a count or a status. Shown whether open or closed. */
   hint?: ReactNode;
   defaultOpen?: boolean;
+  /** Keep the section open whatever the user chose, for content that needs attention (an error inside it). */
+  forceOpen?: boolean;
   /**
    * `card` is a bordered section, `plain` a section header without a frame, `link` an inline
    * "Show details" style toggle.
@@ -34,6 +36,7 @@ export function Disclosure({
   openTitle,
   hint,
   defaultOpen = false,
+  forceOpen = false,
   variant = "card",
   headingLevel = 3,
   keepMounted = false,
@@ -43,16 +46,17 @@ export function Disclosure({
   const storedOpen = useDisclosureStore((s) => (id === undefined ? undefined : s.open[id]));
   const setStoredOpen = useDisclosureStore((s) => s.setOpen);
   const [localOpen, setLocalOpen] = useState(defaultOpen);
-  const open = id === undefined ? localOpen : (storedOpen ?? defaultOpen);
+  const chosenOpen = id === undefined ? localOpen : (storedOpen ?? defaultOpen);
+  const open = forceOpen || chosenOpen;
   const baseId = useId();
   const buttonId = `${baseId}-toggle`;
   const panelId = `${baseId}-panel`;
 
   const toggle = () => {
     if (id === undefined) {
-      setLocalOpen(!open);
+      setLocalOpen(!chosenOpen);
     } else {
-      setStoredOpen(id, !open);
+      setStoredOpen(id, !chosenOpen);
     }
   };
 

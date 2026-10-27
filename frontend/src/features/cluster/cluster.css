@@ -1,28 +1,10 @@
 /* The Cluster section: summary tiles, node cards, cluster list. */
 
-.cluster-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
-  gap: var(--space-3);
-  align-items: start;
-}
-
-@media (max-width: 1100px) {
-  .cluster-layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
 .cluster-main {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
   min-width: 0;
-}
-
-.cluster-side {
-  position: sticky;
-  top: 0;
 }
 
 /* Summary tiles */
@@ -66,7 +48,7 @@
 
 .stat-tile-value {
   font-family: var(--font-mono);
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-xl);
   font-weight: 600;
   line-height: 1.2;
 }
@@ -78,19 +60,20 @@
 
 /* Master status */
 
-.master-status-panel > summary {
-  cursor: pointer;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-4);
+.master-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-3) var(--space-5);
+  margin: 0 0 var(--space-3);
 }
 
-.master-status-panel > summary .meta {
+.master-facts dt {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.master-facts dd {
   margin: 0;
-}
-
-.master-status-title {
   font-weight: 600;
 }
 
@@ -483,4 +466,26 @@
   color: var(--accent);
   user-select: all;
   word-break: break-all;
+}
+
+/* Node card summary: slots in use at a glance, with the rest behind Details. */
+
+.node-card-summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.node-chip {
+  align-self: flex-start;
+  padding: 2px var(--space-3);
+  border-radius: 999px;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.node-chip--warn {
+  color: #fcd34d;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.45);
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import "./results.css";
+import { EmptyState } from "../../components/EmptyState";
 import { SectionFrame } from "../../components/SectionFrame";
 import { useSelectedCluster } from "../../domain/cluster/clusterStore";
 import { describeOperatorError, OperatorApiError } from "../../domain/cluster/operatorApi";
@@ -20,15 +21,6 @@ const STATE_TONE: Partial<Record<CampaignSummary["actual_state"], string>> = {
 
 function campaignOption(campaign: CampaignSummary): string {
   return `${campaign.name} (${campaign.actual_state}, ${formatTime(campaign.created_at).slice(0, 16)})`;
-}
-
-function EmptyState({ title, children }: { title: string; children?: React.ReactNode }) {
-  return (
-    <div className="section-empty" role="status">
-      <h3>{title}</h3>
-      {children}
-    </div>
-  );
 }
 
 /** The Results section: a campaign's verdicts with filters, totals and CSV, down to one case's recorded run. */
@@ -78,18 +70,23 @@ export function ResultsSection() {
   if (!cluster || operatorUrl === null) {
     body = (
       <EmptyState title="No cluster selected">
-        <p className="meta">Select a cluster in the left pane to see the results of its campaigns.</p>
+        <p>Select a cluster in the left pane to see the results of its campaigns.</p>
       </EmptyState>
     );
   } else if (campaigns.isError && effectiveId === null) {
     const unreachable = campaigns.error instanceof OperatorApiError && campaigns.error.unreachable;
     body = (
-      <EmptyState title={unreachable ? "The master cannot be reached" : "The campaigns cannot be listed"}>
-        <p className="meta">{describeOperatorError(campaigns.error)}</p>
-        {unreachable && <p className="meta">The Cluster section shows how to open the SSH tunnel to the master&apos;s operator API.</p>}
-        <button type="button" onClick={() => void campaigns.refetch()}>
-          Try again
-        </button>
+      <EmptyState
+        title={unreachable ? "The master cannot be reached" : "The campaigns cannot be listed"}
+        tone="error"
+        action={
+          <button type="button" className="primary-btn accent" onClick={() => void campaigns.refetch()}>
+            Try again
+          </button>
+        }
+      >
+        <p>{describeOperatorError(campaigns.error)}</p>
+        {unreachable && <p>The Cluster section shows how to open the SSH tunnel to the master&apos;s operator API.</p>}
       </EmptyState>
     );
   } else if (campaigns.isPending && effectiveId === null) {
@@ -97,7 +94,7 @@ export function ResultsSection() {
   } else if (effectiveId === null) {
     body = (
       <EmptyState title="No campaign yet">
-        <p className="meta">Create and start a campaign in the Campaigns section; its verdicts appear here as the cases finish.</p>
+        <p>Create and start a campaign in the Campaigns section; its verdicts appear here as the cases finish.</p>
       </EmptyState>
     );
   } else if (caseId !== null) {

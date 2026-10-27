@@ -57,6 +57,16 @@ describe("Disclosure", () => {
     expect(html).toContain('role="region"');
   });
 
+  it("stays open while forceOpen is set, so an error inside it is never hidden", () => {
+    const html = renderToStaticMarkup(
+      <Disclosure title="Advanced" forceOpen>
+        <p role="alert">needs attention</p>
+      </Disclosure>
+    );
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain("needs attention");
+  });
+
   it("keeps the content mounted but hidden with keepMounted", () => {
     const html = renderToStaticMarkup(
       <Disclosure title="Editor" keepMounted>

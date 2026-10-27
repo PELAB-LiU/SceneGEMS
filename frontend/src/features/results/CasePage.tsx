@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Disclosure } from "../../components/Disclosure";
 import { describeOperatorError } from "../../domain/cluster/operatorApi";
 import type { CaseDetail, RunRecord } from "../../domain/cluster/schemas";
 import { CaseJobsTable, RunRecordCard, StateChip, VerdictCard } from "./CaseParts";
@@ -22,6 +23,7 @@ function CaseSummary({ detail }: { detail: CaseDetail }) {
         <StateChip state={detail.state} />
         <span className="run-tag">stage {detail.stage.replace("_", " ")}</span>
       </header>
+      <Disclosure id="results:case-details" variant="link" headingLevel={null} title="Case details" openTitle="Hide case details" hint={`seed ${detail.seed}`}>
       <dl className="results-facts">
         <div>
           <dt>Class</dt>
@@ -52,6 +54,7 @@ function CaseSummary({ detail }: { detail: CaseDetail }) {
           <dd className="mono">{formatTime(detail.finished_at)}</dd>
         </div>
       </dl>
+      </Disclosure>
       {detail.reason && (
         <p className={detail.state === "dropped" || detail.state === "failed" ? "results-reason results-reason--bad" : "results-reason"}>
           <strong>Reason:</strong> {detail.reason}
@@ -104,12 +107,20 @@ export function CasePage({ operatorUrl, campaignId, caseId, onBack }: CasePagePr
       {back}
       <CaseSummary detail={detail} />
 
-      <section className="results-panel" aria-label="Jobs of the case">
+      <section className="results-panel" aria-label="Verdicts of the case">
         <header className="results-panel-head">
-          <h3>Jobs</h3>
-          <span className="meta">{detail.jobs.length} in the case&apos;s history</span>
+          <h3>Verdicts</h3>
+          <span className="meta">{detail.verdicts.length}</span>
         </header>
-        <CaseJobsTable operatorUrl={operatorUrl} jobs={detail.jobs} />
+        {detail.verdicts.length === 0 ? (
+          <p className="meta">The case has no verdict yet.</p>
+        ) : (
+          <div className="results-stack">
+            {detail.verdicts.map((verdict) => (
+              <VerdictCard key={verdict.verdict_id} verdict={verdict} />
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="results-panel" aria-label="Run records">
@@ -146,21 +157,9 @@ export function CasePage({ operatorUrl, campaignId, caseId, onBack }: CasePagePr
         />
       )}
 
-      <section className="results-panel" aria-label="Verdicts of the case">
-        <header className="results-panel-head">
-          <h3>Verdicts</h3>
-          <span className="meta">{detail.verdicts.length}</span>
-        </header>
-        {detail.verdicts.length === 0 ? (
-          <p className="meta">The case has no verdict yet.</p>
-        ) : (
-          <div className="results-stack">
-            {detail.verdicts.map((verdict) => (
-              <VerdictCard key={verdict.verdict_id} verdict={verdict} />
-            ))}
-          </div>
-        )}
-      </section>
+      <Disclosure id="results:case-jobs" title="Jobs of the case" hint={`${detail.jobs.length} in the history`} headingLevel={3}>
+        <CaseJobsTable operatorUrl={operatorUrl} jobs={detail.jobs} />
+      </Disclosure>
     </div>
   );
 }
