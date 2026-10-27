@@ -242,19 +242,25 @@ export function TrajectoryMonitorSidebar({ previewOnly = false }: { previewOnly?
   return (
     <aside className="right-pane right-pane-trajectory">
       <header className="right-pane-toolbar">
-        <label className="right-pane-view-select">
-          <span className="right-pane-toolbar-title">View</span>
-          <select
-            value={monitorPanelView}
-            onChange={(e) =>
-              setMonitorPanelView(e.target.value as "runtime_data" | "overall_analysis")
-            }
-            aria-label="Monitoring panel view"
-          >
-            <option value="runtime_data">Runtime data</option>
-            <option value="overall_analysis">Overall analysis</option>
-          </select>
-        </label>
+        <div className="scene-gen-tabs right-pane-tabs" role="tablist" aria-label="Monitoring panel view">
+          {(
+            [
+              ["runtime_data", "Live data"],
+              ["overall_analysis", "Analysis charts"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={monitorPanelView === id}
+              className={`scene-gen-tab${monitorPanelView === id ? " active" : ""}`}
+              onClick={() => setMonitorPanelView(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <button
           type="button"
           className="right-pane-hide-btn"
@@ -262,7 +268,7 @@ export function TrajectoryMonitorSidebar({ previewOnly = false }: { previewOnly?
           aria-label="Hide monitoring panel"
           title="Hide monitoring panel"
         >
-          Hide panel ▶
+          Hide panel
         </button>
       </header>
 

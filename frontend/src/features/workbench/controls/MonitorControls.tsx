@@ -77,10 +77,19 @@ export function MonitorControls({ sendMessage, colregsConstraintsContent }: Prop
       <p className="meta" style={{ marginTop: 10 }}>
         Status: <span className={`status-text ${monitorStatus}`}>{monitorStatus}</span>
       </p>
-      <p className="meta" style={{ marginTop: 6 }}>
-        Requirements: WARA-PS status={warapsStatus} | monitor not connected=
-        {monitorStatus === "connected" ? "no" : "yes"}
-      </p>
+      {initializeDisabled && (
+        <p className="meta" style={{ marginTop: 6 }}>
+          To initialize the monitor:{" "}
+          {[
+            warapsStatus !== "connected" ? "connect to WARA-PS first" : null,
+            monitorStatus === "connected" ? "it is already running (shut it down to start again)" : null,
+            !hasColregsConfig ? "load the COLREGS constraints on the Domain Configuration page" : null,
+          ]
+            .filter((reason): reason is string => reason !== null)
+            .join("; ")}
+          .
+        </p>
+      )}
     </>
   );
 }

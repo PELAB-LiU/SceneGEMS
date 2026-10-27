@@ -13,6 +13,7 @@ import {
   loadFunctionalPresetsManifest,
   type FunctionalPresetEntry,
 } from "./functionalPresets";
+import { Disclosure } from "../../../components/Disclosure";
 import { LoadingSpinner } from "../../../components/LoadingSpinner";
 import { BatchPresetRunner } from "./BatchPresetRunner";
 import { SceneGenerationPaneViewSelect } from "./SceneGenerationPaneViewSelect";
@@ -207,48 +208,59 @@ export function SceneGenerationSidebar({
     <aside className="right-pane scene-generation-sidebar">
       <SceneGenerationPaneViewSelect />
       <div className="scene-editor-panel">
-        <h3>Functional Scenario Specification (.problem)</h3>
         {manifestLoading && <LoadingSpinner label="Loading preset catalog…" size="sm" />}
         {manifestError && <p className="error">{manifestError}</p>}
-        <div className="preset-filters toolbar-row">
-          <input
-            type="search"
-            placeholder="Search presets…"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            aria-label="Search functional presets"
-          />
-          <select
-            value={vesselFilter}
-            onChange={(e) => setVesselFilter(e.target.value)}
-            aria-label="Filter by vessel count"
-          >
-            <option value="any">Any vessels</option>
-            {vesselOptions.map((n) => (
-              <option key={n} value={String(n)}>
-                {n} vessels
-              </option>
-            ))}
-          </select>
-          <select
-            value={obstacleFilter}
-            onChange={(e) => setObstacleFilter(e.target.value)}
-            aria-label="Filter by obstacle count"
-          >
-            <option value="any">Any obstacles</option>
-            {obstacleOptions.map((n) => (
-              <option key={n} value={String(n)}>
-                {n} obstacles
-              </option>
-            ))}
-          </select>
-        </div>
-        <p className="meta">
-          {filteredPresets.length} preset(s)
-          {tab === "single" && filteredPresets.length > PRESETS_PAGE_SIZE
-            ? ` · page ${page + 1} / ${pageCount}`
-            : ""}
-        </p>
+        <Disclosure
+          id="scene-gen:find-preset"
+          variant="plain"
+          headingLevel={4}
+          title="Find a preset"
+          hint={
+            searchQuery || vesselFilter !== "any" || obstacleFilter !== "any"
+              ? `${filteredPresets.length} of ${allPresets.length} match`
+              : `${allPresets.length} presets`
+          }
+        >
+          <div className="preset-filters toolbar-row">
+            <input
+              type="search"
+              placeholder="Search presets…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              aria-label="Search functional presets"
+            />
+            <select
+              value={vesselFilter}
+              onChange={(e) => setVesselFilter(e.target.value)}
+              aria-label="Filter by vessel count"
+            >
+              <option value="any">Any vessels</option>
+              {vesselOptions.map((n) => (
+                <option key={n} value={String(n)}>
+                  {n} vessels
+                </option>
+              ))}
+            </select>
+            <select
+              value={obstacleFilter}
+              onChange={(e) => setObstacleFilter(e.target.value)}
+              aria-label="Filter by obstacle count"
+            >
+              <option value="any">Any obstacles</option>
+              {obstacleOptions.map((n) => (
+                <option key={n} value={String(n)}>
+                  {n} obstacles
+                </option>
+              ))}
+            </select>
+          </div>
+          <p className="meta">
+            {filteredPresets.length} preset(s)
+            {tab === "single" && filteredPresets.length > PRESETS_PAGE_SIZE
+              ? ` · page ${page + 1} / ${pageCount}`
+              : ""}
+          </p>
+        </Disclosure>
 
         <div className="scene-gen-tabs" role="tablist" aria-label="Scene generation mode">
           <button
@@ -258,7 +270,7 @@ export function SceneGenerationSidebar({
             className={`scene-gen-tab${tab === "single" ? " active" : ""}`}
             onClick={() => setTab("single")}
           >
-            Single scene generation
+            Single scene
           </button>
           <button
             type="button"
@@ -268,7 +280,7 @@ export function SceneGenerationSidebar({
             onClick={() => setTab("batch")}
             disabled={!batchEnabled}
           >
-            Batch scene generation
+            Batch (several presets)
           </button>
         </div>
 
@@ -311,6 +323,16 @@ export function SceneGenerationSidebar({
                   </button>
                 </>
               )}
+            </div>
+            <Disclosure
+              id="scene-gen:file-tools"
+              variant="link"
+              headingLevel={null}
+              title="Files and editor tools"
+              openTitle="Hide files and editor tools"
+              keepMounted
+            >
+              <div className="toolbar-row">
               <input
                 ref={functionalSpecInputRef}
                 hidden
@@ -349,7 +371,8 @@ export function SceneGenerationSidebar({
                 />
                 Open in Refinery
               </button>
-            </div>
+              </div>
+            </Disclosure>
             {refineryPasteHintOpen && (
               <div className="refinery-paste-hint" role="status">
                 <p>

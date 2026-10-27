@@ -224,34 +224,11 @@ body,
 }
 
 .waraps-layout {
-  display: grid;
-  grid-template-columns: minmax(280px, 400px) minmax(320px, 1fr);
-  gap: var(--space-4);
-  align-items: stretch;
-  min-height: min(100%, calc(100dvh - 5rem));
-}
-
-.waraps-layout__form,
-.waraps-layout__map {
-  min-width: 0;
   display: flex;
   flex-direction: column;
-}
-
-.waraps-layout__form .waraps-panel,
-.waraps-layout__map .geofence-panel {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.waraps-layout__map {
   gap: var(--space-4);
-}
-
-.waraps-layout__map .monitor-connection-panel {
-  flex: 0 0 auto;
+  max-width: 880px;
+  margin: 0 auto;
 }
 
 .waraps-panel h3,
@@ -264,14 +241,16 @@ body,
 .waraps-status-row {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-3) var(--space-5);
-  margin-bottom: var(--space-3);
-  padding-bottom: var(--space-3);
-  border-bottom: 1px solid var(--border);
+  gap: var(--space-2) var(--space-5);
+  margin: var(--space-2) 0 0;
 }
 
 .waraps-status-row .meta {
   margin: 0;
+}
+
+.waraps-layout .panel {
+  max-width: none;
 }
 
 .waraps-panel input:not([type="checkbox"]),
@@ -379,17 +358,6 @@ body,
 }
 
 @media (max-width: 1024px) {
-  .waraps-layout {
-    grid-template-columns: 1fr;
-    min-height: 0;
-  }
-
-  .waraps-layout__map {
-    position: relative;
-    top: auto;
-    max-height: none;
-  }
-
   .geofence-map {
     min-height: 300px;
     height: clamp(300px, 45vh, 480px);
@@ -401,20 +369,8 @@ body,
     padding: 6px;
   }
 
-  .waraps-actions {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .waraps-actions button {
-    width: 100%;
-    min-height: 44px;
-  }
-
-  .waraps-panel input:not([type="checkbox"]),
-  .waraps-panel select {
-    min-height: 44px;
-    font-size: var(--font-size);
+  .page-header-actions button {
+    flex: 1 1 140px;
   }
 
   .geofence-map {
@@ -946,6 +902,12 @@ body,
   flex-shrink: 0;
 }
 
+.right-pane-tabs {
+  flex: 1;
+  min-width: 0;
+  border-bottom: none;
+}
+
 .right-pane-toolbar-title {
   font-size: var(--font-size-xs);
   font-weight: 600;
@@ -1046,6 +1008,7 @@ body,
 
 .panel-collapsible > summary {
   list-style: none;
+  justify-content: flex-start;
   cursor: pointer;
   margin: calc(-1 * var(--space-4)) calc(-1 * var(--space-4)) var(--space-3);
   padding: var(--space-3) var(--space-4);
@@ -1083,10 +1046,10 @@ body,
 .collapsible-section > summary::before {
   content: "";
   display: inline-block;
-  width: 0.32em;
-  height: 0.32em;
-  border-right: 2px solid var(--text-faint);
-  border-bottom: 2px solid var(--text-faint);
+  width: 0.5em;
+  height: 0.5em;
+  border-right: 2px solid var(--text-muted);
+  border-bottom: 2px solid var(--text-muted);
   transform: rotate(-45deg);
   transition: transform 0.12s ease;
   flex-shrink: 0;
@@ -2594,9 +2557,12 @@ input[type="range"] {
   flex: 0 0 auto;
 }
 
-details summary {
+details > summary {
   display: flex;
+  align-items: center;
   justify-content: space-between;
+  gap: var(--space-3);
+  min-height: var(--hit-target);
   cursor: pointer;
 }
 
@@ -3034,7 +3000,7 @@ pre {
   border-radius: 0;
   color: var(--text-muted);
   font-weight: 600;
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size);
   cursor: pointer;
 }
 
@@ -3133,4 +3099,53 @@ pre {
   flex: 0 0 1.25em;
   text-align: center;
   font-weight: 700;
+}
+
+/* Heading of a bottom control panel: step, title, status. */
+.control-panel-heading > * {
+  min-width: 0;
+}
+
+.control-panel-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.control-panel-heading h3 {
+  margin: 0;
+  font-size: var(--font-size-lg);
+}
+
+.control-panel-eyebrow {
+  margin: 0;
+  color: var(--accent);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.control-panel-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+  min-width: 0;
+  text-align: right;
+}
+
+.control-panel-status .meta {
+  margin: 0;
+}
+
+.initial-scene-line {
+  margin: 0;
+}
+
+.initial-scene-line.is-ok {
+  color: #86efac;
 }

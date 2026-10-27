@@ -13,6 +13,8 @@ const MAX_RADIUS_METERS = 100_000;
 interface ReferenceGeofenceMapProps {
   geofence: ReferenceGeofence;
   onGeofenceChange: (geofence: ReferenceGeofence) => void;
+  /** Drop the panel frame and heading, for use inside a disclosure that already has both. */
+  embedded?: boolean;
 }
 
 /** Clamp a radius to a sane range and drop non-finite values. */
@@ -41,7 +43,7 @@ function geofencesEqual(a: ReferenceGeofence, b: ReferenceGeofence): boolean {
   );
 }
 
-export function ReferenceGeofenceMap({ geofence, onGeofenceChange }: ReferenceGeofenceMapProps) {
+export function ReferenceGeofenceMap({ geofence, onGeofenceChange, embedded = false }: ReferenceGeofenceMapProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const circleRef = useRef<L.Circle | null>(null);
@@ -263,8 +265,8 @@ export function ReferenceGeofenceMap({ geofence, onGeofenceChange }: ReferenceGe
   };
 
   return (
-    <section className="panel geofence-panel">
-      <h3>Reference Geofence</h3>
+    <section className={embedded ? "geofence-panel geofence-panel--embedded" : "panel geofence-panel"}>
+      {embedded ? null : <h3>Reference Geofence</h3>}
       <p className="meta">
         Use the target button, then click the center, then click again to set the radius (distance from
         center). Press Escape to cancel.

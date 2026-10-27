@@ -5,6 +5,8 @@ import {
   usePlaybackStore,
 } from "../../../domain/playback/playbackStore";
 import type { ClientToServerMessage } from "../../../domain/simulation/wireTypes";
+import { Disclosure } from "../../../components/Disclosure";
+import { PageHeader } from "../../../components/PageHeader";
 import { MonitorControls } from "../controls/MonitorControls";
 import { mqttConnectionLibrary, type MqttConnectionPresetKey } from "./connectionLibrary";
 import { useConnectionStore } from "./connectionStore";
@@ -68,21 +70,87 @@ export function WarapsConnectionPanel({
     port > 0 &&
     port <= 65535;
 
+  const profileLabel =
+    selectedPreset === "live_mqtt_connection"
+      ? "Live MQTT"
+      : selectedPreset === "local_mqtt_connection"
+        ? "Local MQTT"
+        : selectedPreset === "host_mqtt_connection"
+          ? "Host MQTT"
+          : "Custom";
+  const monitorStatus = usePlaybackStore((s) => s.monitorStatus);
+
+  const connect = () => {
+    setUserDisconnectedWaraps(false);
+    beginConnectionAttempt();
+    sendMessage({
+      type: "connect_to_waraps",
+      user: user.trim(),
+      password,
+      agent_broker: agentBroker.trim(),
+      client_broker: clientBroker.trim(),
+      port,
+      tls_connection: tlsConnection,
+      allow_certificates: allowCertificates,
+      geofence,
+    });
+  };
+
   return (
     <div className="waraps-layout">
-      <div className="waraps-layout__form">
-      <section className="panel waraps-panel">
-        <h3>Connect to WARA-PS</h3>
-        <div className="waraps-status-row">
-          <p className="meta">
-            Backend socket:{" "}
-            <span className={`status-text ${streamStatus}`}>{streamStatus}</span>
+      <PageHeader
+        title="Connections"
+        description="Link the console to WARA-PS so simulations can run. This is optional for generating scenes and trajectories."
+        meta={
+          <p className="waraps-status-row">
+            <span className="meta">
+              Backend: <span className={`status-text ${streamStatus}`}>{streamStatus}</span>
+            </span>
+            <span className="meta">
+              WARA-PS: <span className={`status-text ${warapsStatus}`}>{warapsStatus}</span>
+            </span>
           </p>
-          <p className="meta">
-            WARA-PS status:{" "}
-            <span className={`status-text ${warapsStatus}`}>{warapsStatus}</span>
-          </p>
+        }
+        actions={
+          <>
+            <button className="primary-btn accent" disabled={!canSubmit} onClick={connect}>
+              {connectionAttempt === "connecting" ? "Connecting..." : "Connect"}
+            </button>
+            <button
+              disabled={streamStatus !== "connected" || warapsStatus !== "connected"}
+              onClick={() => {
+                setUserDisconnectedWaraps(true);
+                clearConnectionAttempt();
+                sendMessage({ type: "disconnect_from_waraps" });
+              }}
+            >
+              Disconnect
+            </button>
+          </>
+        }
+      />
+
+      {connectionAttempt === "failed" && connectionError && (
+        <div className="waraps-connection-error" role="alert">
+          <p className="error">{connectionError}</p>
+          <Disclosure
+            id="waraps:error-hints"
+            variant="link"
+            headingLevel={null}
+            title="What to check"
+            openTitle="Hide the checks"
+            defaultOpen
+          >
+            <ul className="meta">
+              {connectionHints(clientBroker, port, tlsConnection).map((hint) => (
+                <li key={hint}>{hint}</li>
+              ))}
+            </ul>
+          </Disclosure>
         </div>
+      )}
+
+      <section className="panel waraps-panel">
         <label className="field">
           <span>Connection profile</span>
           <select
@@ -102,139 +170,119 @@ export function WarapsConnectionPanel({
             <option value="host_mqtt_connection">Host MQTT (OTG broker on 1882)</option>
           </select>
         </label>
-
-        <label className="field">
-          <span>User</span>
-          <input value={user} onChange={(e) => setUser(e.target.value)} placeholder="username" />
-        </label>
-
-        <label className="field">
-          <span>Password</span>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="password"
-          />
-        </label>
-
-        <label className="field">
-          <span>Agent broker</span>
-          <input
-            value={agentBroker}
-            onChange={(e) => setAgentBroker(e.target.value)}
-            placeholder="mqtt://agent-broker"
-          />
-        </label>
-
-        <label className="field">
-          <span>Client broker</span>
-          <input
-            value={clientBroker}
-            onChange={(e) => setClientBroker(e.target.value)}
-            placeholder="mqtt://client-broker"
-          />
-        </label>
-
-        <label className="field">
-          <span>Port</span>
-          <input
-            type="number"
-            value={port}
-            onChange={(e) => setPort(Number(e.target.value))}
-            min={1}
-            max={65535}
-          />
-        </label>
-
-        <div className="waraps-options">
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={tlsConnection}
-              onChange={(e) => setTlsConnection(e.target.checked)}
-            />
-            <span>TLS connection</span>
-          </label>
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={allowCertificates}
-              onChange={(e) => setAllowCertificates(e.target.checked)}
-            />
-            <span>Allow certificates</span>
-          </label>
-        </div>
-
-        <div className="toolbar-row waraps-actions">
-          <button
-            className="primary-btn accent"
-            disabled={!canSubmit}
-            onClick={() => {
-              setUserDisconnectedWaraps(false);
-              beginConnectionAttempt();
-              sendMessage({
-                type: "connect_to_waraps",
-                user: user.trim(),
-                password,
-                agent_broker: agentBroker.trim(),
-                client_broker: clientBroker.trim(),
-                port,
-                tls_connection: tlsConnection,
-                allow_certificates: allowCertificates,
-                geofence,
-              });
-            }}
-          >
-            {connectionAttempt === "connecting" ? "Connecting..." : "Connect"}
-          </button>
-          <button
-            disabled={streamStatus !== "connected" || warapsStatus !== "connected"}
-            onClick={() => {
-              setUserDisconnectedWaraps(true);
-              clearConnectionAttempt();
-              sendMessage({ type: "disconnect_from_waraps" });
-            }}
-          >
-            Disconnect
-          </button>
-        </div>
-
-        {connectionAttempt === "failed" && connectionError && (
-          <div className="waraps-connection-error" role="alert">
-            <p className="error">{connectionError}</p>
-            <ul className="meta">
-              {connectionHints(clientBroker, port, tlsConnection).map((hint) => (
-                <li key={hint}>{hint}</li>
-              ))}
-            </ul>
-          </div>
-        )}
+        <p className="meta">
+          {profileLabel}: {clientBroker || "no broker"}:{port}
+          {tlsConnection ? ", TLS" : ""}
+        </p>
       </section>
-      {previewFrame && (() => {
-        const own = previewFrame.actors.find((a) => a.isOwnShip);
-        const state = own ? previewFrame.statesByActorId[own.id] : undefined;
-        return state ? (
-          <p className="meta geofence-own-ship-hint">
-            Preview own-ship position (scenario frame): x={state.x.toFixed(0)} m, y={state.y.toFixed(0)}{" "}
-            m: use geofence map for WGS84 reference area.
-          </p>
-        ) : null;
-      })()}
-      </div>
-      <div className="waraps-layout__map">
+
+      <Disclosure
+        id="waraps:details"
+        title="Connection details"
+        hint="User, brokers, port, TLS"
+        defaultOpen={selectedPreset === ""}
+        headingLevel={3}
+      >
+        <div className="waraps-panel">
+          <label className="field">
+            <span>User</span>
+            <input value={user} onChange={(e) => setUser(e.target.value)} placeholder="username" />
+          </label>
+
+          <label className="field">
+            <span>Password</span>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="password"
+            />
+          </label>
+
+          <label className="field">
+            <span>Agent broker</span>
+            <input
+              value={agentBroker}
+              onChange={(e) => setAgentBroker(e.target.value)}
+              placeholder="mqtt://agent-broker"
+            />
+          </label>
+
+          <label className="field">
+            <span>Client broker</span>
+            <input
+              value={clientBroker}
+              onChange={(e) => setClientBroker(e.target.value)}
+              placeholder="mqtt://client-broker"
+            />
+          </label>
+
+          <label className="field">
+            <span>Port</span>
+            <input
+              type="number"
+              value={port}
+              onChange={(e) => setPort(Number(e.target.value))}
+              min={1}
+              max={65535}
+            />
+          </label>
+
+          <div className="waraps-options">
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={tlsConnection}
+                onChange={(e) => setTlsConnection(e.target.checked)}
+              />
+              <span>TLS connection</span>
+            </label>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={allowCertificates}
+                onChange={(e) => setAllowCertificates(e.target.checked)}
+              />
+              <span>Allow certificates</span>
+            </label>
+          </div>
+        </div>
+      </Disclosure>
+
+      <Disclosure
+        id="waraps:geofence"
+        title="Reference area (geofence)"
+        hint={`${geofence.latitude.toFixed(4)}, ${geofence.longitude.toFixed(4)}, ${Math.round(geofence.radius_meters)} m`}
+        headingLevel={3}
+      >
+        {previewFrame && (() => {
+          const own = previewFrame.actors.find((a) => a.isOwnShip);
+          const state = own ? previewFrame.statesByActorId[own.id] : undefined;
+          return state ? (
+            <p className="meta geofence-own-ship-hint">
+              Preview own-ship position (scenario frame): x={state.x.toFixed(0)} m, y={state.y.toFixed(0)}{" "}
+              m: use geofence map for WGS84 reference area.
+            </p>
+          ) : null;
+        })()}
         <ReferenceGeofenceMap
+          embedded
           geofence={geofence}
           onGeofenceChange={handleGeofenceChange}
         />
-        <section className="panel waraps-panel monitor-connection-panel">
-          <h3>Monitor</h3>
-          <MonitorControls
-            sendMessage={sendMessage}
-            colregsConstraintsContent={colregsConstraintsContent}
-          />
-        </section>
-      </div>
+      </Disclosure>
+
+      <Disclosure
+        id="waraps:monitor"
+        title="COLREGS monitor"
+        hint={monitorStatus}
+        headingLevel={3}
+      >
+        <MonitorControls
+          sendMessage={sendMessage}
+          colregsConstraintsContent={colregsConstraintsContent}
+        />
+      </Disclosure>
     </div>
   );
 }

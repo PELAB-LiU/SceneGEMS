@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
+import { Disclosure } from "../components/Disclosure";
 import { LoadingSpinner } from "../components/LoadingSpinner";
 import { usePlaybackTicker } from "../domain/playback/usePlaybackTicker";
 import { usePlaybackStore } from "../domain/playback/playbackStore";
@@ -50,6 +51,8 @@ interface WorkbenchSectionProps {
  */
 export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
   const RIGHT_PANE_MIN_WIDTH = 300;
+  // The width of the expanded left pane (shell.css), to size the panes from the space that is left.
+  const LEFT_PANE_WIDTH = 280;
   const RIGHT_PANE_MAX_WIDTH = 900;
   const RIGHT_PANE_MAX_WIDTH_RATIO = 0.85;
   const RIGHT_PANE_RESIZER_WIDTH = 6;
@@ -98,7 +101,7 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
   const [rightPaneWidth, setRightPaneWidth] = useState<number | null>(null);
   const [sceneGenPaneWidth, setSceneGenPaneWidth] = useState(() =>
     typeof window !== "undefined"
-      ? Math.max(RIGHT_PANE_MIN_WIDTH, Math.round(window.innerWidth / 2))
+      ? Math.max(RIGHT_PANE_MIN_WIDTH, Math.round((window.innerWidth - LEFT_PANE_WIDTH) * 0.45))
       : 600
   );
   const [isResizingRightPane, setIsResizingRightPane] = useState(false);
@@ -633,7 +636,7 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
                 gridTemplateRows:
                   bottomPanelHeight !== null
                     ? `minmax(0, 1fr) ${BOTTOM_PANEL_RESIZER_HEIGHT}px ${bottomPanelHeight}px`
-                    : `minmax(0, 1fr) ${BOTTOM_PANEL_RESIZER_HEIGHT}px 280px`,
+                    : `minmax(0, 1fr) ${BOTTOM_PANEL_RESIZER_HEIGHT}px 380px`,
               }}
             >
               <div className="simulation-center-stage">
@@ -672,7 +675,109 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
               />
               <footer className="bottom-toolbar bottom-toolbar-compact bottom-toolbar-single">
                 <div className="bottom-slot bottom-slot-controls">
+                  <div className="control-panel-heading">
+                    <div>
+                      <p className="control-panel-eyebrow">Step 2 of 4</p>
+                      <h3>Scene Generation</h3>
+                    </div>
+                    <div className="control-panel-status">
+                      <span className="meta" role="status">
+                        Scene:{" "}
+                        {latestGeneratedScene
+                          ? scenarioSourceName
+                            ? `from file (${scenarioSourceName})`
+                            : "generated"
+                          : "none yet"}
+                      </span>
+                      <span className="meta">
+                        Backend: <span className={`status-text ${streamStatus}`}>{streamStatus}</span>
+                      </span>
+                    </div>
+                  </div>
                   <div className="toolbar-row scene-generation-toolbar">
+                    {(() => {
+                      const isBatch = sceneGenerationTab === "batch";
+                      const sceneCount = isBatch ? selectedBatchPaths.length : 1;
+                      const disabled = isBatch
+                        ? !domainReadyForGeneration ||
+                          isSceneGenerationBusy ||
+                          selectedBatchPaths.length === 0
+                        : !canGenerateScene || isSceneGenerationBusy;
+                      return (
+                        <button
+                          className="primary-btn accent"
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => {
+                            setSceneGenerationError(null);
+                            if (isBatch) {
+                              void runBatchGeneration({
+                                selectedPaths: selectedBatchPaths,
+                                loadPresetText: loadTextFromPreset,
+                                enqueueSceneGeneration,
+                                sceneGenerationTimeoutSeconds,
+                                isAborted: () =>
+                                  !useBatchGenerationStore.getState().running,
+                              });
+                              return;
+                            }
+                            void (async () => {
+                              const outcome = await runSceneGeneration(functionalSpecText);
+                              if (!outcome.ok && !outcome.superseded) {
+                                setSceneGenerationError(
+                                  outcome.message ?? "Scene generation failed."
+                                );
+                              } else if (outcome.ok) {
+                                setScenarioSourceName(null);
+                              }
+                            })();
+                          }}
+                        >
+                          Generate Initial Scenes ({sceneCount})
+                        </button>
+                      );
+                    })()}
+                    <button
+                      type="button"
+                      disabled={!isSceneGenerationBusy}
+                      onClick={() => {
+                        streamControls.stopSceneGeneration();
+                        setSceneGenerationError("Scene generation stopped.");
+                      }}
+                    >
+                      Stop
+                    </button>
+                    <button
+                      type="button"
+                      className={
+                        latestGeneratedScene?.valid && latestGeneratedScene.evaluationData
+                          ? "primary-btn accent"
+                          : undefined
+                      }
+                      disabled={
+                        isSceneGenerationBusy ||
+                        !latestGeneratedScene?.valid ||
+                        !latestGeneratedScene.evaluationData
+                      }
+                      onClick={loadForTrajectoryGeneration}
+                    >
+                      Next: Trajectory Generation
+                    </button>
+                  </div>
+                  {!canGenerateScene && sceneGenerationTab === "single" && (
+                    <p className="meta">
+                      {functionalSpecText.trim().length === 0
+                        ? "Choose or write a scenario specification on the right to enable generating."
+                        : "The domain configuration is incomplete: load the COLREGS, vessel and obstacle files on the Domain Configuration page."}
+                    </p>
+                  )}
+                  <Disclosure
+                    id="scene-gen:options"
+                    variant="plain"
+                    headingLevel={4}
+                    title="Generation options"
+                    hint={`${sceneGenerationTimeoutSeconds} s timeout${enforceLowTcpa ? ", low TCPA" : ""}${sceneGenerationLivePreview ? "" : ", no live preview"}`}
+                  >
                     <div className="scene-generation-trigger-group">
                       <label className="check scene-generation-preview-toggle">
                         <input
@@ -710,59 +815,16 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
                           aria-label="Scene generation timeout in seconds"
                         />
                       </label>
-                      {(() => {
-                        const isBatch = sceneGenerationTab === "batch";
-                        const sceneCount = isBatch ? selectedBatchPaths.length : 1;
-                        const disabled = isBatch
-                          ? !domainReadyForGeneration ||
-                            isSceneGenerationBusy ||
-                            selectedBatchPaths.length === 0
-                          : !canGenerateScene || isSceneGenerationBusy;
-                        return (
-                          <button
-                            className="primary-btn accent"
-                            type="button"
-                            disabled={disabled}
-                            onClick={() => {
-                              setSceneGenerationError(null);
-                              if (isBatch) {
-                                void runBatchGeneration({
-                                  selectedPaths: selectedBatchPaths,
-                                  loadPresetText: loadTextFromPreset,
-                                  enqueueSceneGeneration,
-                                  sceneGenerationTimeoutSeconds,
-                                  isAborted: () =>
-                                    !useBatchGenerationStore.getState().running,
-                                });
-                                return;
-                              }
-                              void (async () => {
-                                const outcome = await runSceneGeneration(functionalSpecText);
-                                if (!outcome.ok && !outcome.superseded) {
-                                  setSceneGenerationError(
-                                    outcome.message ?? "Scene generation failed."
-                                  );
-                                } else if (outcome.ok) {
-                                  setScenarioSourceName(null);
-                                }
-                              })();
-                            }}
-                          >
-                            Generate Initial Scenes ({sceneCount})
-                          </button>
-                        );
-                      })()}
-                      <button
-                        type="button"
-                        disabled={!isSceneGenerationBusy}
-                        onClick={() => {
-                          streamControls.stopSceneGeneration();
-                          setSceneGenerationError("Scene generation stopped.");
-                        }}
-                      >
-                        Stop
-                      </button>
                     </div>
+                  </Disclosure>
+                  <Disclosure
+                    id="scene-gen:more-actions"
+                    variant="plain"
+                    headingLevel={4}
+                    title="More scene actions"
+                    hint="Load or export a scenario file, skip to simulation"
+                    keepMounted
+                  >
                     <div className="scene-scenario-actions">
                       <input
                         ref={scenarioFileInputRef}
@@ -783,17 +845,6 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
                         onClick={() => scenarioFileInputRef.current?.click()}
                       >
                         Load Scenario File...
-                      </button>
-                      <button
-                        type="button"
-                        disabled={
-                          isSceneGenerationBusy ||
-                          !latestGeneratedScene?.valid ||
-                          !latestGeneratedScene.evaluationData
-                        }
-                        onClick={loadForTrajectoryGeneration}
-                      >
-                        Load for Trajectory Generation
                       </button>
                       <button
                         type="button"
@@ -837,18 +888,7 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
                         Export Scenario
                       </button>
                     </div>
-                  </div>
-                  <p className="meta">
-                    Visualized scenario:{" "}
-                    {latestGeneratedScene
-                      ? scenarioSourceName
-                        ? `from file (${scenarioSourceName})`
-                        : "generated scene"
-                      : "none"}
-                  </p>
-                  <p className="meta">
-                    Backend socket: <span className={`status-text ${streamStatus}`}>{streamStatus}</span>
-                  </p>
+                  </Disclosure>
                 </div>
               </footer>
             </div>

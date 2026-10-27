@@ -1,23 +1,29 @@
 import { useUiStore, type SceneGenerationPaneView } from "../../../app/uiStore";
 
-/** View switch at the top of the scene generation right pane. */
+const VIEWS: { id: SceneGenerationPaneView; label: string }[] = [
+  { id: "specification", label: "Specification" },
+  { id: "monitor", label: "Monitor preview" },
+];
+
+/** View switch at the top of the scene generation right pane: the specification or the monitor preview of the scene. */
 export function SceneGenerationPaneViewSelect() {
   const view = useUiStore((s) => s.sceneGenerationPaneView);
   const setView = useUiStore((s) => s.setSceneGenerationPaneView);
 
   return (
-    <header className="right-pane-toolbar">
-      <label className="right-pane-view-select">
-        <span className="right-pane-toolbar-title">View</span>
-        <select
-          value={view}
-          onChange={(e) => setView(e.target.value as SceneGenerationPaneView)}
-          aria-label="Scene generation panel view"
+    <div className="scene-gen-tabs" role="tablist" aria-label="Scene generation panel view">
+      {VIEWS.map(({ id, label }) => (
+        <button
+          key={id}
+          type="button"
+          role="tab"
+          aria-selected={view === id}
+          className={`scene-gen-tab${view === id ? " active" : ""}`}
+          onClick={() => setView(id)}
         >
-          <option value="specification">Scene specification</option>
-          <option value="monitor">Monitor preview</option>
-        </select>
-      </label>
-    </header>
+          {label}
+        </button>
+      ))}
+    </div>
   );
 }
