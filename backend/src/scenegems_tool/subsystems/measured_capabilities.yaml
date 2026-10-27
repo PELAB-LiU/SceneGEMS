@@ -1,0 +1,49 @@
+# Measured values of the subsystem components (trajectory generation, scene generation, monitoring).
+#
+# This file is the only place for measured numbers of these subsystems. The specs in
+# subsystems/*/*_specs.py declare structure and defaults; the entries here are added to the
+# node or edge with the same id when the architecture documents are built, and the Capabilities
+# page marks them as measured. The vessel stack keeps its own file in vessel_stack/registry/.
+#
+# Keys are the ids of nodes and edges: "<document>/<local id>", for example monitoring/mqtt_service.
+# A key that matches no node or edge fails the build, so a typo cannot drop a measurement.
+#
+# Each entry:
+#   facts      list of {key, label, value, unit, note}; value is a number, string or boolean
+#   evidence   how, when and on what the values were measured
+#
+# Nothing is recorded yet for trajectory generation and scene generation.
+
+monitoring/colregs_monitor:
+  facts:
+    - key: throughput_in_process
+      label: Throughput in process
+      value: 1425
+      unit: scenes/s per core
+      note: two vessels; offline runs gave 1,100 to 1,300
+    - key: repeatability
+      label: Repeatability
+      value: deterministic
+      note: frames are equal when compared as JSON; the rule list order depends on the process hash seed, so serialized frames are not byte-identical across processes
+  evidence: >-
+    Phase 0, 2026-10-24: the monitor run offline over two-vessel scenes gave 1,100 to 1,300
+    scenes per second on one core; the comparison with the live MQTT path measured 1,425
+    scenes per second in process. In kinematic campaigns the monitor is the throughput limiter
+    (about 10 times slower than the simulation).
+
+monitoring/mqtt_service:
+  facts:
+    - key: throughput_batch_100
+      label: Throughput, batch of 100
+      value: 340
+      unit: scenes/s
+      note: 333 to 345 measured
+    - key: throughput_batch_400
+      label: Throughput, batch of 400
+      value: 454
+      unit: scenes/s
+  evidence: >-
+    Phase 0, 2026-10-24, Docker: NanoMQ broker and the real monitoring worker on a 12-core
+    Windows host. Frame values equal the in-process output. Slower than in process
+    (1,425 scenes per second) because every batch crosses the broker and waits for its
+    acknowledgement.

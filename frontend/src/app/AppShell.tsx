@@ -8,6 +8,7 @@ import { WorkbenchSection } from "./WorkbenchSection";
 import { usePlaybackStore } from "../domain/playback/playbackStore";
 import { ClusterSection } from "../features/cluster/ClusterSection";
 import { CampaignsSection } from "../features/campaigns/CampaignsSection";
+import { CapabilitiesSection } from "../features/capabilities/CapabilitiesSection";
 import { ObserveSection } from "../features/observe/ObserveSection";
 import { ResultsSection } from "../features/results/ResultsSection";
 
@@ -69,6 +70,7 @@ export function AppShell() {
 
         <WorkbenchSection active={section === "workbench"} errorSlot={errorSlot} />
         {section === "cluster" && <ClusterSection />}
+        {section === "capabilities" && <CapabilitiesSection />}
         {section === "campaigns" && <CampaignsSection />}
         {section === "observe" && <ObserveSection />}
         {section === "results" && <ResultsSection />}

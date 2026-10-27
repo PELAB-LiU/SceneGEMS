@@ -21,6 +21,7 @@ from typing import List, Optional, Sequence
 import uvicorn
 from sqlalchemy.orm import Session, sessionmaker
 
+from scenegems_tool.architecture.architecture_files import start_architecture_files_writer
 from scenegems_tool.cluster.master.api.master_apps import MasterApps, create_master_apps
 from scenegems_tool.cluster.master.control_plane import ControlPlane
 from scenegems_tool.cluster.master.live.live_channel import LiveChannel
@@ -155,5 +156,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"error: {error}", file=sys.stderr)
         return 2
     multiprocessing.set_start_method("spawn", force=True)  # as the gateway's own main: workbench workers are spawned
+    start_architecture_files_writer()  # the Capabilities page's description files, regenerated from the code on every start
     asyncio.run(serve(listeners(settings, apps)))
     return 0

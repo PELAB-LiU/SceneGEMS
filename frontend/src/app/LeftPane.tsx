@@ -84,6 +84,17 @@ function ClusterIcon(props: IconProps) {
   );
 }
 
+function CapabilitiesIcon(props: IconProps) {
+  return (
+    <svg {...iconBaseProps(props)}>
+      <rect x="3" y="4" width="6" height="5" rx="1" />
+      <rect x="15" y="3" width="6" height="5" rx="1" />
+      <rect x="9" y="16" width="6" height="5" rx="1" />
+      <path d="M9 6.5h6M6 9v3.5a2 2 0 0 0 2 2h1M18 8v4.5a2 2 0 0 1-2 2h-1" />
+    </svg>
+  );
+}
+
 function CampaignsIcon(props: IconProps) {
   return (
     <svg {...iconBaseProps(props)}>
@@ -153,6 +164,7 @@ const WORKBENCH_ITEMS: NavEntry<WorkbenchView>[] = [
 
 const CLUSTER_ITEMS: NavEntry<AppSection>[] = [
   { id: "cluster", label: "Cluster", hint: "Machines and their status", Icon: ClusterIcon },
+  { id: "capabilities", label: "Capabilities", hint: "What the system can run", Icon: CapabilitiesIcon },
   { id: "campaigns", label: "Campaigns", hint: "Run many simulations", Icon: CampaignsIcon },
   { id: "observe", label: "Observe", hint: "Watch runs live", Icon: ObserveIcon },
   { id: "results", label: "Results", hint: "Review finished runs", Icon: ResultsIcon },

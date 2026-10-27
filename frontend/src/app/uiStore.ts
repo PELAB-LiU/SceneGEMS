@@ -29,7 +29,7 @@ export type SceneGenerationTab = "single" | "batch";
 /** Scene generation right pane: the specification editor or the monitor preview of the displayed scene. */
 export type SceneGenerationPaneView = "specification" | "monitor";
 /** Top-level sections of the left pane. */
-export type AppSection = "workbench" | "cluster" | "campaigns" | "observe" | "results";
+export type AppSection = "workbench" | "cluster" | "capabilities" | "campaigns" | "observe" | "results";
 /** Views inside the workbench section (its sub-navigation). */
 export type WorkbenchView =
   | "simulation"
@@ -38,7 +38,7 @@ export type WorkbenchView =
   | "sceneGeneration"
   | "trajectoryGeneration";
 
-export const APP_SECTIONS: readonly AppSection[] = ["workbench", "cluster", "campaigns", "observe", "results"];
+export const APP_SECTIONS: readonly AppSection[] = ["workbench", "cluster", "capabilities", "campaigns", "observe", "results"];
 export const WORKBENCH_VIEWS: readonly WorkbenchView[] = [
   "domainConfig",
   "sceneGeneration",

@@ -23,6 +23,8 @@ Present now:
         fingerprints/           image build fingerprints: label reader, comparison, images per job type
         release/                the release bundle a deployment tool installs: images, stacks, roles
         master/                 node registry, scheduler, lease manager and the master's API and process
+    architecture/   the architecture description: documents built from the specs in code, written to
+                    backend/assets/architecture at master startup and served to the web console's Capabilities page
     persistence/    the master's Postgres: tables, migrations, node, job, campaign, result and artifact record stores
     assurance/      campaigns over the functional scenario catalog
         campaign/               config model, YAML, hash and seeds; class catalog; validation

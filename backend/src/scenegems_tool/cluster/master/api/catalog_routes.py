@@ -11,6 +11,10 @@ campaign stores. Like the other operator routes they have no authentication yet.
                                            the monitors, the trajectory generators with their parameter keys and defaults, the run
                                            fields, and the resolver's other stacks with the reasons a campaign cannot use them
                                            (catalog_views.py describes the shape)
+    GET CATALOG_PATH/architecture          the architecture documents of the Capabilities page: the vessel stack and the trajectory
+                                           generation, scene generation and monitoring subsystems, each with its metamodel and its
+                                           concrete implementations (architecture/architecture_model.py describes the shape). Served
+                                           from the files written at startup, or built on request when they are missing
 """
 
 from typing import Optional
@@ -18,6 +22,7 @@ from typing import Optional
 import anyio
 from fastapi import APIRouter, HTTPException, Response
 
+from scenegems_tool.architecture.architecture_files import architecture_view
 from scenegems_tool.cluster.master.api.catalog_views import class_view, stacks_view
 from scenegems_tool.cluster.protocol.routes import CATALOG_PATH
 
@@ -48,5 +53,9 @@ def catalog_router() -> APIRouter:
     @router.get(CATALOG_PATH + "/stacks")
     async def list_stacks() -> dict:
         return await anyio.to_thread.run_sync(stacks_view)
+
+    @router.get(CATALOG_PATH + "/architecture")
+    async def get_architecture() -> dict:
+        return await anyio.to_thread.run_sync(architecture_view)
 
     return router

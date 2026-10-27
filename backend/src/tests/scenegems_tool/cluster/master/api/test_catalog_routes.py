@@ -215,3 +215,30 @@ def test_every_offered_stack_is_a_config_the_validation_accepts(stacks):
         text = f"name: probe\nscope:\n  - classes: [2vessel_0obstacle_scenarios/functional_model0]\n    quota: 1\nexecution:\n  runs:\n    - stack: {{simulation_layer: {option['simulation_layer']}, mode: {option['mode']}}}\n"
         validated = validate_campaign_config(parse_campaign_config(text))
         assert validated.runs[0].repeatability_tier == option["repeatability_tier"]
+
+
+# Architecture
+
+ARCHITECTURE = f"{CATALOG_PATH}/architecture"
+
+
+def test_the_architecture_is_served_as_the_four_documents(operator, tmp_path, monkeypatch):
+    from scenegems_tool.architecture import architecture_files
+
+    monkeypatch.setattr(architecture_files, "ARCHITECTURE_FOLDER", str(tmp_path / "architecture"))  # no files yet: built on request
+    response = operator.get(ARCHITECTURE)
+    assert response.status_code == 200
+    body = response.json()
+    assert [document["id"] for document in body["documents"]] == ["vessel_stack", "trajectory_generation", "scene_generation", "monitoring"]
+    assert body["documents"][0]["combinations"] and body["documents"][0]["metamodel_nodes"]
+
+
+def test_the_architecture_is_served_from_the_files_written_at_startup(operator, tmp_path, monkeypatch):
+    from scenegems_tool.architecture import architecture_files
+
+    monkeypatch.setattr(architecture_files, "ARCHITECTURE_FOLDER", str(tmp_path))
+    architecture_files.write_architecture_files()
+    path = tmp_path / "monitoring.yaml"
+    path.write_text(path.read_text(encoding="utf-8").replace("title: Monitoring", "title: From the file", 1), encoding="utf-8")
+    titles = {document["id"]: document["title"] for document in operator.get(ARCHITECTURE).json()["documents"]}
+    assert titles["monitoring"] == "From the file"

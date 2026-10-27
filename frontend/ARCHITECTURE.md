@@ -11,7 +11,7 @@ src/
   domain/        Simulation protocol, WebSocket client, playback store; cluster/ has the
                  cluster list, the operator API client, the live channel client and stores
   features/      React UI by section: workbench/ (connection, controls, metrics, monitor,
-                 scene), cluster/, campaigns/, observe/, results/
+                 scene), cluster/, capabilities/, campaigns/, observe/, results/
   language/      Lezer grammar for .problem files
 ```
 
@@ -31,9 +31,9 @@ control panel.
 
 ## Sections
 
-The left pane has five sections: Workbench (with the views Domain Configuration, Scene
-Generation, Trajectory Generation, Simulation and Connections), Cluster, Campaigns, Observe
-and Results. `uiStore` keeps `section` and `workbenchView` (persisted, v4). The workbench
+The left pane has six sections: Workbench (with the views Domain Configuration, Scene
+Generation, Trajectory Generation, Simulation and Connections), Cluster, Capabilities, Campaigns,
+Observe and Results. `uiStore` keeps `section` and `workbenchView` (persisted, v4). The workbench
 stays mounted while another section is shown, so its gateway socket and state carry on. The left
 pane is 280px with a plain-language hint per destination, an icon rail of 72px when collapsed (the
 choice is kept per browser) and a bar at the top below 800px. Below 1100px the workbench panes stack
@@ -49,6 +49,21 @@ keeps the list (name and operator URL, per browser). A master's operator API lis
   reference-counted topic subscriptions, snapshot then updates with per-topic `seq`, reconnect
   with backoff and resubscribe, ping. `liveTopics.ts` has the reducers per topic.
 - `useLiveTopic(topic, reducer)`: a topic of the selected cluster as React state.
+
+## Capabilities
+
+`features/capabilities/` draws the architecture documents of the selected cluster's master
+(`GET /cluster/catalog/architecture`, schemas in `domain/cluster/architectureApi.ts`). One document per
+part of the system (vessel stack, trajectory generation, scene generation, monitoring), each with a
+metamodel (the generic layers, interfaces and adapters) and the concrete implementations over the same
+lanes. The page has one tab per document and three views: the implemented graph, the metamodel graph and,
+for the vessel stack, the availability matrix. Nothing in the frontend lists implementations: a new
+simulator or generator declared in the backend specs appears after the master restarts.
+
+- `capabilitiesModel.ts`: pure helpers (fact tones and formatting, path highlighting, the matrix).
+- `graphLayout.ts`: lanes as columns, card order by barycenter sweeps, lane bands.
+- `ArchitectureGraph.tsx` (React Flow canvas, custom edge with a label), `GraphNodes.tsx` (cards and
+  lane bands), `cardSizes.ts`, `DetailPanel.tsx`, `MatrixView.tsx`, `CapabilitiesSection.tsx`.
 - `nodesStore.ts`: the nodes of the selected cluster from the `nodes` topic, with a REST poll
   while the topic is not live.
 
