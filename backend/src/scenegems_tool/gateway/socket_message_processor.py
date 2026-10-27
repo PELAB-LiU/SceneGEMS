@@ -32,15 +32,16 @@ class SocketMessageProcessor:
                         except (TypeError, ValueError) as exc:
                             self.session.send_runtime_error(f"Failed to load scene: {str(exc)}")
 
-                    case "connect_to_waraps":
+                    case "connect_to_mqtt_broker":
                         geofence_msg = message["geofence"]
                         geofence = Geofence(
                             latitude=float(geofence_msg["latitude"]),
                             longitude=float(geofence_msg["longitude"]),
                             radius_meters=float(geofence_msg["radius_meters"]),
                         )
+                        use_master_broker = bool(message.get("use_master_broker", False))
                         try:
-                            await self.session.connect_to_waraps(
+                            await self.session.connect_to_mqtt_broker(
                                 user=message["user"],
                                 password=message["password"],
                                 agent_broker=message["agent_broker"],
@@ -49,14 +50,15 @@ class SocketMessageProcessor:
                                 tls_connection=message["tls_connection"],
                                 allow_certificates=message["allow_certificates"],
                                 reference_geofence=geofence,
+                                use_master_broker=use_master_broker,
                             )
                         except Exception as exc:
                             detail = str(exc).strip() or exc.__class__.__name__
-                            requested = f"{message['client_broker']}:{message['port']}"
-                            self.session.send_runtime_error(f"Failed to connect to WARA-PS broker {requested}. {detail}")
-                            print(f"Failed to connect to WARAPS: {traceback.format_exc()}")
-                    case "disconnect_from_waraps":
-                        self.session.disconnect_from_waraps()
+                            requested = "the master broker" if use_master_broker else f"MQTT broker {message['client_broker']}:{message['port']}"
+                            self.session.send_runtime_error(f"Failed to connect to {requested}. {detail}")
+                            print(f"Failed to connect to the MQTT broker: {traceback.format_exc()}")
+                    case "disconnect_from_mqtt_broker":
+                        self.session.disconnect_from_mqtt_broker()
                     case "start_simulation":
                         self.session.subsystem_integration_session.simulation_session.start_simulation_runtime()
                     case "reset_simulation":
@@ -81,61 +83,11 @@ class SocketMessageProcessor:
                         self.session.set_monitor_session(message["name"], message["topic"], message["scope"], message["colregsConstraintsContent"])
                     case "shut_down_monitor":
                         self.session.shut_down_monitor()
-                    case "generate_scene":
-                        try:
-                            self.session.subsystem_integration_session.generate_scene(
-                                request_id=message["requestId"],
-                                functional_scenario_content=message["functionalScenarioContent"],
-                                colregs_constraints_content=message["colregsConstraintsContent"],
-                                vessel_types_content=message["vesselTypesContent"],
-                                obstacle_types_content=message["obstacleTypesContent"],
-                                timeout=message["timeout"],
-                                enforce_low_tcpa=bool(message.get("enforceLowTcpa", False)),
-                            )
-                            pass
-                        except Exception as exc:
-                            self.session.send_runtime_error(f"Failed to generate scene: {str(exc)}")
-                            print(f"Failed to generate scene: {str(exc)}")
-                    case "stop_scene_generation":
-                        asyncio.create_task(self._handle_stop_scene_generation())
-                    case "monitor_scene":
-                        asyncio.create_task(self._handle_monitor_scene(message["requestId"], message["scenarioContent"]))
-                    case "generate_trajectories":
-                        try:
-                            self.session.subsystem_integration_session.generate_trajectories(
-                                request_id=message["requestId"],
-                                scenario_content=message["scenarioContent"],
-                                colregs_constraints_content=message["colregsConstraintsContent"],
-                                params=message.get("params", {}),
-                            )
-                        except Exception as exc:
-                            self.session.send_runtime_error(f"Failed to generate trajectories: {str(exc)}")
-                            print(f"Failed to generate trajectories: {str(exc)}")
-                    case "stop_trajectory_generation":
-                        asyncio.create_task(self._handle_stop_trajectory_generation())
                     case _:
                         self.session.send_runtime_error(f"Unknown message type: {message['type']}")
                         print(f"Unknown message: {message}")
             except Exception as exc:
                 self.session.send_runtime_error(f"Unhandled message processing error: {str(exc)}")
-
-    async def _handle_stop_scene_generation(self) -> None:
-        try:
-            await self.session.subsystem_integration_session.stop_scene_generation()
-        except Exception as exc:
-            self.session.send_runtime_error(f"Failed to stop scene generation: {str(exc)}")
-
-    async def _handle_monitor_scene(self, request_id: str, scenario_content: str) -> None:
-        try:
-            await self.session.monitor_scene(request_id=request_id, scenario_content=scenario_content)
-        except Exception as exc:
-            self.session.send_runtime_error(f"Failed to monitor scene: {str(exc)}")
-
-    async def _handle_stop_trajectory_generation(self) -> None:
-        try:
-            await self.session.subsystem_integration_session.stop_trajectory_generation()
-        except Exception as exc:
-            self.session.send_runtime_error(f"Failed to stop trajectory generation: {str(exc)}")
 
     async def _handle_reset_simulation(self) -> None:
         try:

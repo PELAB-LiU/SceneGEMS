@@ -476,7 +476,7 @@ export type ParsedServerMessage =
       groundControlPortsByAgentId: Record<string, number>;
     }
   | { kind: "stack_options"; options: StackOptionsPayload }
-  | { kind: "waraps_status"; status: "connected" | "disconnected" }
+  | { kind: "mqtt_broker_status"; status: "connected" | "disconnected"; masterBroker: string | null }
   | { kind: "monitor_status"; status: "connected" | "disconnected" }
   | {
       kind: "simulation_models";
@@ -526,9 +526,10 @@ const ackSchema = z.object({
   action: z.string(),
 });
 
-const warapsStatusSchema = z.object({
-  type: z.literal("waraps_status"),
+const mqttBrokerStatusSchema = z.object({
+  type: z.literal("mqtt_broker_status"),
   status: z.enum(["connected", "disconnected"]),
+  masterBroker: z.string().nullable().optional(),
 });
 
 const monitorStatusSchema = z.object({
@@ -564,8 +565,8 @@ const simulationStatusSchema = z.object({
   groundControlPortsByAgentId: z.record(z.string(), z.number().int().positive()).optional().default({}),
 });
 
-const asvSoftwareSchema = z.enum(["replay", "usv_navigation", "mission_planner"]);
-const controlLayerSchema = z.enum(["ardupilot", "custom", "none"]);
+const asvSoftwareSchema = z.enum(["replay", "usv_navigation", "mission_planner", "on_board"]);
+const controlLayerSchema = z.enum(["ardupilot", "custom", "none", "real_vessel"]);
 const supportSchema = z.enum(["supported", "unmeasured", "unsupported"]).nullable();
 
 const stackOptionsSchema = z.object({
@@ -737,10 +738,12 @@ export function parseServerMessage(raw: unknown): ParsedServerMessage {
   if (msgType === "ack") {
     return { kind: "ack", action: ackSchema.parse(raw).action };
   }
-  if (msgType === "waraps_status") {
+  if (msgType === "mqtt_broker_status") {
+    const parsed = mqttBrokerStatusSchema.parse(raw);
     return {
-      kind: "waraps_status",
-      status: warapsStatusSchema.parse(raw).status,
+      kind: "mqtt_broker_status",
+      status: parsed.status,
+      masterBroker: parsed.masterBroker ?? null,
     };
   }
   if (msgType === "monitor_status") {

@@ -18,10 +18,17 @@ def entry(options, simulator, asv, control):
 
 
 def test_every_triple_is_listed_once_with_the_choices(options):
-    assert len(options["combinations"]) == 27
+    assert len(options["combinations"]) == 64
     assert options["simulatorTypes"] == ["Kinematic", "Gazebo", "ArduPilot Sim"]
-    assert options["asvSoftware"] == ["replay", "usv_navigation", "mission_planner"]
-    assert options["controlLayers"] == ["ardupilot", "custom", "none"]
+    assert options["asvSoftware"] == ["replay", "usv_navigation", "mission_planner", "on_board"]
+    assert options["controlLayers"] == ["ardupilot", "custom", "none", "real_vessel"]
+
+
+def test_a_real_vessel_offers_replay_mission_planner_and_on_board_software(options):
+    real = {item["asvSoftware"]: item for item in options["combinations"] if item["simulatorType"] == "Real vessel" and item["controlLayer"] == "real_vessel"}
+    assert sorted(software for software, item in real.items() if item["available"]) == ["mission_planner", "on_board", "replay"]
+    assert all(real[software]["interactiveOnly"] for software in ("mission_planner", "on_board", "replay"))
+    assert "ArduAgent" in real["usv_navigation"]["reason"]
 
 
 def test_an_available_combination_carries_its_capabilities(options):

@@ -34,9 +34,9 @@ class TestRoles:
         assert STACK_ROLE_ORDER == (Role.ASV_SOFTWARE, Role.CONTROL_LAYER, Role.SIMULATION_LAYER)
 
     def test_supported_implementations(self):
-        assert {item.value for item in AsvSoftwareId} == {"replay", "usv_navigation", "mission_planner"}
-        assert {item.value for item in ControlLayerId} == {"ardupilot", "custom", "none"}
-        assert {item.value for item in SimulationLayerId} == {"kinematic", "gazebo", "ardupilot_sim"}
+        assert {item.value for item in AsvSoftwareId} == {"replay", "usv_navigation", "mission_planner", "on_board"}
+        assert {item.value for item in ControlLayerId} == {"ardupilot", "custom", "none", "real_vessel"}
+        assert {item.value for item in SimulationLayerId} == {"kinematic", "gazebo", "ardupilot_sim", "real_vessel"}
 
     def test_ids_are_strings(self):
         assert AsvSoftwareId("replay") is AsvSoftwareId.REPLAY

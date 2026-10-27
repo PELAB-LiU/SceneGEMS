@@ -1,0 +1,19 @@
+import { describe, expect, it } from "vitest";
+import { connectionHints } from "./connectionHints";
+
+describe("connection hints", () => {
+  it("points at the master's broker service for the master broker", () => {
+    const hints = connectionHints(true, "", 1883, false);
+    expect(hints.some((hint) => hint.includes("cluster-broker"))).toBe(true);
+  });
+
+  it("explains how the server reaches a broker on localhost", () => {
+    const hints = connectionHints(false, "localhost", 1882, false);
+    expect(hints[0]).toContain("port 1882 of the master's machine");
+    expect(hints.at(-1)).toContain("TLS is off");
+  });
+
+  it("names the TLS port of the public broker when TLS is on", () => {
+    expect(connectionHints(false, "broker.waraps.org", 8883, true).at(-1)).toContain("8883");
+  });
+});

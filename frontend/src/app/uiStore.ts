@@ -33,7 +33,7 @@ export type AppSection = "workbench" | "cluster" | "capabilities" | "campaigns" 
 /** Views inside the workbench section (its sub-navigation). */
 export type WorkbenchView =
   | "simulation"
-  | "waraps"
+  | "connections"
   | "domainConfig"
   | "sceneGeneration"
   | "trajectoryGeneration";
@@ -44,8 +44,11 @@ export const WORKBENCH_VIEWS: readonly WorkbenchView[] = [
   "sceneGeneration",
   "trajectoryGeneration",
   "simulation",
-  "waraps",
+  "connections",
 ];
+
+/** The Connections view's id before v5, when the page was named after WARA-PS. */
+export const LEGACY_CONNECTIONS_VIEW = "waraps";
 
 /** Where the workbench kept its view before v4 (`usePersistedState("active-view")`). */
 export const LEGACY_ACTIVE_VIEW_KEY = "scenegems:active-view";
@@ -62,7 +65,7 @@ export function readLegacyWorkbenchView(): WorkbenchView | null {
       return null;
     }
     const value: unknown = JSON.parse(raw);
-    return isWorkbenchView(value) ? value : null;
+    return isWorkbenchView(value) ? value : value === LEGACY_CONNECTIONS_VIEW ? "connections" : null;
   } catch {
     return null;
   }
@@ -132,7 +135,7 @@ interface UiState {
   /** When true, every incoming generated scene is shown; when false, only final valid (single) or user-selected (batch) scenes. */
   sceneGenerationLivePreview: boolean;
   setSceneGenerationLivePreview: (value: boolean) => void;
-  /** Shared geofence center/radius selected in WARA-PS panel. */
+  /** Shared geofence center and radius selected on the Connections page. */
   referenceGeofence: ReferenceGeofence;
   setReferenceGeofence: (geofence: ReferenceGeofence) => void;
 }
@@ -194,15 +197,16 @@ export const useUiStore = create<UiState>()(
     }),
     {
       name: "scenegems:ui",
-      version: 4,
+      version: 5,
       // v2: the monitor tab moved to the Connections page.
       // v3: persist monitor section collapse and preview/simulation column visibility.
       // v4: sections; the workbench view moved here from its own "active-view" key.
+      // v5: the Connections view's id is "connections" (was "waraps").
       migrate: (persisted, version) => {
         const state = (persisted ?? {}) as {
           controlPanelMode?: string;
           section?: AppSection;
-          workbenchView?: WorkbenchView;
+          workbenchView?: WorkbenchView | typeof LEGACY_CONNECTIONS_VIEW;
         };
         if (version < 2 && state.controlPanelMode === "monitor") {
           state.controlPanelMode = "animation";
@@ -210,6 +214,9 @@ export const useUiStore = create<UiState>()(
         if (version < 4) {
           state.section = "workbench";
           state.workbenchView = readLegacyWorkbenchView() ?? "simulation";
+        }
+        if (version < 5 && state.workbenchView === LEGACY_CONNECTIONS_VIEW) {
+          state.workbenchView = "connections";
         }
         return state as UiState;
       },

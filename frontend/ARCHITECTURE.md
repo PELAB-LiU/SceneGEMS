@@ -81,14 +81,14 @@ flowchart LR
 
 ## WebSocket lifecycle
 
-1. **Connect**: `BackendWsClient` to `VITE_WS_URL`
-2. **Generate scene**: `generate_scene` with functional spec + domain YAML -> `generated_scene`
-3. **Load scenario**: `load_scenario_file` -> `preview_trajectory_chunk`(s)
-   A bare scene loads as its initial scene only (`initial_state` with trajectory length 0); trajectories come from the trajectory generator (`generate_trajectories` with `generator` monitor_driven_rrt or straight), and the simulation workflow refuses to initialize without them.
-4. **Initialize simulation**: `initialize_simulation` -> `initial_state`
-5. **Run**: `start_simulation` -> `simulation_trajectory_chunk`(s) and live `frame` pushes
+1. **Connect**: `BackendWsClient` to the gateway of the active cluster's master (`gatewayWsUrl`; `VITE_WS_URL` without a selected cluster)
+2. **Generate scenes and trajectories**: jobs on the active cluster (`features/workbench/cluster/`: `WorkbenchJobDriver` submits `scene_generation`, `trajectory_generation` and `monitoring.post_hoc` jobs through the operator API, follows them on the live channel and reports them to the stores as `generated_scene`, `trajectory_generation_preview` and `trajectory_generation_result`). A job type no usable node offers is not submitted; `workbenchResources.ts` says why.
+3. **Load scenario**: `load_scenario_file` -> `preview_trajectory_chunk`(s), then the cluster's post-hoc monitor replaces the preview with monitored frames
+   A bare scene loads as its initial scene only (`initial_state` with trajectory length 0); trajectories come from the trajectory generator, and the simulation refuses to run without them.
+4. **Run on the cluster**: a kinematic setup runs as one `simulation.kinematic` job (`simulationJobs.ts`), its frames observed on `instance:<node>/job-<id>-<attempt>`
+5. **Live session**: `connect_to_mqtt_broker` (the master's broker by default), `initialize_simulation` -> `initial_state`, `start_simulation` -> `simulation_trajectory_chunk`(s) and live `frame` pushes
 
-Preview and simulation trajectories are stored separately in `playbackStore` for side-by-side analysis.
+Preview and simulation trajectories are stored separately in `playbackStore`; the monitoring panel shows one of them at a time.
 
 ## Performance
 

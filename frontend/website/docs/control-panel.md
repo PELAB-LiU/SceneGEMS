@@ -5,55 +5,29 @@ title: Control panel
 
 # Control panel
 
-The bottom toolbar in Simulation view hosts a tabbed control panel with three modes.
+The bottom panel of the Simulation view runs the loaded scenario. Playback (play, step, scrub, speed, follow live) is the bar under the canvas, for the preview and the simulation alike. See also [Recording & replay](./recording).
 
-## Animation tab
+## Where a simulation runs
 
-Controls playback of buffered preview/animation trajectory frames.
+The setup decides it, and the panel says which:
 
-| Control | Description |
-|---------|-------------|
-| Step Back / Step Forward | Move the playhead by N frames, where N equals the rounded playback speed |
-| Play / Pause | Start or stop automatic playback |
-| Reset | Return playhead to the start and pause |
-| Animation Time slider | Scrub to any timestamp in the buffered preview stream |
-| Speed slider | Playback rate from 0.5× to 240× |
+- **On the cluster**, as one kinematic job: every vessel replays its trajectory, or USV Navigation steers the own ship while the others replay. The COLREGS monitor judges every step in the job. **Run on the cluster** submits it, **Stop** cancels it, and **Watch at** sets the pace the run is shown (and run) at.
+- **As a live session** on the master over the MQTT broker of the [Connections](./connections) page: real vessels, Mission Planner, ArduPilot SITL, Gazebo and the custom controller. **Initialize** builds the session, **Start** starts it once the agents are ready, **Reset** ends it.
 
-See also [Recording & replay](./recording).
+When something is missing (no scenario loaded, no machine on the cluster that runs simulations, no broker connection), the panel lists it instead of enabling the action.
 
-## Simulation tab
-
-Manages live WARA-PS simulation execution. A status bar shows simulation state and buffered frame count.
+## Setup
 
 | Control | Description |
 |---------|-------------|
-| Initialize Simulation | Sends vessel connection configuration to the backend. Requires initialized scenario and connected WARA-PS. |
-| Start | Starts simulation agents when status is "ready to start" |
-| Reset Simulation | Resets the running simulation |
-| Live | Jumps to the latest simulation frame and enables live follow mode |
-| Generate Vessel Physics Models | Requests SDF/world model generation for vessels in the loaded scenario |
+| Simulator | The simulation layer every simulated vessel shares: Kinematic, ArduPilot Sim or Gazebo |
+| Vessel table | Per vessel: **Kind** (simulated or real vessel), **ASV software** and **control layer**. Choices the server rules out are disabled with the reason. A real vessel is its own control layer and physics, reached through its ArduAgent; it is steered by Replay or Mission Planner, or left to its own software (**On board**). |
+| Wind, waves and pace | Wind and waves (simulated vessels only) and the real-time factor of a live session |
+| Agent names, topics and ports | MQTT agent names, topics and MAVLink ports of a live session |
+| Gazebo vessel models | Gazebo only: load, export or clear a vessel's SDF model; the server makes one otherwise |
 
-### Vessel initialization table
+Real vessels and Mission Planner never run in a campaign: they are workbench only.
 
-Below the action buttons, an expandable table lists each vessel in the scenario with per-vessel settings:
+## More
 
-- Control mode (autonomous, manual, etc.)
-- Simulator type (global default or per-vessel override)
-- Connection topic segments for MQTT routing
-- Physics model files (SDF/XML): load, export, or clear custom models
-- **Simulation speed** (1–50): integer physics time multiplier sent with `initialize_simulation` and `generate_simulation_models` as `simulationSpeed` (1 = real-time)
-- Wave and environmental parameters where applicable
-
-Simulation status values include: running, starting, agents are preparing, initializing, ready to start, offline, and not initialized.
-
-## Monitor tab
-
-Configures the COLREGS trajectory monitor published over MQTT.
-
-| Field | Description |
-|-------|-------------|
-| Scope | Internal or external monitor deployment |
-| Name | Monitor instance name (updates the default topic) |
-| Topic | MQTT topic for monitor output |
-| Initialize Monitor | Starts the monitor with current COLREGS YAML. Requires WARA-PS connected and non-empty COLREGS config. |
-| Shut Down | Stops the active monitor |
+Follow the newest frame, generate Gazebo vessel models, and record or replay a run.

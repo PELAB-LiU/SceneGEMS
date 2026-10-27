@@ -213,15 +213,22 @@ describe("parseServerMessage", () => {
     }
   });
 
-  it("parses waraps_status", () => {
+  it("parses mqtt_broker_status with the master broker", () => {
     const msg = parseServerMessage({
-      type: "waraps_status",
+      type: "mqtt_broker_status",
       status: "connected",
+      masterBroker: "cluster-broker:1883",
     });
-    expect(msg.kind).toBe("waraps_status");
-    if (msg.kind === "waraps_status") {
+    expect(msg.kind).toBe("mqtt_broker_status");
+    if (msg.kind === "mqtt_broker_status") {
       expect(msg.status).toBe("connected");
+      expect(msg.masterBroker).toBe("cluster-broker:1883");
     }
+  });
+
+  it("parses mqtt_broker_status from a server without a master broker", () => {
+    const msg = parseServerMessage({ type: "mqtt_broker_status", status: "disconnected" });
+    expect(msg.kind === "mqtt_broker_status" && msg.masterBroker).toBe(null);
   });
 
   it("parses monitor_status", () => {

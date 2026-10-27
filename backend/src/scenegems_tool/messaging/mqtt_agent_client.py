@@ -55,6 +55,11 @@ class MqttAgentClient(MqttClient):
         return self.control_mode == "autonomous"
 
     @property
+    def on_board_control_mode(self) -> bool:
+        """The vessel's own software steers it: the agent is observed, never commanded."""
+        return self.control_mode == "on_board"
+
+    @property
     def listen_topics(self) -> List[str]:
         return [
             self.exec_response_topic,
@@ -189,12 +194,12 @@ class MqttAgentClient(MqttClient):
         error = float(np.linalg.norm(self.current_agent_state.p - self.initial_state.p))
         # print(f"{self.vessel_name} at start point error: {error}")
         return error < self.actor.waypoint_radius
-    
+
     def publish_obstacle_distances(self, distances: List[float], increment: int, min_distance: float, max_distance: float):
-        
+
         if increment <= 0 or 360 / increment != len(distances) or any(distance < min_distance or distance > max_distance for distance in distances):
             raise ValueError("Invalid obstacle distances")
-        
+
         command = {
             "distances": distances,
             "increment": increment,
@@ -202,15 +207,14 @@ class MqttAgentClient(MqttClient):
             "max_distance": max_distance,
         }
         self.client.publish(self.obstacle_distances_topic, json.dumps(command), qos=1)
-        
-        
+
     def publish_rc_override(self, pwms: Optional[Tuple[float, float]] = None):
         # left_pwm and right_pwm are normalized values between -1.0 and 1.0
         left_pwm = None
         right_pwm = None
         if pwms is not None:
             left_pwm, right_pwm = normalized_to_pwm(pwms[0]), normalized_to_pwm(pwms[1])
-        
+
         command = {
             "left_pwm": left_pwm,
             "right_pwm": right_pwm,

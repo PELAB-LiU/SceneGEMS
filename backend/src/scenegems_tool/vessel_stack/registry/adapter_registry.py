@@ -3,7 +3,7 @@
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Set, Tuple, TypeVar
 
 from scenegems_tool.vessel_stack.contracts.adapter_spec import AdapterSpec, LayerSpec, UnsupportedConnection
-from scenegems_tool.vessel_stack.contracts.roles import LayerRef
+from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, LayerRef
 from scenegems_tool.vessel_stack.registry.measured_capabilities import CapabilityMeasurement
 
 # Runtime classes are bound through loaders so that resolving a stack never imports the
@@ -11,6 +11,7 @@ from scenegems_tool.vessel_stack.registry.measured_capabilities import Capabilit
 RuntimeLoader = Callable[[], Any]
 _Connection = Tuple[LayerRef, LayerRef]
 _Spec = TypeVar("_Spec", LayerSpec, AdapterSpec)
+_ON_BOARD = LayerRef.of(AsvSoftwareId.ON_BOARD)
 
 
 class AdapterRegistry:
@@ -40,6 +41,10 @@ class AdapterRegistry:
             raise ValueError(f"Adapters {self._adapters[connection].id} and {spec.id} both connect {spec.source} to {spec.target}; pass default=True or default=False")
         if connection in self._unsupported:
             raise ValueError(f"Adapter {spec.id} connects {spec.source} to {spec.target}, which is declared unsupported")
+        if spec.source == _ON_BOARD:
+            target = self._layers.get(spec.target)
+            if target is None or not target.on_board_asv_software:
+                raise ValueError(f"Adapter {spec.id} leaves the vessel to on board ASV software, but {spec.target} is not registered with on_board_asv_software")
         self._claim_id(spec.id)
         spec = self._measured(spec)
         connection_adapters = self._alternatives.setdefault(connection, [])

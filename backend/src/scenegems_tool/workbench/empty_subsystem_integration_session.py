@@ -5,6 +5,8 @@ from scenegems_tool.vessel_stack.contracts.vessel_stack_config import Simulation
 from scenegems_tool.workbench.scenario_session import ScenarioSession
 from scenegems_tool.workbench.subsystem_integration_session import SubsystemIntegrationSession
 
+NOT_CONNECTED_MESSAGE = "No MQTT broker is connected: connect one on the Connections page"
+
 
 class EmptySubsystemIntegrationSession(SubsystemIntegrationSession):
     def __init__(self, send_payload: Callable[[ServerMessage], None]):
@@ -15,24 +17,10 @@ class EmptySubsystemIntegrationSession(SubsystemIntegrationSession):
         return False
 
     def set_monitor_session(self, name: str, topic: str, scope: str, colregs_constraints_content: str) -> None:
-        self.send_payload(make_error_message(message="WARAPS is not connected"))
+        self.send_payload(make_error_message(message=NOT_CONNECTED_MESSAGE))
 
     def set_simulation_session(self, scenario_session: ScenarioSession, simulation_config: SimulationInstanceConfig) -> None:
-        self.send_payload(make_error_message(message="WARAPS is not connected"))
+        self.send_payload(make_error_message(message=NOT_CONNECTED_MESSAGE))
 
     def _cancel(self) -> None:
         pass
-
-    def generate_scene(
-        self, request_id: str, functional_scenario_content: str, colregs_constraints_content: str, vessel_types_content: str, obstacle_types_content: str, timeout: int, enforce_low_tcpa: bool = False
-    ) -> None:
-        self.send_payload(make_error_message(message="WARAPS is not connected"))
-
-    async def stop_scene_generation(self) -> None:
-        self.send_payload(make_error_message(message="WARAPS is not connected"))
-
-    def generate_trajectories(self, request_id: str, scenario_content: str, colregs_constraints_content: str, params: dict) -> None:
-        self.send_payload(make_error_message(message="WARAPS is not connected"))
-
-    async def stop_trajectory_generation(self) -> None:
-        self.send_payload(make_error_message(message="WARAPS is not connected"))

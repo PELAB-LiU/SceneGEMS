@@ -1,15 +1,10 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import {
-  local_mqtt_connection,
-  type MqttConnectionInfo,
-  type MqttConnectionPresetKey,
-} from "./connectionLibrary";
+import type { ClientToServerMessage } from "../../../domain/simulation/wireTypes";
+import { MASTER_BROKER_PRESET, type MqttConnectionInfo, type MqttConnectionPresetKey } from "./connectionLibrary";
 import { defaultReferenceGeofence, type ReferenceGeofence } from "./referenceGeofence";
 
-const DEFAULT_PRESET: MqttConnectionPresetKey = "local_mqtt_connection";
-
-export type WarapsConnectionAttempt = "idle" | "connecting" | "connected" | "failed";
+export type MqttConnectionAttempt = "idle" | "connecting" | "connected" | "failed";
 
 export interface ConnectionFormState {
   user: string;
@@ -19,6 +14,7 @@ export interface ConnectionFormState {
   port: number;
   tlsConnection: boolean;
   allowCertificates: boolean;
+  /** The profile in use; "" for a broker typed in by hand. */
   selectedPreset: MqttConnectionPresetKey | "";
   geofence: ReferenceGeofence;
   /**
@@ -26,14 +22,14 @@ export interface ConnectionFormState {
    * the hands-free auto-connect (including after a transient backend-socket
    * reconnect) until the user clicks Connect again.
    */
-  userDisconnectedWaraps: boolean;
-  setUserDisconnectedWaraps: (value: boolean) => void;
+  userDisconnected: boolean;
+  setUserDisconnected: (value: boolean) => void;
   /**
    * Outcome of the most recent Connect click. Not persisted: it exists so the panel
-   * can report *why* a connection attempt failed, which the 1 Hz `waraps_status`
+   * can report *why* a connection attempt failed, which the 1 Hz `mqtt_broker_status`
    * heartbeat cannot express (it only ever says connected or disconnected).
    */
-  connectionAttempt: WarapsConnectionAttempt;
+  connectionAttempt: MqttConnectionAttempt;
   connectionError: string | null;
   beginConnectionAttempt: () => void;
   markConnectionSucceeded: () => void;
@@ -66,24 +62,32 @@ export type ConnectionPersisted = Pick<
   | "geofence"
 >;
 
+/** Profiles saved before v3, when the page was named after WARA-PS, and the profile each one is now. */
+const LEGACY_PRESETS: Record<string, MqttConnectionPresetKey> = {
+  // The compose broker and a host-published broker of the single-machine stack: the master's broker took their place.
+  local_mqtt_connection: "master_broker",
+  host_mqtt_connection: "master_broker",
+  live_mqtt_connection: "waraps_tls_broker",
+};
+
 /**
- * Persisted WARA-PS connection form. Lives in a store (not component state) so
- * both the connection panel and the global auto-connect logic can read it.
+ * Persisted MQTT broker form. Lives in a store (not component state) so both the
+ * Connections page and the global auto-connect logic can read it.
  */
 export const useConnectionStore = create<ConnectionFormState>()(
   persist(
     (set) => ({
-      user: local_mqtt_connection.user,
-      password: local_mqtt_connection.password,
-      agentBroker: local_mqtt_connection.agent_broker,
-      clientBroker: local_mqtt_connection.client_broker,
-      port: local_mqtt_connection.port,
-      tlsConnection: local_mqtt_connection.tls_connection,
-      allowCertificates: local_mqtt_connection.allow_certificates ?? false,
-      selectedPreset: DEFAULT_PRESET,
+      user: "",
+      password: "",
+      agentBroker: "",
+      clientBroker: "",
+      port: 1883,
+      tlsConnection: false,
+      allowCertificates: false,
+      selectedPreset: MASTER_BROKER_PRESET,
       geofence: defaultReferenceGeofence,
-      userDisconnectedWaraps: false,
-      setUserDisconnectedWaraps: (userDisconnectedWaraps) => set({ userDisconnectedWaraps }),
+      userDisconnected: false,
+      setUserDisconnected: (userDisconnected) => set({ userDisconnected }),
       connectionAttempt: "idle",
       connectionError: null,
       beginConnectionAttempt: () => set({ connectionAttempt: "connecting", connectionError: null }),
@@ -112,27 +116,18 @@ export const useConnectionStore = create<ConnectionFormState>()(
     }),
     {
       name: "scenegems:connection-form",
-      version: 2,
+      version: 3,
       // Zustand calls this with the stored state object (already unwrapped) and merges
-      // the return value onto the store. Host-local addresses are legitimate again: the
-      // backend resolves them to the Docker host gateway, which is how a broker started
-      // by another compose project (for example the OTG stack) is reached. Only an
-      // explicitly selected preset is refreshed, so a hand-typed address always survives.
+      // the return value onto the store. v3: the profiles of the single-machine stack are
+      // gone; the master's own broker replaces them and is the default. A hand-typed
+      // address ("" profile) always survives.
       migrate: (persistedState, version): ConnectionPersisted => {
-        if (version >= 2 || !persistedState || typeof persistedState !== "object") {
+        if (version >= 3 || !persistedState || typeof persistedState !== "object") {
           return persistedState as ConnectionPersisted;
         }
-        const state = persistedState as ConnectionPersisted;
-        if (state.selectedPreset !== "local_mqtt_connection") {
-          return state;
-        }
-        return {
-          ...state,
-          agentBroker: local_mqtt_connection.agent_broker,
-          clientBroker: local_mqtt_connection.client_broker,
-          port: local_mqtt_connection.port,
-          tlsConnection: local_mqtt_connection.tls_connection,
-        };
+        const state = persistedState as Omit<ConnectionPersisted, "selectedPreset"> & { selectedPreset?: string };
+        const preset = state.selectedPreset ?? "";
+        return { ...state, selectedPreset: preset === "" ? "" : (LEGACY_PRESETS[preset] ?? MASTER_BROKER_PRESET) };
       },
       partialize: (state): ConnectionPersisted => ({
         user: state.user,
@@ -149,8 +144,16 @@ export const useConnectionStore = create<ConnectionFormState>()(
   )
 );
 
-/** Whether the current form has enough info to attempt a WARA-PS connection. */
-export function connectionFormIsValid(state: ConnectionFormState): boolean {
+type ConnectionFields = Pick<
+  ConnectionFormState,
+  "user" | "password" | "agentBroker" | "clientBroker" | "port" | "tlsConnection" | "allowCertificates" | "selectedPreset" | "geofence"
+>;
+
+/** Whether the form has enough to attempt a connection: the master broker always does. */
+export function connectionFormIsValid(state: ConnectionFields): boolean {
+  if (state.selectedPreset === MASTER_BROKER_PRESET) {
+    return true;
+  }
   return (
     state.agentBroker.trim().length > 0 &&
     state.clientBroker.trim().length > 0 &&
@@ -158,4 +161,20 @@ export function connectionFormIsValid(state: ConnectionFormState): boolean {
     state.port > 0 &&
     state.port <= 65535
   );
+}
+
+/** The connect message for the form: the master broker by name, any other by its address. */
+export function buildConnectMessage(state: ConnectionFields): ClientToServerMessage {
+  return {
+    type: "connect_to_mqtt_broker",
+    user: state.user.trim(),
+    password: state.password,
+    agent_broker: state.agentBroker.trim(),
+    client_broker: state.clientBroker.trim(),
+    port: state.port,
+    tls_connection: state.tlsConnection,
+    allow_certificates: state.allowCertificates,
+    geofence: state.geofence,
+    use_master_broker: state.selectedPreset === MASTER_BROKER_PRESET,
+  };
 }

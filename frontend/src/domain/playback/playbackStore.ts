@@ -103,9 +103,22 @@ export interface ReceivedSimulationModels {
   receivedToken: number;
 }
 
+/** The cluster's post-hoc monitoring of the loaded preview trajectory. */
+export interface PreviewMonitorState {
+  status: "idle" | "running" | "done" | "unavailable" | "failed";
+  /** The scenario the state belongs to; a newer load replaces it. */
+  scenarioId: string | null;
+  message: string | null;
+}
+
+export const IDLE_PREVIEW_MONITOR: PreviewMonitorState = { status: "idle", scenarioId: null, message: null };
+
 export interface PlaybackState {
   streamStatus: "connecting" | "connected" | "disconnected" | "error";
-  warapsStatus: "connected" | "disconnected";
+  /** The interactive simulation's MQTT broker connection on the server. */
+  mqttBrokerStatus: "connected" | "disconnected";
+  /** The master's own broker as the server dials it ("host:port"), null when it has none or is not known yet. */
+  masterBroker: string | null;
   monitorStatus: "connected" | "disconnected";
   errorMessage: string | null;
   isPlaying: boolean;
@@ -162,7 +175,9 @@ export interface PlaybackState {
   stackOptions: StackOptionsPayload | null;
   setStackOptions: (options: StackOptionsPayload | null) => void;
   setStreamStatus: (status: PlaybackState["streamStatus"]) => void;
-  setWarapsStatus: (status: PlaybackState["warapsStatus"]) => void;
+  setMqttBrokerStatus: (status: PlaybackState["mqttBrokerStatus"], masterBroker?: string | null) => void;
+  previewMonitor: PreviewMonitorState;
+  setPreviewMonitor: (state: PreviewMonitorState) => void;
   setMonitorStatus: (status: PlaybackState["monitorStatus"]) => void;
   setError: (message: string | null) => void;
   setFollowLatestPush: (value: boolean) => void;
@@ -213,7 +228,10 @@ export interface PlaybackState {
 
 export const usePlaybackStore = create<PlaybackState>((set, get) => ({
   streamStatus: "disconnected",
-  warapsStatus: "disconnected",
+  mqttBrokerStatus: "disconnected",
+  masterBroker: null,
+  previewMonitor: IDLE_PREVIEW_MONITOR,
+  setPreviewMonitor: (previewMonitor) => set({ previewMonitor }),
   monitorStatus: "disconnected",
   errorMessage: null,
   isPlaying: false,
@@ -247,7 +265,8 @@ export const usePlaybackStore = create<PlaybackState>((set, get) => ({
   stackOptions: null,
   setStackOptions: (options) => set({ stackOptions: options }),
   setStreamStatus: (status) => set({ streamStatus: status }),
-  setWarapsStatus: (status) => set({ warapsStatus: status }),
+  setMqttBrokerStatus: (status, masterBroker) =>
+    set(masterBroker === undefined ? { mqttBrokerStatus: status } : { mqttBrokerStatus: status, masterBroker }),
   setMonitorStatus: (status) => set({ monitorStatus: status }),
   setError: (message) =>
     set({

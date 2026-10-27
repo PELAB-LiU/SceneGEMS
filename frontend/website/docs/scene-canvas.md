@@ -15,7 +15,7 @@ The scene canvas renders vessel trajectories, safety domains, and velocity vecto
 In Simulation mode, two independent streams may be shown simultaneously with distinct colors:
 
 - **Preview (animation)**: Monitor/preview trajectory from scene generation or playback
-- **Simulation**: Live simulation frames from WARA-PS agents
+- **Simulation**: Frames of the simulation, from a cluster job or a live session's agents
 
 Layer visibility for each stream is controlled in the monitoring sidebar.
 

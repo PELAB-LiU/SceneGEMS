@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { usePlaybackStore } from "../playback/playbackStore";
 import { BackendWsClient } from "./wsClient";
 import type { ParsedServerMessage } from "./protocol";
-import { getSimulationWsUrl } from "./simulationConfig";
+import { gatewayWsUrl } from "./simulationConfig";
 import type { SimulationFrame } from "./types";
 import type { ClientToServerMessage } from "./wireTypes";
 import { useUiStore } from "../../app/uiStore";
@@ -15,8 +15,13 @@ import { useBatchGenerationStore } from "../sceneGeneration/batchGenerationStore
 import { buildFramesFromTrajectoryData } from "../sceneGeneration/parseEvaluationDataFile";
 import { useTrajectoryGenerationStore } from "../trajectoryGeneration/trajectoryGenerationStore";
 import { useConnectionStore } from "../../features/workbench/connection/connectionStore";
+import { useWorkbenchCluster } from "../../features/workbench/cluster/useWorkbenchCluster";
+import { WorkbenchJobDriver } from "../../features/workbench/cluster/workbenchJobDriver";
+import type { SceneGenerationInput } from "../../features/workbench/cluster/workbenchJobs";
+import { kinematicSimulationSubmission, type SimulationRunPlan } from "../../features/workbench/cluster/simulationJobs";
+import { isFullTrajectoryScenario } from "../sceneGeneration/parseEvaluationDataFile";
 import type { TrajectoryGenerationParamsWire } from "./wireTypes";
-import { missingTrajectoriesReason } from "./trajectoryGuard";
+import { missingTrajectoriesReason, NO_TRAJECTORIES_MESSAGE } from "./trajectoryGuard";
 
 let previewTrajectoryChunkQueue = Promise.resolve();
 let simulationTrajectoryChunkQueue = Promise.resolve();
@@ -43,6 +48,16 @@ function trajectoryChunkMatchesActiveScenario(
   return activeScenarioId === chunkScenarioId;
 }
 
+export interface LoadScenarioOptions {
+  /** COLREGS constants for the cluster's monitoring of the loaded trajectory; the trajectory stays unmonitored without them. */
+  colregsConstraintsContent?: string;
+}
+
+/**
+ * The workbench's backend: scene generation, trajectory generation and monitoring run as jobs
+ * on the active cluster (`WorkbenchJobDriver`); the interactive simulation runs through the
+ * gateway WebSocket of the same cluster's master, over the MQTT broker of the Connections page.
+ */
 export function useSimulationWorkflow() {
   const ingestFrames = usePlaybackStore((s) => s.ingestFrames);
   const applyMergedPreviewFrames = usePlaybackStore((s) => s.applyMergedPreviewFrames);
@@ -55,7 +70,7 @@ export function useSimulationWorkflow() {
   const setSimulationStatus = usePlaybackStore((s) => s.setSimulationStatus);
   const setStreamStatus = usePlaybackStore((s) => s.setStreamStatus);
   const setError = usePlaybackStore((s) => s.setError);
-  const setWarapsStatus = usePlaybackStore((s) => s.setWarapsStatus);
+  const setMqttBrokerStatus = usePlaybackStore((s) => s.setMqttBrokerStatus);
   const setMonitorStatus = usePlaybackStore((s) => s.setMonitorStatus);
   const setPlaying = usePlaybackStore((s) => s.setPlaying);
   const setLatestTimestamp = usePlaybackStore((s) => s.setLatestTimestamp);
@@ -72,6 +87,14 @@ export function useSimulationWorkflow() {
   const setControlPanelMode = useUiStore((s) => s.setControlPanelMode);
   const clientRef = useRef<BackendWsClient | null>(null);
   const dispatchMessageRef = useRef<(message: ParsedServerMessage) => void>(() => {});
+  const workbenchCluster = useWorkbenchCluster();
+  const [driver] = useState(() => new WorkbenchJobDriver());
+  useEffect(() => {
+    driver.setCluster(workbenchCluster);
+  }, [driver, workbenchCluster]);
+  useEffect(() => () => driver.stopAll(), [driver]);
+  // The trajectories of the loaded scenario, which a simulation on the cluster replays.
+  const loadedTrajectoriesRef = useRef<Record<string, unknown> | null>(null);
   const handleTransportError = useCallback(
     (message: string) => {
       if (message === "WebSocket transport issue.") {
@@ -155,6 +178,10 @@ export function useSimulationWorkflow() {
         case "preview_trajectory_chunk": {
           const store = usePlaybackStore.getState();
           if (!trajectoryChunkMatchesActiveScenario(store.activeScenarioId, message.scenarioId)) {
+            break;
+          }
+          // The cluster's monitored frames replaced the gateway's plain ones already.
+          if (store.previewMonitor.status === "done" && store.previewMonitor.scenarioId === store.activeScenarioId) {
             break;
           }
           const incoming = message.frames;
@@ -305,8 +332,8 @@ export function useSimulationWorkflow() {
         case "ack":
           setError(null);
           break;
-        case "waraps_status": {
-          setWarapsStatus(message.status);
+        case "mqtt_broker_status": {
+          setMqttBrokerStatus(message.status, message.masterBroker);
           const connection = useConnectionStore.getState();
           if (message.status === "connected" && connection.connectionAttempt !== "connected") {
             connection.markConnectionSucceeded();
@@ -351,7 +378,7 @@ export function useSimulationWorkflow() {
       setScenarioTrajectoryLength,
       setPlaying,
       setSimulationStatus,
-      setWarapsStatus,
+      setMqttBrokerStatus,
       setMonitorStatus,
       setActiveScenarioId,
       setControlPanelMode,
@@ -362,7 +389,8 @@ export function useSimulationWorkflow() {
 
   useEffect(() => {
     dispatchMessageRef.current = dispatchMessage;
-  }, [dispatchMessage]);
+    driver.setDispatch(dispatchMessage);
+  }, [dispatchMessage, driver]);
 
   const prepareForSimulationReset = useCallback(() => {
     // Keep loaded scenario/animation chunks, but clear simulation stream data and rewind playback.
@@ -376,8 +404,9 @@ export function useSimulationWorkflow() {
     }
   }, [clearSimulationTrajectories, seek, setFollowLatestPush, setPlaying, setReceivedSimulationModels]);
 
+  const gatewayUrl = gatewayWsUrl(workbenchCluster.operatorUrl);
   useEffect(() => {
-    const client = new BackendWsClient(getSimulationWsUrl(), {
+    const client = new BackendWsClient(gatewayUrl, {
       onServerMessage: (message) => dispatchMessageRef.current(message),
       onStatus: (status) => {
         setStreamStatus(status);
@@ -387,23 +416,12 @@ export function useSimulationWorkflow() {
           client.send({ type: "query_stack_options" });
           return;
         }
-        setWarapsStatus("disconnected");
+        setMqttBrokerStatus("disconnected");
         setMonitorStatus("disconnected");
         if (status === "disconnected" || status === "error") {
-          const playback = usePlaybackStore.getState();
-          playback.setActiveScenarioId(null);
-          // Terminate in-flight long-running workflows whose completion depends on
-          // backend messages that will no longer arrive, so their waiters resolve
-          // instead of hanging until the user hits Stop.
-          if (playback.activeSceneGenerationRequestId !== null) {
-            setError("Backend socket disconnected during scene generation.");
-          }
-          if (useBatchGenerationStore.getState().running) {
-            useBatchGenerationStore.getState().markAllBatchStopped();
-          }
-          if (useTrajectoryGenerationStore.getState().status === "running") {
-            useTrajectoryGenerationStore.getState().markStopped();
-          }
+          // The gateway's scenario session is gone with the socket. Jobs on the cluster do not
+          // depend on it: they keep running and keep reporting.
+          usePlaybackStore.getState().setActiveScenarioId(null);
         }
       },
       onError: handleTransportError,
@@ -414,15 +432,15 @@ export function useSimulationWorkflow() {
       client.disconnect();
       clientRef.current = null;
     };
-  }, [handleTransportError, setError, setStreamStatus, setWarapsStatus, setMonitorStatus]);
+  }, [gatewayUrl, handleTransportError, setError, setStreamStatus, setMqttBrokerStatus, setMonitorStatus]);
 
   const loadScenarioFromFile = useCallback(
-    async (file: File | null) => {
+    async (file: File | null, options: LoadScenarioOptions = {}) => {
       if (!file) {
         return;
       }
       if (usePlaybackStore.getState().streamStatus !== "connected") {
-        setError("Backend socket is not connected.");
+        setError("The workbench server is not connected.");
         return;
       }
       resetForNewScene();
@@ -433,6 +451,12 @@ export function useSimulationWorkflow() {
       const scenarioId = crypto.randomUUID();
       setActiveScenarioId(scenarioId);
       const fileContent = await file.text();
+      try {
+        const raw: unknown = JSON.parse(fileContent);
+        loadedTrajectoriesRef.current = isFullTrajectoryScenario(raw) ? (raw as { trajectories: Record<string, unknown> }).trajectories : null;
+      } catch {
+        loadedTrajectoriesRef.current = null;
+      }
       clientRef.current?.send({
         type: "load_scenario_file",
         scenarioId,
@@ -440,8 +464,10 @@ export function useSimulationWorkflow() {
         filePath: file.webkitRelativePath || file.name,
         fileContent,
       });
+      void driver.monitorPreview(scenarioId, fileContent, options.colregsConstraintsContent ?? "");
     },
     [
+      driver,
       clearSimulationTrajectories,
       resetForNewScene,
       setActiveScenarioId,
@@ -490,51 +516,20 @@ export function useSimulationWorkflow() {
       }
       clientRef.current?.send(message);
     },
-    enqueueSceneGeneration: (
-      requestId: string,
-      functionalScenarioContent: string,
-      colregsConstraintsContent: string,
-      vesselTypesContent: string,
-      obstacleTypesContent: string,
-      timeoutSeconds: number,
-      enforceLowTcpa: boolean
-    ) => {
-      clientRef.current?.send({
-        type: "generate_scene",
-        requestId,
-        functionalScenarioContent,
-        colregsConstraintsContent,
-        vesselTypesContent,
-        obstacleTypesContent,
-        timeout: timeoutSeconds,
-        enforceLowTcpa,
-      });
-    },
-    generateScene: (
-      requestId: string,
-      functionalScenarioContent: string,
-      colregsConstraintsContent: string,
-      vesselTypesContent: string,
-      obstacleTypesContent: string,
-      timeoutSeconds: number,
-      enforceLowTcpa: boolean
-    ) => {
-      setActiveSceneGenerationRequestId(requestId);
-      clientRef.current?.send({
-        type: "generate_scene",
-        requestId,
-        functionalScenarioContent,
-        colregsConstraintsContent,
-        vesselTypesContent,
-        obstacleTypesContent,
-        timeout: timeoutSeconds,
-        enforceLowTcpa,
-      });
-    },
+    /** What the active cluster offers for a job type, and why the workbench cannot run it when it cannot. */
+    clusterResources: workbenchCluster.resources,
+    operatorUrl: workbenchCluster.operatorUrl,
+    /** One scene of a batch as a cluster job; resolves when the job ended, its batch row updated. */
+    enqueueSceneGeneration: (requestId: string, input: SceneGenerationInput) => driver.generateBatchScene(requestId, input),
+    /** One scene as a cluster job, shown on the scene page as it arrives; resolves with its outcome. */
+    generateScene: (requestId: string, input: SceneGenerationInput) => driver.generateScene(requestId, input),
+    /** Monitors a scene (a scenario file's first scene) on the cluster and merges the verdicts into the shown scene. */
+    monitorScene: (requestId: string, scenario: Record<string, unknown>, colregsConstraintsContent: string) =>
+      driver.monitorScene(requestId, scenario, colregsConstraintsContent),
     stopSceneGeneration: () => {
+      driver.stopScenes();
       usePlaybackStore.getState().cancelSceneGeneration();
       useBatchGenerationStore.getState().markAllBatchStopped();
-      clientRef.current?.send({ type: "stop_scene_generation" });
     },
     generateTrajectories: (
       requestId: string,
@@ -542,19 +537,22 @@ export function useSimulationWorkflow() {
       colregsConstraintsContent: string,
       params: TrajectoryGenerationParamsWire
     ) => {
-      usePlaybackStore.getState().clearPreviewFrames();
-      useTrajectoryGenerationStore.getState().startRun(requestId);
-      clientRef.current?.send({
-        type: "generate_trajectories",
-        requestId,
-        scenarioContent,
-        colregsConstraintsContent,
-        params,
-      });
+      void driver.generateTrajectories(requestId, scenarioContent, colregsConstraintsContent, params);
     },
     stopTrajectoryGeneration: () => {
-      useTrajectoryGenerationStore.getState().markStopped();
-      clientRef.current?.send({ type: "stop_trajectory_generation" });
+      driver.stopTrajectories();
     },
+    /** Runs the loaded scenario as a simulation job on the cluster; its frames fill the simulation stream. */
+    runSimulationOnCluster: (plan: Extract<SimulationRunPlan, { where: "cluster" }>, colregsConstraintsContent: string) => {
+      const trajectories = loadedTrajectoriesRef.current;
+      if (trajectories === null) {
+        setError(NO_TRAJECTORIES_MESSAGE);
+        return;
+      }
+      setFollowLatestPush(false);
+      void driver.runSimulation(kinematicSimulationSubmission(plan, trajectories, colregsConstraintsContent), colregsConstraintsContent);
+    },
+    stopSimulationOnCluster: () => driver.stopSimulation(),
+    setClusterRunSpeed: (speed: number) => driver.setSimulationSpeed(speed),
   };
 }

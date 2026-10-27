@@ -172,3 +172,24 @@ class TestDefaultRegistry:
         for source, target in ((NONE, LayerRef.of(SimulationLayerId.GAZEBO)), (ARDUPILOT, KINEMATIC)):
             assert registry.adapter_between(source, target) is None
             assert registry.unsupported_between(source, target) is not None
+
+
+class TestOnBoardAsvSoftware:
+    ON_BOARD = LayerRef.of(AsvSoftwareId.ON_BOARD)
+
+    def test_an_adapter_from_on_board_needs_a_layer_that_brings_asv_software(self, registry):
+        registry.register_layer(LayerSpec(layer=self.ON_BOARD, description="on board"))
+        with pytest.raises(ValueError, match="leaves the vessel to on board ASV software, but control_layer/none is not registered with on_board_asv_software"):
+            registry.register_adapter(adapter("on_board_probe", self.ON_BOARD, NONE))
+
+    def test_a_layer_that_brings_asv_software_accepts_it(self):
+        registry = AdapterRegistry()
+        hosting = LayerRef.of(ControlLayerId.REAL_VESSEL)
+        registry.register_layer(LayerSpec(layer=self.ON_BOARD, description="on board"))
+        registry.register_layer(LayerSpec(layer=hosting, description="hosts its own software", on_board_asv_software=True))
+        assert registry.register_adapter(adapter("on_board_probe", self.ON_BOARD, hosting)).target == hosting
+
+    def test_an_unregistered_target_is_refused_too(self):
+        registry = AdapterRegistry()
+        with pytest.raises(ValueError, match="on_board_asv_software"):
+            registry.register_adapter(adapter("on_board_probe", self.ON_BOARD, NONE))

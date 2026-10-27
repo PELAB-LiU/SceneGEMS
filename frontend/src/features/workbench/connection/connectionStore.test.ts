@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ConnectionPersisted } from "./connectionStore";
-import { local_mqtt_connection } from "./connectionLibrary";
+import { waraps_tls_broker } from "./connectionLibrary";
+import { defaultReferenceGeofence } from "./referenceGeofence";
 import { MemoryStorage } from "../../../test/memoryStorage";
 
 type ConnectionModule = typeof import("./connectionStore");
@@ -26,58 +27,74 @@ function migrate(persisted: unknown, version: number) {
   return run(persisted, version) as ConnectionPersisted;
 }
 
+const FORM = {
+  user: "u",
+  password: "p",
+  agentBroker: "10.0.0.8",
+  clientBroker: "10.0.0.8",
+  port: 1883,
+  tlsConnection: false,
+  allowCertificates: false,
+  geofence: defaultReferenceGeofence,
+};
+
 describe("connection form migration", () => {
-  it("refreshes an explicitly selected local preset to the current local broker", () => {
-    const migrated = migrate(
-      {
-        user: "kept",
-        password: "secret",
-        agentBroker: "127.0.0.1",
-        clientBroker: "127.0.0.1",
-        port: 1884,
-        tlsConnection: true,
-        allowCertificates: true,
-        selectedPreset: "local_mqtt_connection",
-      },
-      1
-    );
-    expect(migrated.agentBroker).toBe(local_mqtt_connection.agent_broker);
-    expect(migrated.clientBroker).toBe(local_mqtt_connection.client_broker);
-    expect(migrated.port).toBe(local_mqtt_connection.port);
-    expect(migrated.tlsConnection).toBe(local_mqtt_connection.tls_connection);
-    expect(migrated.user).toBe("kept");
-    expect(migrated.password).toBe("secret");
-    expect(migrated).not.toHaveProperty("state");
+  it("moves the single-machine stack's profiles to the master broker", () => {
+    for (const legacy of ["local_mqtt_connection", "host_mqtt_connection"]) {
+      const migrated = migrate({ ...FORM, selectedPreset: legacy }, 2);
+      expect(migrated.selectedPreset).toBe("master_broker");
+      expect(migrated.user).toBe("u");
+      expect(migrated).not.toHaveProperty("state");
+    }
   });
 
-  it("leaves a hand-typed or other preset address in place", () => {
-    const handTyped = {
-      agentBroker: "10.0.0.8",
-      clientBroker: "10.0.0.8",
-      port: 1883,
-      tlsConnection: false,
-      selectedPreset: "" as const,
-    };
-    expect(migrate(handTyped, 1)).toBe(handTyped);
-
-    const host = {
-      agentBroker: "localhost",
-      clientBroker: "localhost",
-      port: 1882,
-      tlsConnection: false,
-      selectedPreset: "host_mqtt_connection" as const,
-    };
-    expect(migrate(host, 0)).toBe(host);
+  it("keeps the public TLS broker under its new name", () => {
+    expect(migrate({ ...FORM, selectedPreset: "live_mqtt_connection" }, 1).selectedPreset).toBe("waraps_tls_broker");
   });
 
-  it("does not refresh a local preset that is already on the current version", () => {
-    const current = {
-      agentBroker: "custom-broker",
-      clientBroker: "custom-broker",
-      port: 1885,
+  it("leaves a hand-typed address in place", () => {
+    const migrated = migrate({ ...FORM, selectedPreset: "" }, 2);
+    expect(migrated.selectedPreset).toBe("");
+    expect(migrated.clientBroker).toBe("10.0.0.8");
+  });
+
+  it("does not touch a state that is already on the current version", () => {
+    const current = { ...FORM, selectedPreset: "" as const };
+    expect(migrate(current, 3)).toBe(current);
+  });
+});
+
+describe("connect message", () => {
+  it("names the master broker instead of an address", () => {
+    const message = connection.buildConnectMessage({ ...FORM, agentBroker: "", clientBroker: "", selectedPreset: "master_broker" });
+    expect(message).toMatchObject({ type: "connect_to_mqtt_broker", use_master_broker: true });
+    expect(connection.connectionFormIsValid({ ...FORM, agentBroker: "", clientBroker: "", selectedPreset: "master_broker" })).toBe(true);
+  });
+
+  it("sends an external broker's address, trimmed", () => {
+    const message = connection.buildConnectMessage({
+      ...FORM,
+      user: " mqtt ",
+      agentBroker: ` ${waraps_tls_broker.agent_broker} `,
+      clientBroker: waraps_tls_broker.client_broker,
+      port: waraps_tls_broker.port,
       tlsConnection: true,
-      selectedPreset: "local_mqtt_connection" as const,
-    };
-    expect(migrate(current, 2)).toBe(current);
+      selectedPreset: "waraps_tls_broker",
+    });
+    expect(message).toMatchObject({
+      type: "connect_to_mqtt_broker",
+      user: "mqtt",
+      agent_broker: "broker.waraps.org",
+      client_broker: "broker.waraps.org",
+      port: 8883,
+      tls_connection: true,
+      use_master_broker: false,
+    });
+  });
+
+  it("needs an address and a port for another broker", () => {
+    expect(connection.connectionFormIsValid({ ...FORM, selectedPreset: "" })).toBe(true);
+    expect(connection.connectionFormIsValid({ ...FORM, clientBroker: " ", selectedPreset: "" })).toBe(false);
+    expect(connection.connectionFormIsValid({ ...FORM, port: 70000, selectedPreset: "" })).toBe(false);
   });
 });

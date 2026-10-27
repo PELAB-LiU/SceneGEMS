@@ -11,6 +11,7 @@ from scenegems_tool.gateway.protocol import (
     make_generated_scene_message,
     make_initial_state_message,
     make_monitor_status_message,
+    make_mqtt_broker_status_message,
     make_preview_chunk_message,
     make_simulation_chunk_message,
     make_simulation_models_body,
@@ -18,7 +19,6 @@ from scenegems_tool.gateway.protocol import (
     make_simulation_status_message,
     make_trajectory_generation_preview_message,
     make_trajectory_generation_result_message,
-    make_waraps_status_message,
     simulation_config_from_body,
 )
 from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, SimulationLayerId
@@ -61,8 +61,9 @@ class TestMessageBuilders:
         assert message["groundControlPortsByAgentId"] == {"0": 49153, "1": 49154}
         assert "groundControlPortsByAgentId" not in make_simulation_status_message(SimulationStatus.RUNNING, {})
 
-    def test_waraps_and_monitor_status_messages(self):
-        assert make_waraps_status_message(status="connected") == {"type": "waraps_status", "status": "connected"}
+    def test_mqtt_broker_and_monitor_status_messages(self):
+        assert make_mqtt_broker_status_message(status="connected", master_broker="cluster-broker:1883") == {"type": "mqtt_broker_status", "status": "connected", "masterBroker": "cluster-broker:1883"}
+        assert make_mqtt_broker_status_message(status="disconnected", master_broker=None)["masterBroker"] is None
         assert make_monitor_status_message(status="disconnected") == {"type": "monitor_status", "status": "disconnected"}
 
     def test_error_message_carries_the_text(self, capsys):
@@ -140,6 +141,20 @@ class TestSimulationConfigFromBody:
         assert real.connection.port is None
         assert not real.is_simulated
 
+    def test_a_real_vessel_runs_on_its_own_layers_whatever_the_simulator(self, body):
+        real = simulation_config_from_body(body).vessels["2"]
+        assert (real.stack.asv_software, real.stack.control_layer, real.stack.simulation_layer) == (AsvSoftwareId.MISSION_PLANNER, ControlLayerId.REAL_VESSEL, SimulationLayerId.REAL_VESSEL)
+        assert real.adapter_ids == ()
+
+    def test_a_real_vessel_may_leave_the_steering_to_its_on_board_software(self, body):
+        body["connectionsByAgentId"]["2"].update(asvSoftware="on_board", controlLayer="real_vessel")
+        assert simulation_config_from_body(body).vessels["2"].stack.asv_software == AsvSoftwareId.ON_BOARD
+
+    def test_a_real_vessel_cannot_name_another_control_layer(self, body):
+        body["connectionsByAgentId"]["2"]["controlLayer"] = "ardupilot"
+        with pytest.raises(ValueError, match="A real vessel's control layer is its own autopilot"):
+            simulation_config_from_body(body)
+
     def test_simulated_vessel_needs_a_port(self, body):
         body["connectionsByAgentId"]["1"]["port"] = None
         with pytest.raises(ValueError, match="Missing port for agent with context 'simulation'"):
@@ -194,7 +209,7 @@ class TestRoundTrip:
             sent = again["connectionsByAgentId"][agent_id]
             assert sent["context"] == connection["context"]
             assert sent["controlMode"] == connection["controlMode"]
-            assert sent["controlLayer"] == "ardupilot"
+            assert sent["controlLayer"] == ("real_vessel" if connection["context"] == "real" else "ardupilot")
             assert sent["asvSoftware"] == {"autonomous": "replay", "external": "mission_planner"}[connection["controlMode"]]
             assert sent["agentName"] == connection["agentName"]
             assert sent["topic"] == connection["topic"]

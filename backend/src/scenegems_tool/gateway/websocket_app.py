@@ -15,7 +15,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from scenegems_tool.cluster.node.docker_subsystem_shutdown import shutdown_all_docker_subsystems
-from scenegems_tool.gateway.protocol import make_waraps_status_message
 from scenegems_tool.gateway.web_socket_session_manager import WebSocketSessionManager
 from utils.file_system_utils import ensure_directories
 
@@ -60,7 +59,7 @@ async def backend_service_socket(websocket: WebSocket) -> None:  # noqa: C901
     await websocket.accept()
     session, message_processor = websocket_session_manager.create_session(websocket=websocket)
     try:
-        session.send_payload(make_waraps_status_message(status="disconnected"))
+        session.send_payload(session.mqtt_broker_status_message(status="disconnected"))
     except WebSocketDisconnect:
         websocket_session_manager.remove_session(websocket=websocket)
         return

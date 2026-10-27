@@ -65,7 +65,7 @@ _CAPABILITY_LABELS = {
     "wind": "Wind",
     "waves": "Waves",
     "max_speedup": "Max speedup",
-    "interactive_only": "Interactive only",
+    "interactive_only": "Workbench only",
 }
 _UNIT_BY_FIELD = {"exact_up_to_speedup": "x", "max_speedup": "x"}
 
@@ -137,6 +137,8 @@ def _layer_node(registry: AdapterRegistry, spec: LayerSpec) -> ArchitectureNode:
     tags = ("docker",) if spec.containers else ("in-process",)
     if spec.capabilities.interactive_only:
         tags += ("interactive",)
+    if spec.on_board_asv_software:
+        facts += (Fact("on_board_asv_software", "On board ASV software", True, GROUP_PROPERTY, note="the vessel can run with ASV software on_board"),)
     return ArchitectureNode(
         id=spec.id,
         lane=spec.layer.role.value,
@@ -158,6 +160,8 @@ def _adapter_edge(registry: AdapterRegistry, spec: AdapterSpec) -> ArchitectureE
     tags = ("docker",) if spec.containers else ("in-process",)
     if not default:
         tags += ("alternative",)
+    if spec.built_in:
+        tags += ("built-in",)
     return ArchitectureEdge(
         id=spec.id,
         source=str(spec.source),
@@ -334,7 +338,7 @@ def vessel_stack_document(registry: Optional[AdapterRegistry] = None, resolver: 
     return ArchitectureDocument(
         id=DOCUMENT_ID,
         title="Vessel stack",
-        summary="Every vessel runs on a stack of three layers: ASV software, control layer and simulation layer. Adapters connect an implementation of one layer to an implementation of the next, and a stack exists when the adapters on its path do.",
+        summary="Every vessel runs on a stack of three layers: ASV software, control layer and simulation layer. Adapters connect an implementation of one layer to an implementation of the next, and a stack exists when the adapters on its path do. One integration may cover several layers through built-in adapters, as ArduPilot does with SITL and a real vessel with its own autopilot.",
         lanes=tuple(Lane(role.value, *_LANE_TEXT[role]) for role in STACK_ROLE_ORDER),
         metamodel_nodes=metamodel_nodes,
         metamodel_edges=metamodel_edges,
@@ -344,6 +348,7 @@ def vessel_stack_document(registry: Optional[AdapterRegistry] = None, resolver: 
         combinations=tuple(combination for combination in combinations if registered.issuperset(combination.path)),
         notes=(
             "The capabilities of a path are the weakest link over its three layers and two adapters. Values marked measured come from vessel_stack/registry/measured_capabilities.yaml.",
+            "Workbench only stacks (Mission Planner, real vessels) never run in a campaign: an operator or a physical vessel is in the loop.",
             "Ports that adapters connect: " + "; ".join(_port_members()) + ".",
         ),
     ).validate()

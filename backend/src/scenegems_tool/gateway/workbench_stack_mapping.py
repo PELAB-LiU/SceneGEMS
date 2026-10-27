@@ -6,11 +6,15 @@ agent, which names the ASV software (autonomous is replay, external is mission_p
 control layer then defaults to the one the simulator's ArduPilot-era stacks used (none on the
 kinematic layer, ardupilot otherwise).
 
+A real vessel (context real) is its own control and simulation layer: its stack is
+(asvSoftware, real_vessel, real_vessel), whatever simulator the instance runs, and its ASV
+software is replay, mission_planner or on_board (its own software steers it).
+
 Adapters: an instance with a real vessel runs through ArduAgent, which reaches real and
-simulated vessels alike over WARA-PS MQTT, so its replay and Mission Planner vessels select
-the ArduAgent adapters. An instance of simulated vessels uses the registry's defaults (the
-lockstep MAVLink link, the custom controller's adapters, the Mission Planner ground station
-port), which the scenario execution worker drives with the lockstep runners.
+simulated vessels alike over the MQTT broker, so its simulated replay and Mission Planner
+vessels select the ArduAgent adapters. An instance of simulated vessels uses the registry's
+defaults (the lockstep MAVLink link, the custom controller's adapters, the Mission Planner
+ground station port), which the scenario execution worker drives with the lockstep runners.
 
 The labels sent back (simulation_models, the scenario execution worker body) are the ones the
 browser offers, so the round trip is unchanged.
@@ -27,7 +31,10 @@ _SIMULATOR_TYPE_LABELS: Dict[SimulationLayerId, str] = {
     SimulationLayerId.GAZEBO: "Gazebo",
     SimulationLayerId.ARDUPILOT_SIM: "ArduPilot Sim",
     SimulationLayerId.KINEMATIC: "Kinematic",
+    SimulationLayerId.REAL_VESSEL: "Real vessel",  # the layer of a real agent, never the instance's simulator
 }
+# The simulators an instance can run on; a real vessel joins one of them.
+INSTANCE_SIMULATION_LAYERS: Tuple[SimulationLayerId, ...] = tuple(layer for layer in SimulationLayerId if layer != SimulationLayerId.REAL_VESSEL)
 _CONTROL_MODE_LABELS: Dict[AsvSoftwareId, str] = {
     AsvSoftwareId.REPLAY: "autonomous",
     AsvSoftwareId.MISSION_PLANNER: "external",
@@ -44,7 +51,7 @@ def simulation_layer_from_simulator_type(simulator_type: str) -> SimulationLayer
     for layer, label in _SIMULATOR_TYPE_LABELS.items():
         if simulator_type.strip().lower() == label.lower():
             return layer
-    raise ValueError(f"Unknown simulatorType '{simulator_type}'; expected one of {', '.join(_SIMULATOR_TYPE_LABELS.values())}.")
+    raise ValueError(f"Unknown simulatorType '{simulator_type}'; expected one of {', '.join(label for layer, label in _SIMULATOR_TYPE_LABELS.items() if layer in INSTANCE_SIMULATION_LAYERS)}.")
 
 
 def simulator_type_label(layer: SimulationLayerId) -> str:
@@ -77,8 +84,11 @@ def _parse_role(enum, value: str, field: str):
         raise ValueError(f"Unknown {field} '{value}'; expected one of {', '.join(member.value for member in enum)}.") from None
 
 
-def workbench_stack(simulator_type: str, asv_software: Optional[str], control_layer: Optional[str], control_mode: Optional[str] = None) -> VesselStackConfig:
-    """The triple of one agent: asvSoftware (or, from older clients, controlMode) and controlLayer (or the simulator's default)."""
+def workbench_stack(simulator_type: str, asv_software: Optional[str], control_layer: Optional[str], control_mode: Optional[str] = None, real_vessel: bool = False) -> VesselStackConfig:
+    """The triple of one agent: asvSoftware (or, from older clients, controlMode) and controlLayer (or the simulator's default).
+
+    A real vessel's control and simulation layers are its own (real_vessel); a controlLayer sent for it must say so or be left out.
+    """
     simulation_layer = simulation_layer_from_simulator_type(simulator_type)
     if asv_software:
         software = _parse_role(AsvSoftwareId, asv_software, "asvSoftware")
@@ -86,12 +96,19 @@ def workbench_stack(simulator_type: str, asv_software: Optional[str], control_la
         software = asv_software_from_control_mode(control_mode)
     else:
         raise ValueError("An agent needs an asvSoftware (or a controlMode).")
+    if real_vessel:
+        if control_layer and control_layer != ControlLayerId.REAL_VESSEL.value:
+            raise ValueError(f"A real vessel's control layer is its own autopilot ({ControlLayerId.REAL_VESSEL.value}), not '{control_layer}'.")
+        return VesselStackConfig(asv_software=software, control_layer=ControlLayerId.REAL_VESSEL, simulation_layer=SimulationLayerId.REAL_VESSEL)
     control = _parse_role(ControlLayerId, control_layer, "controlLayer") if control_layer else default_control_layer(simulation_layer)
     return VesselStackConfig(asv_software=software, control_layer=control, simulation_layer=simulation_layer)
 
 
 def workbench_adapter_ids(stack: VesselStackConfig, instance_has_real_vessel: bool) -> Tuple[str, ...]:
-    """ArduAgent's adapters in an instance with a real vessel, else the registry's defaults (none named)."""
-    if not instance_has_real_vessel:
+    """ArduAgent's adapters for the simulated vessels of an instance with a real vessel, else the registry's defaults (none named).
+
+    A real vessel has one adapter per connection, every one of them through ArduAgent, so it names none.
+    """
+    if not instance_has_real_vessel or stack.simulation_layer == SimulationLayerId.REAL_VESSEL:
         return ()
     return _ARDUAGENT_ADAPTER_IDS.get(stack.asv_software, ())

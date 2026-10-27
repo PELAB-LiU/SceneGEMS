@@ -140,7 +140,7 @@ def unavailable_stacks(resolver: Any, offered: List[Dict[str, Any]]) -> List[Dic
         capabilities = chain.capabilities
         interactive = bool(capabilities and capabilities.interactive_only)
         if chain.available and interactive:
-            reasons = ["interactive only: an operator drives it, so an unattended campaign run rejects it"]
+            reasons = ["workbench only: an operator or a physical vessel is in the loop, so a campaign never runs it"]
         elif chain.available:
             reasons = ["the campaign config does not offer this stack yet: its runs use the kinematic layer"]
         else:

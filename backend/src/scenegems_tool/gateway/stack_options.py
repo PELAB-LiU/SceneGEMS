@@ -4,14 +4,17 @@ The browser asks with query_stack_options and builds its simulator, ASV software
 layer choices from the answer, disabling every combination the resolver rules out and showing
 its reason. A combination counts per vessel; the instance's environment and speedup are checked
 when it is initialized (SocketSession._accept_simulation_config).
+
+simulatorTypes are the simulators an instance runs on. A real agent's choices are the rows whose
+simulatorType is "Real vessel" (control layer real_vessel); they are workbench only.
 """
 
 import math
 from typing import Any, Dict, List, Optional
 
 from scenegems_tool.gateway.protocol import StackOptionsMessage
-from scenegems_tool.gateway.workbench_stack_mapping import simulator_type_label
-from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, SimulationLayerId
+from scenegems_tool.gateway.workbench_stack_mapping import INSTANCE_SIMULATION_LAYERS, simulator_type_label
+from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId
 from scenegems_tool.vessel_stack.registry.catalog import default_resolver
 from scenegems_tool.vessel_stack.registry.resolver import ChainResolution, StackResolver
 
@@ -41,7 +44,7 @@ def stack_options_message(resolver: Optional[StackResolver] = None) -> StackOpti
     combinations: List[Dict[str, Any]] = [_combination(chain) for chain in resolver.availability_matrix()]
     return StackOptionsMessage(
         type="stack_options",
-        simulatorTypes=[simulator_type_label(layer) for layer in SimulationLayerId],
+        simulatorTypes=[simulator_type_label(layer) for layer in INSTANCE_SIMULATION_LAYERS],
         asvSoftware=[software.value for software in AsvSoftwareId],
         controlLayers=[layer.value for layer in ControlLayerId],
         combinations=combinations,

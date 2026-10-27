@@ -63,7 +63,7 @@ function SimulationIcon(props: IconProps) {
   );
 }
 
-function WarapsIcon(props: IconProps) {
+function ConnectionsIcon(props: IconProps) {
   return (
     <svg {...iconBaseProps(props)}>
       <path d="M9 7V3M15 7V3" />
@@ -159,7 +159,7 @@ const WORKBENCH_ITEMS: NavEntry<WorkbenchView>[] = [
   { id: "sceneGeneration", label: "Scene Generation", hint: "Create a starting scene", Icon: SceneGenerationIcon },
   { id: "trajectoryGeneration", label: "Trajectory Generation", hint: "Plan the vessel routes", Icon: TrajectoryGenerationIcon },
   { id: "simulation", label: "Simulation", hint: "Watch the scenario play", Icon: SimulationIcon },
-  { id: "waraps", label: "Connections", hint: "Link to WARA-PS", Icon: WarapsIcon },
+  { id: "connections", label: "Connections", hint: "MQTT broker for live runs", Icon: ConnectionsIcon },
 ];
 
 const CLUSTER_ITEMS: NavEntry<AppSection>[] = [

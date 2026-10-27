@@ -1,60 +1,27 @@
 import type { ClientToServerMessage } from "../../../domain/simulation/wireTypes";
 import { DEFAULT_MONITOR_NAME, defaultMonitorTopic } from "./monitorTopic";
 
-const KEY_PREFIX = "scenegems:";
+/**
+ * The live COLREGS monitor of the workbench's interactive simulation. It is not configured by
+ * hand: once the MQTT broker is connected the workbench starts the server's own monitor
+ * (scope internal) with the domain's COLREGS constants. Everything else is monitored by the
+ * cluster's monitoring jobs.
+ */
 
-function readPersisted<T>(key: string, fallback: T): T {
-  if (typeof window === "undefined") {
-    return fallback;
-  }
-  try {
-    const raw = window.localStorage.getItem(KEY_PREFIX + key);
-    if (raw === null) {
-      return fallback;
-    }
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-export interface PersistedMonitorConfig {
-  scope: "internal" | "external";
-  name: string;
-  topic: string;
-}
-
-export function readPersistedMonitorConfig(): PersistedMonitorConfig {
-  const name = readPersisted("monitor-name", DEFAULT_MONITOR_NAME);
-  return {
-    scope: readPersisted<"internal" | "external">("monitor-scope", "internal"),
-    name,
-    topic: readPersisted("monitor-topic", defaultMonitorTopic(name)),
-  };
-}
-
-export function buildInitializeMonitorMessage(
-  colregsConstraintsContent: string,
-  config: PersistedMonitorConfig = readPersistedMonitorConfig()
-): ClientToServerMessage {
-  const trimmedName = config.name.trim() || DEFAULT_MONITOR_NAME;
+export function buildInitializeMonitorMessage(colregsConstraintsContent: string): ClientToServerMessage {
   return {
     type: "initialize_monitor",
-    scope: config.scope,
-    name: trimmedName,
-    topic: config.topic.trim() || defaultMonitorTopic(trimmedName),
+    scope: "internal",
+    name: DEFAULT_MONITOR_NAME,
+    topic: defaultMonitorTopic(DEFAULT_MONITOR_NAME),
     colregsConstraintsContent,
   };
 }
 
 export function canInitializeMonitor(
-  warapsStatus: "connected" | "disconnected",
+  mqttBrokerStatus: "connected" | "disconnected",
   monitorStatus: "connected" | "disconnected",
   colregsConstraintsContent: string
 ): boolean {
-  return (
-    warapsStatus === "connected" &&
-    monitorStatus !== "connected" &&
-    colregsConstraintsContent.trim().length > 0
-  );
+  return mqttBrokerStatus === "connected" && monitorStatus !== "connected" && colregsConstraintsContent.trim().length > 0;
 }

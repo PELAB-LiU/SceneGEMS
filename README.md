@@ -54,7 +54,7 @@ In the web console, under Workbench:
 2. **Scene Generation**: load a functional scenario (`.problem` file) and generate a scene.
 3. **Trajectory Generation**: monitor-driven RRT, or straight trajectories over a time span.
 4. **Simulation**: run the scenario and play it back in the encounter view (nautical canvas, a card per vessel pair, rule timeline) with the COLREGS monitor's outcomes; record, replay and export.
-5. **Connections**: the optional WARA-PS connection.
+5. **Connections**: the MQTT broker of live simulation sessions (the master's own by default).
 
 ## Building images
 

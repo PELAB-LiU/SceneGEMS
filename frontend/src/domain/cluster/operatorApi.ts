@@ -22,6 +22,17 @@ import {
   type VerdictState,
 } from "./schemas";
 
+/** A request to run one job (`JobSubmission` of `cluster/protocol/jobs.py`); the master checks the payload against its job type. */
+export interface JobSubmission {
+  job_type: string;
+  payload: Record<string, unknown>;
+  priority?: number;
+  max_attempts?: number;
+  idempotency_key?: string;
+  /** Node ids that may run the job; empty or left out for any node. */
+  allowed_nodes?: string[];
+}
+
 /**
  * Client of a master's operator API (`backend/.../cluster/master/api/operator_routes.py` and
  * `campaign_routes.py`). Every answer is checked against the schemas in `schemas.ts`; errors
@@ -287,6 +298,11 @@ export class OperatorClient {
 
   getJob(jobId: string, signal?: AbortSignal) {
     return this.get(`/cluster/jobs/${encodeURIComponent(jobId)}`, jobDetailSchema, undefined, signal);
+  }
+
+  /** Submits a job (`JobSubmission` of `cluster/protocol/jobs.py`); answers the new job, or the one its idempotency key names. */
+  async submitJob(submission: JobSubmission, signal?: AbortSignal) {
+    return (await this.request("POST", "/cluster/jobs", jobViewSchema, { body: submission, signal })).data;
   }
 
   async cancelJob(jobId: string, reason?: string) {

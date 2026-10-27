@@ -9,6 +9,10 @@ When the chain exists, its capabilities are the weakest link over its three laye
 adapters. A request (environment, speedup, attended or not) is then checked against them:
 unsupported wind or waves, and a speedup the chain cannot run, are rejected with a reason
 and never dropped silently.
+
+A real vessel of an instance is resolved too, on its own layers (real_vessel control and
+simulation): it is outside the shared simulation layer and the requested environment, but its
+limits (real time, no lockstep, workbench only) are part of the instance's weakest link.
 """
 
 from dataclasses import dataclass
@@ -19,6 +23,8 @@ from scenegems_tool.vessel_stack.contracts.capabilities import Capabilities, Env
 from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, LayerRef, Role, SimulationLayerId
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import EnvironmentConfig, SimulationInstanceConfig, VesselStackConfig
 from scenegems_tool.vessel_stack.registry.adapter_registry import AdapterRegistry
+
+_REAL_VESSEL_LAYERS = (ControlLayerId.REAL_VESSEL, SimulationLayerId.REAL_VESSEL)
 
 
 class StackUnavailableError(ValueError):
@@ -83,7 +89,7 @@ class ChainResolution:
 @dataclass(frozen=True)
 class InstanceResolution:
     instance: SimulationInstanceConfig
-    chains: Mapping[str, ChainResolution]  # by agent id, simulated vessels only
+    chains: Mapping[str, ChainResolution]  # by agent id, real vessels included
     capabilities: Optional[Capabilities]  # weakest link over every vessel chain, since all share one clock
     errors: Tuple[str, ...]
     warnings: Tuple[str, ...]
@@ -164,8 +170,12 @@ class StackResolver:
         errors: List[str] = []
         warnings: List[str] = []
         chains: Dict[str, ChainResolution] = {}
-        for agent_id, vessel in instance.simulated_vessels.items():
-            if vessel.stack.simulation_layer != instance.simulation_layer:
+        if instance.simulation_layer == SimulationLayerId.REAL_VESSEL:
+            errors.append("an instance runs on a simulation layer; real_vessel is the layer of a real vessel only")
+        for agent_id, vessel in instance.vessels.items():
+            if not vessel.is_simulated and (vessel.stack.control_layer, vessel.stack.simulation_layer) != _REAL_VESSEL_LAYERS:
+                errors.append(f"vessel {agent_id} is a real vessel, so its control and simulation layers are real_vessel, not ({vessel.stack})")
+            elif vessel.is_simulated and vessel.stack.simulation_layer != instance.simulation_layer:
                 errors.append(f"vessel {agent_id} uses simulation layer {vessel.stack.simulation_layer.value}, but all vessels of one instance share {instance.simulation_layer.value}")
             chain = self.resolve(vessel.stack, vessel.adapter_ids)
             chains[agent_id] = chain
@@ -176,7 +186,9 @@ class StackResolver:
 
         specs = _unique(spec for chain in chains.values() for spec in chain.specs)
         capabilities = weakest_link(spec.capabilities for spec in specs)
-        _check_environment(specs, instance.environment, errors, warnings)
+        # Requested wind and waves act on the shared simulation; a real vessel meets the real weather.
+        simulated_specs = _unique(spec for agent_id, chain in chains.items() if instance.vessels[agent_id].is_simulated for spec in chain.specs)
+        _check_environment(simulated_specs, instance.environment, errors, warnings)
         self._check_speedup(specs, instance.speedup, host, errors, warnings)
         if capabilities.interactive_only and not attended:
             for spec in specs:

@@ -1,10 +1,12 @@
 """ScenarioExecutionWorker: which driver runs an instance, and the states a lockstep run publishes."""
 
 import queue
+from types import SimpleNamespace
 
 import pytest
 
 from scenegems_tool.gateway.protocol import SimulationStatus
+from scenegems_tool.messaging.mqtt_agent_client import MqttAgentClient
 from scenegems_tool.subsystems.scenario_execution import scenario_execution_worker
 from scenegems_tool.subsystems.scenario_execution.scenario_execution_worker import ScenarioExecutionWorker
 from scenegems_tool.vessel_stack.contracts.roles import ControlLayerId, SimulationLayerId
@@ -60,3 +62,33 @@ def test_a_lockstep_instance_is_ready_at_once_and_publishes_every_step_while_run
     assert all(scene is not None for _, scene in running)
     assert states[0][0] == SimulationStatus.STARTING
     assert states[-1][0] == SimulationStatus.READY_TO_START, "back to ready when the run ends"
+
+
+class RecordingAgentClient:
+    """An ArduAgent client that records the start commands; its control mode properties are MqttAgentClient's."""
+
+    on_board_control_mode = MqttAgentClient.on_board_control_mode
+    external_control_mode = MqttAgentClient.external_control_mode
+
+    def __init__(self, actor, control_mode):
+        self.actor = actor
+        self.control_mode = control_mode
+        self.mission_waypoints = [{"latitude": 57.7, "longitude": 11.9}]
+        self.commands = []
+
+    def publish_go_to(self, *args):
+        self.commands.append("go_to")
+
+    def publish_follow_path(self, *args):
+        self.commands.append("follow_path")
+
+
+def test_start_commands_every_vessel_but_one_its_on_board_software_steers():
+    instance = stack_instance(SimulationLayerId.ARDUPILOT_SIM, [0, 1], adapter_ids=["replay_arduagent_follower"])
+    instance.vessels["1"].context = AgentContext.REAL
+    subject = worker(instance)
+    scene = subject.trajectories.initial_scene
+    clients = [RecordingAgentClient(scene.get_by_id("0"), "autonomous"), RecordingAgentClient(scene.get_by_id("1"), "on_board")]
+    subject.simulation_parser = SimpleNamespace(are_agents_ready=True, clients=clients)
+    subject.start_scenario()
+    assert [client.commands for client in clients] == [["follow_path"], []]

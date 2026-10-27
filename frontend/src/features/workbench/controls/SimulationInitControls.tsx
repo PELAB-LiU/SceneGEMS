@@ -6,6 +6,7 @@ import type { ActorStaticInfo } from "../../../domain/simulation/types";
 import { downloadBlob } from "../scene/sceneExport";
 import type { WaveInfoWire } from "../../../domain/simulation/wireTypes";
 import type { SimulationStreamControls } from "./types";
+import type { SimulationSetup } from "../cluster/simulationJobs";
 import {
   ASV_SOFTWARE,
   ASV_SOFTWARE_LABELS,
@@ -17,6 +18,8 @@ import {
   controlLayerChoice,
   mergePersistedVesselSettings,
   normalizeDraftStack,
+  REAL_VESSEL_ASV_SOFTWARE,
+  realVesselSoftwareChoice,
   round2,
   toPersistedVesselDrafts,
   toTopicSegment,
@@ -102,6 +105,8 @@ interface Props {
   streamControls: SimulationStreamControls;
   /** Fired when the number of vessels in the init table changes (for parent action bar). */
   onScenarioVesselCount?: (count: number) => void;
+  /** The setup as it changes, so the run panel can tell where it runs. */
+  onSetupChange?: (setup: SimulationSetup) => void;
 }
 
 const EMPTY_ACTORS: ActorStaticInfo[] = [];
@@ -194,7 +199,7 @@ function removeLegacyVesselDraftsWithModels(): void {
 }
 
 export const SimulationInitControls = forwardRef<SimulationInitControlsHandle, Props>(
-  function SimulationInitControls({ streamControls, onScenarioVesselCount }, ref) {
+  function SimulationInitControls({ streamControls, onScenarioVesselCount, onSetupChange }, ref) {
   const visualizedActors = usePlaybackStore((s) => s.latestGeneratedScene?.scene?.actors ?? EMPTY_ACTORS);
   const animationActors = usePlaybackStore((s) => s.frames[0]?.actors ?? visualizedActors);
   const simulationActors = usePlaybackStore((s) => s.simulationFrames[0]?.actors ?? EMPTY_ACTORS);
@@ -313,6 +318,25 @@ export const SimulationInitControls = forwardRef<SimulationInitControlsHandle, P
     onScenarioVesselCount?.(scenarioVesselCount);
   }, [scenarioVesselCount, onScenarioVesselCount]);
 
+  const ownShipIds = useMemo(
+    () => new Set([...animationActors, ...simulationActors].filter((actor) => actor.isOwnShip).map((actor) => actor.id)),
+    [animationActors, simulationActors]
+  );
+  useEffect(() => {
+    onSetupChange?.({
+      simulatorType,
+      vessels: stackDrafts.map((draft) => ({
+        vesselId: draft.vesselId,
+        context: draft.context,
+        asvSoftware: draft.asvSoftware,
+        controlLayer: draft.controlLayer,
+        isOwnShip: ownShipIds.has(draft.vesselId),
+      })),
+      windVector: [round2(windEast), round2(windNorth), round2(windUp)],
+      waveAmplitude: round2(wave.amplitude),
+    });
+  }, [onSetupChange, ownShipIds, simulatorType, stackDrafts, wave.amplitude, windEast, windNorth, windUp]);
+
   useEffect(() => {
     const mergeWithExistingDrafts = (vessels: { id: string; isOwnShip: boolean }[]) => {
       const vesselIds = vessels.map((v) => v.id).join("|");
@@ -377,212 +401,16 @@ export const SimulationInitControls = forwardRef<SimulationInitControlsHandle, P
     setWave((prev) => ({ ...prev, ...partial }));
   };
 
+  const updateKind = (vesselId: string, context: SimulationContext) => {
+    updateConnection(vesselId, "context", context);
+  };
+
   return (
-    <>
-      <Disclosure
-        id="simulation:agent-connections"
-        title="Agent connections"
-        hint={`${vesselConnectionDrafts.length} ${vesselConnectionDrafts.length === 1 ? "vessel" : "vessels"}`}
-        headingLevel={4}
-        className="sim-init-subpanel"
-      >
-        <div style={{ maxHeight: 220, overflow: "auto" }}>
-          <table className="sim-init-table">
-            <thead>
-              <tr>
-                <th align="left">ID</th>
-                <th align="left">ASV software</th>
-                <th align="left">Control layer</th>
-                <th align="left">Agent name</th>
-                <th align="left">Topic</th>
-                <th align="left">Port</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stackDrafts.length > 0 ? (
-                stackDrafts.map((draft) => (
-                  <tr key={draft.vesselId}>
-                    <td>{draft.vesselId}</td>
-                    <td>
-                      <select
-                        value={draft.asvSoftware}
-                        onChange={(e) =>
-                          updateConnection(draft.vesselId, "asvSoftware", e.target.value as AsvSoftware)
-                        }
-                      >
-                        {ASV_SOFTWARE.map((software) => {
-                          const choice = asvSoftwareChoice(stackOptions, simulatorType, software);
-                          return (
-                            <option key={software} value={software} disabled={!choice.available} title={choice.reason}>
-                              {ASV_SOFTWARE_LABELS[software]}
-                            </option>
-                          );
-                        })}
-                      </select>
-                    </td>
-                    <td>
-                      {draft.context === "simulation" ? (
-                        <select
-                          value={draft.controlLayer}
-                          title={controlLayerChoice(stackOptions, simulatorType, draft.asvSoftware, draft.controlLayer).reason}
-                          onChange={(e) =>
-                            updateConnection(draft.vesselId, "controlLayer", e.target.value as ControlLayer)
-                          }
-                        >
-                          {CONTROL_LAYERS.map((layer) => {
-                            const choice = controlLayerChoice(stackOptions, simulatorType, draft.asvSoftware, layer);
-                            return (
-                              <option key={layer} value={layer} disabled={!choice.available} title={choice.reason}>
-                                {CONTROL_LAYER_LABELS[layer]}
-                              </option>
-                            );
-                          })}
-                        </select>
-                      ) : (
-                        <span className="meta" title="A real vessel is its own control and physics">
-                          -
-                        </span>
-                      )}
-                    </td>
-                    <td>
-                      <input
-                        value={draft.agentName}
-                        onChange={(e) =>
-                          updateConnection(draft.vesselId, "agentName", e.target.value)
-                        }
-                      />
-                    </td>
-                    <td>
-                      <input
-                        value={draft.topic}
-                        className="sim-init-topic-input"
-                        onChange={(e) => updateConnection(draft.vesselId, "topic", e.target.value)}
-                      />
-                    </td>
-                    <td>
-                      {draft.context === "simulation" ? (
-                        <input
-                          type="number"
-                          step={1}
-                          value={draft.port}
-                          onChange={(e) =>
-                            updateConnection(
-                              draft.vesselId,
-                              "port",
-                              Number.isFinite(Number(e.target.value))
-                                ? Math.trunc(Number(e.target.value))
-                                : draft.port
-                            )
-                          }
-                        />
-                      ) : (
-                        <span className="meta" title="Port is not used for real context">
-                          -
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={6} className="meta">
-                    No vessels received from backend stream yet.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Disclosure>
-
-      <Disclosure
-        id="simulation:vessel-physics-models"
-        title="Vessel physics models"
-        hint="Optional: the server makes one if you do not"
-        headingLevel={4}
-        className="sim-init-subpanel"
-      >
-        <p className="meta" style={{ marginTop: 0 }}>
-          Load a Gazebo SDF model per vessel, export it, or clear it to let the server
-          generate one automatically.
-        </p>
-        <div style={{ maxHeight: 220, overflow: "auto" }}>
-          <table className="sim-init-table">
-            <thead>
-              <tr>
-                <th align="left">ID</th>
-                <th align="left">Context</th>
-                <th align="left">Gazebo model (.sdf)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stackDrafts.length > 0 ? (
-                stackDrafts.map((draft) => (
-                  <tr key={draft.vesselId}>
-                    <td>{draft.vesselId}</td>
-                    <td>
-                      <select
-                        value={draft.context}
-                        onChange={(e) =>
-                          updateConnection(
-                            draft.vesselId,
-                            "context",
-                            e.target.value as SimulationContext
-                          )
-                        }
-                      >
-                        <option value="simulation">simulation</option>
-                        <option value="real">real</option>
-                      </select>
-                    </td>
-                    <td>
-                      {draft.context === "real" ? (
-                        <span
-                          className="meta"
-                          title="A Gazebo model is not required for real vessels"
-                        >
-                          not required (real vessel)
-                        </span>
-                      ) : (
-                        <ModelFileControls
-                          content={draft.gazeboVesselModel}
-                          exportFileName={`${draft.agentName || draft.vesselId}.sdf`}
-                          onLoad={(text) =>
-                            updateConnection(draft.vesselId, "gazeboVesselModel", text)
-                          }
-                          onClear={() =>
-                            updateConnection(draft.vesselId, "gazeboVesselModel", undefined)
-                          }
-                        />
-                      )}
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={3} className="meta">
-                    No vessels received from backend stream yet.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Disclosure>
-
-      <Disclosure
-        id="simulation:parameters"
-        title="Simulation parameters"
-        hint={`${simulatorType}, speed ${simulationSpeed}`}
-        headingLevel={4}
-        className="sim-init-subpanel"
-      >
-        <label className="field">
-          <span>Simulator type</span>
-          <select
-            value={simulatorType}
-            onChange={(e) => setSimulatorType(e.target.value as GlobalSimulatorType)}
-          >
+    <div className="sim-setup">
+      <div className="sim-setup-row">
+        <label className="field sim-setup-simulator">
+          <span>Simulator</span>
+          <select value={simulatorType} onChange={(e) => setSimulatorType(e.target.value as GlobalSimulatorType)}>
             {GLOBAL_SIMULATOR_TYPES.map((type) => (
               <option key={type} value={type}>
                 {type}
@@ -590,16 +418,95 @@ export const SimulationInitControls = forwardRef<SimulationInitControlsHandle, P
             ))}
           </select>
         </label>
+      </div>
 
+      <table className="sim-init-table sim-setup-vessels">
+        <thead>
+          <tr>
+            <th align="left">Vessel</th>
+            <th align="left">Kind</th>
+            <th align="left">ASV software</th>
+            <th align="left">Control layer</th>
+          </tr>
+        </thead>
+        <tbody>
+          {stackDrafts.length > 0 ? (
+            stackDrafts.map((draft) => {
+              const real = draft.context === "real";
+              const softwareChoices = real ? REAL_VESSEL_ASV_SOFTWARE : ASV_SOFTWARE;
+              return (
+                <tr key={draft.vesselId}>
+                  <td>
+                    {ownShipIds.has(draft.vesselId) ? "Own ship" : "Target"} {draft.vesselId}
+                  </td>
+                  <td>
+                    <select value={draft.context} onChange={(e) => updateKind(draft.vesselId, e.target.value as SimulationContext)}>
+                      <option value="simulation">Simulated</option>
+                      <option value="real">Real vessel</option>
+                    </select>
+                  </td>
+                  <td>
+                    <select value={draft.asvSoftware} onChange={(e) => updateConnection(draft.vesselId, "asvSoftware", e.target.value as AsvSoftware)}>
+                      {softwareChoices.map((software) => {
+                        const choice = real ? realVesselSoftwareChoice(stackOptions, software) : asvSoftwareChoice(stackOptions, simulatorType, software);
+                        return (
+                          <option key={software} value={software} disabled={!choice.available} title={choice.reason}>
+                            {ASV_SOFTWARE_LABELS[software]}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </td>
+                  <td>
+                    {real ? (
+                      <span className="meta" title="A real vessel is its own control layer and its own physics, reached through its ArduAgent">
+                        {CONTROL_LAYER_LABELS.real_vessel}
+                      </span>
+                    ) : (
+                      <select
+                        value={draft.controlLayer}
+                        title={controlLayerChoice(stackOptions, simulatorType, draft.asvSoftware, draft.controlLayer).reason}
+                        onChange={(e) => updateConnection(draft.vesselId, "controlLayer", e.target.value as ControlLayer)}
+                      >
+                        {CONTROL_LAYERS.map((layer) => {
+                          const choice = controlLayerChoice(stackOptions, simulatorType, draft.asvSoftware, layer);
+                          return (
+                            <option key={layer} value={layer} disabled={!choice.available} title={choice.reason}>
+                              {CONTROL_LAYER_LABELS[layer]}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    )}
+                  </td>
+                </tr>
+              );
+            })
+          ) : (
+            <tr>
+              <td colSpan={4} className="meta">
+                Load a scenario with trajectories to set up its vessels.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+
+      <Disclosure
+        id="simulation:environment"
+        title="Wind, waves and pace"
+        hint={`${windEast || windNorth || windUp ? "wind" : "no wind"}, ${wave.amplitude > 0 ? "waves" : "no waves"}, ${simulationSpeed}x`}
+        headingLevel={4}
+        className="sim-init-subpanel"
+      >
         <PreciseParam
-          label="Simulation speed"
+          label="Real-time factor of a live session"
           value={simulationSpeed}
           min={SIMULATION_SPEED_MIN}
           max={SIMULATION_SPEED_MAX}
           integer
           onChange={setSimulationSpeed}
         />
-
         <Disclosure
           id="simulation:wind"
           title="Wind"
@@ -692,7 +599,92 @@ export const SimulationInitControls = forwardRef<SimulationInitControlsHandle, P
         </Disclosure>
       </Disclosure>
 
-    </>
+      <Disclosure
+        id="simulation:agent-connections"
+        title="Agent names, topics and ports"
+        hint="For live sessions over the MQTT broker"
+        headingLevel={4}
+        className="sim-init-subpanel"
+      >
+        <div style={{ maxHeight: 220, overflow: "auto" }}>
+          <table className="sim-init-table">
+            <thead>
+              <tr>
+                <th align="left">Vessel</th>
+                <th align="left">Agent name</th>
+                <th align="left">Topic</th>
+                <th align="left">Port</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stackDrafts.map((draft) => (
+                <tr key={draft.vesselId}>
+                  <td>{draft.vesselId}</td>
+                  <td>
+                    <input value={draft.agentName} onChange={(e) => updateConnection(draft.vesselId, "agentName", e.target.value)} />
+                  </td>
+                  <td>
+                    <input value={draft.topic} className="sim-init-topic-input" onChange={(e) => updateConnection(draft.vesselId, "topic", e.target.value)} />
+                  </td>
+                  <td>
+                    {draft.context === "simulation" ? (
+                      <input
+                        type="number"
+                        step={1}
+                        value={draft.port}
+                        onChange={(e) =>
+                          updateConnection(draft.vesselId, "port", Number.isFinite(Number(e.target.value)) ? Math.trunc(Number(e.target.value)) : draft.port)
+                        }
+                      />
+                    ) : (
+                      <span className="meta" title="A real vessel needs no simulator port">
+                        -
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Disclosure>
+
+      {simulatorType === "Gazebo" && (
+        <Disclosure
+          id="simulation:vessel-physics-models"
+          title="Gazebo vessel models"
+          hint="Optional: the server makes one per vessel if you do not"
+          headingLevel={4}
+          className="sim-init-subpanel"
+        >
+          <table className="sim-init-table">
+            <thead>
+              <tr>
+                <th align="left">Vessel</th>
+                <th align="left">Gazebo model (.sdf)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stackDrafts
+                .filter((draft) => draft.context === "simulation")
+                .map((draft) => (
+                  <tr key={draft.vesselId}>
+                    <td>{draft.vesselId}</td>
+                    <td>
+                      <ModelFileControls
+                        content={draft.gazeboVesselModel}
+                        exportFileName={`${draft.agentName || draft.vesselId}.sdf`}
+                        onLoad={(text) => updateConnection(draft.vesselId, "gazeboVesselModel", text)}
+                        onClear={() => updateConnection(draft.vesselId, "gazeboVesselModel", undefined)}
+                      />
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </Disclosure>
+      )}
+    </div>
   );
   }
 );

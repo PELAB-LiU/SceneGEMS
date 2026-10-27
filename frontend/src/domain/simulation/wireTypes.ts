@@ -1,9 +1,11 @@
 import type { GeneratedSceneData, SimulationFrame } from "./types";
 
 /** ASV software of a vessel stack (backend `AsvSoftwareId`). */
-export type AsvSoftwareWire = "replay" | "usv_navigation" | "mission_planner";
+/** on_board: the vessel's own software steers it (a real vessel); SceneGEMS runs none. */
+export type AsvSoftwareWire = "replay" | "usv_navigation" | "mission_planner" | "on_board";
 /** Control layer of a vessel stack (backend `ControlLayerId`). */
-export type ControlLayerWire = "ardupilot" | "custom" | "none";
+/** real_vessel: a real vessel's own autopilot, which is also its simulation layer ("Real vessel"). */
+export type ControlLayerWire = "ardupilot" | "custom" | "none" | "real_vessel";
 
 /**
  * Per-agent connection info for `initialize_simulation` (matches server TypedDict).
@@ -142,38 +144,17 @@ export type ClientToServerMessage =
       colregsConstraintsContent: string;
     }
   | { type: "shut_down_monitor" }
+  /*
+   * Scene generation, trajectory generation and monitoring of loaded scenes are not gateway
+   * messages: the workbench runs them as jobs on the active cluster (features/workbench/cluster/).
+   */
   | {
-      type: "generate_scene";
-      requestId: string;
-      functionalScenarioContent: string;
-      colregsConstraintsContent: string;
-      vesselTypesContent: string;
-      obstacleTypesContent: string;
-      /** Scene generation time limit in seconds. */
-      timeout: number;
-      /** When true, COLREGS vessel-pair constraints also require low TCPA. */
-      enforceLowTcpa?: boolean;
-    }
-  | { type: "stop_scene_generation" }
-  | {
-      /** Run a disk-loaded scene through the active monitor; answered with `generated_scene`. */
-      type: "monitor_scene";
-      requestId: string;
-      /** Scenario JSON: evaluation data with `best_scene`, or a `TrajectoryData` payload. */
-      scenarioContent: string;
-    }
-  | {
-      type: "generate_trajectories";
-      requestId: string;
-      /** Initial-scene scenario JSON (evaluation-data shape with `best_scene`). */
-      scenarioContent: string;
-      colregsConstraintsContent: string;
-      /** Advanced RRT parameters; omitted keys fall back to backend defaults. */
-      params: TrajectoryGenerationParamsWire;
-    }
-  | { type: "stop_trajectory_generation" }
-  | {
-      type: "connect_to_waraps";
+      /**
+       * Connect the interactive simulation to an MQTT broker. With `use_master_broker` the
+       * broker is the master's own (named in `mqtt_broker_status.masterBroker`) and the
+       * address, user and TLS fields are ignored.
+       */
+      type: "connect_to_mqtt_broker";
       user: string;
       password: string;
       agent_broker: string;
@@ -186,8 +167,9 @@ export type ClientToServerMessage =
         longitude: number;
         radius_meters: number;
       };
+      use_master_broker?: boolean;
     }
-  | { type: "disconnect_from_waraps" };
+  | { type: "disconnect_from_mqtt_broker" };
 
 export type ServerToClientMessage =
   | {
@@ -253,7 +235,12 @@ export type ServerToClientMessage =
       groundControlPortsByAgentId?: Record<string, number>;
     }
   | ({ type: "stack_options" } & StackOptionsPayload)
-  | { type: "waraps_status"; status: "connected" | "disconnected" }
+  | {
+      type: "mqtt_broker_status";
+      status: "connected" | "disconnected";
+      /** The master's own broker as the server dials it ("host:port"), null when it has none. */
+      masterBroker?: string | null;
+    }
   | { type: "monitor_status"; status: "connected" | "disconnected" }
   /**
    * Response to `generate_simulation_models`. Same fields as the request, but with

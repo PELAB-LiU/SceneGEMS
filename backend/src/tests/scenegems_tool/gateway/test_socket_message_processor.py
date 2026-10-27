@@ -21,11 +21,7 @@ class RecordingSession:
         self.errors: List[str] = []
         self.fail_with: Exception | None = None
         integration = SimpleNamespace()
-        integration.generate_scene = lambda **kwargs: self._record("generate_scene", kwargs)
-        integration.generate_trajectories = lambda **kwargs: self._record("generate_trajectories", kwargs)
         integration.simulation_session = SimpleNamespace(start_simulation_runtime=lambda: self._record("start_simulation_runtime", {}))
-        integration.stop_scene_generation = self._async("stop_scene_generation")
-        integration.stop_trajectory_generation = self._async("stop_trajectory_generation")
         integration.reset_simulation_session_async = self._async("reset_simulation_session_async")
         self.subsystem_integration_session = integration
 
@@ -46,11 +42,11 @@ class RecordingSession:
     def set_scenario_session(self, **kwargs) -> None:
         self._record("set_scenario_session", kwargs)
 
-    async def connect_to_waraps(self, **kwargs) -> None:
-        self._record("connect_to_waraps", kwargs)
+    async def connect_to_mqtt_broker(self, **kwargs) -> None:
+        self._record("connect_to_mqtt_broker", kwargs)
 
-    def disconnect_from_waraps(self) -> None:
-        self._record("disconnect_from_waraps", {})
+    def disconnect_from_mqtt_broker(self) -> None:
+        self._record("disconnect_from_mqtt_broker", {})
 
     def set_simulation_session(self, config) -> None:
         self._record("set_simulation_session", {"config": config})
@@ -63,9 +59,6 @@ class RecordingSession:
 
     def shut_down_monitor(self) -> None:
         self._record("shut_down_monitor", {})
-
-    async def monitor_scene(self, **kwargs) -> None:
-        self._record("monitor_scene", kwargs)
 
     def send_payload(self, payload) -> None:
         self._record("send_payload", payload)
@@ -106,12 +99,12 @@ class TestDispatch:
         await send(processor, {"type": "load_scenario_file", "scenarioId": "s1", "fileName": "a.json", "filePath": "/a.json", "fileContent": "{}"})
         assert session.calls == [("set_scenario_session", {"scenario_id": "s1", "file_name": "a.json", "file_path": "/a.json", "file_content": "{}"})]
 
-    async def test_connect_to_waraps_builds_the_geofence(self, setup):
+    async def test_connect_to_mqtt_broker_builds_the_geofence(self, setup):
         session, processor = setup
         await send(
             processor,
             {
-                "type": "connect_to_waraps",
+                "type": "connect_to_mqtt_broker",
                 "user": "u",
                 "password": "p",
                 "agent_broker": "ab",
@@ -123,16 +116,38 @@ class TestDispatch:
             },
         )
         ((name, kwargs),) = session.calls
-        assert name == "connect_to_waraps"
+        assert name == "connect_to_mqtt_broker"
         assert (kwargs["user"], kwargs["port"], kwargs["tls_connection"]) == ("u", 8883, True)
         assert (kwargs["reference_geofence"].latitude, kwargs["reference_geofence"].radius_meters) == (57.7, 2000.0)
+        assert kwargs["use_master_broker"] is False
+
+    async def test_connect_to_the_master_broker(self, setup):
+        session, processor = setup
+        await send(
+            processor,
+            {
+                "type": "connect_to_mqtt_broker",
+                "user": "",
+                "password": "",
+                "agent_broker": "",
+                "client_broker": "",
+                "port": 1883,
+                "tls_connection": False,
+                "allow_certificates": False,
+                "geofence": {"latitude": 57.7, "longitude": 16.6, "radius_meters": 2000},
+                "use_master_broker": True,
+            },
+        )
+        ((name, kwargs),) = session.calls
+        assert name == "connect_to_mqtt_broker"
+        assert kwargs["use_master_broker"] is True
 
     async def test_disconnect_and_monitor_commands(self, setup):
         session, processor = setup
-        await send(processor, {"type": "disconnect_from_waraps"})
+        await send(processor, {"type": "disconnect_from_mqtt_broker"})
         await send(processor, {"type": "initialize_monitor", "name": "m", "topic": "t", "scope": "s", "colregsConstraintsContent": "c"})
         await send(processor, {"type": "shut_down_monitor"})
-        assert session.names() == ["disconnect_from_waraps", "set_monitor_session", "shut_down_monitor"]
+        assert session.names() == ["disconnect_from_mqtt_broker", "set_monitor_session", "shut_down_monitor"]
         assert session.calls[1][1]["args"] == ("m", "t", "s", "c")
 
     async def test_start_simulation_goes_to_the_simulation_session(self, setup):
@@ -169,73 +184,15 @@ class TestDispatch:
         await send(processor, {"type": "query_stack_options"})
         ((name, payload),) = session.calls
         assert name == "send_payload" and payload["type"] == "stack_options"
-        assert len(payload["combinations"]) == 27
-
-    async def test_generate_scene_forwards_every_field(self, setup):
-        session, processor = setup
-        await send(
-            processor,
-            {
-                "type": "generate_scene",
-                "requestId": "r1",
-                "functionalScenarioContent": "f",
-                "colregsConstraintsContent": "c",
-                "vesselTypesContent": "v",
-                "obstacleTypesContent": "o",
-                "timeout": 30,
-            },
-        )
-        ((name, kwargs),) = session.calls
-        assert name == "generate_scene"
-        assert kwargs == {
-            "request_id": "r1",
-            "functional_scenario_content": "f",
-            "colregs_constraints_content": "c",
-            "vessel_types_content": "v",
-            "obstacle_types_content": "o",
-            "timeout": 30,
-            "enforce_low_tcpa": False,
-        }
-
-    async def test_generate_scene_passes_enforce_low_tcpa(self, setup):
-        session, processor = setup
-        await send(
-            processor,
-            {
-                "type": "generate_scene",
-                "requestId": "r",
-                "functionalScenarioContent": "",
-                "colregsConstraintsContent": "",
-                "vesselTypesContent": "",
-                "obstacleTypesContent": "",
-                "timeout": 1,
-                "enforceLowTcpa": True,
-            },
-        )
-        assert session.calls[0][1]["enforce_low_tcpa"] is True
-
-    async def test_generate_trajectories_defaults_the_params(self, setup):
-        session, processor = setup
-        await send(processor, {"type": "generate_trajectories", "requestId": "r1", "scenarioContent": "s", "colregsConstraintsContent": "c"})
-        assert session.calls == [("generate_trajectories", {"request_id": "r1", "scenario_content": "s", "colregs_constraints_content": "c", "params": {}})]
-
-    async def test_stop_commands_run_in_the_background(self, setup):
-        session, processor = setup
-        await send(processor, {"type": "stop_scene_generation"})
-        await send(processor, {"type": "stop_trajectory_generation"})
-        assert session.names() == ["stop_scene_generation", "stop_trajectory_generation"]
-
-    async def test_monitor_scene_runs_in_the_background(self, setup):
-        session, processor = setup
-        await send(processor, {"type": "monitor_scene", "requestId": "r1", "scenarioContent": "{}"})
-        assert session.calls == [("monitor_scene", {"request_id": "r1", "scenario_content": "{}"})]
+        assert len(payload["combinations"]) == 64
+        assert "Real vessel" not in payload["simulatorTypes"]
 
     async def test_messages_are_handled_in_order(self, setup):
         session, processor = setup
-        for message_type in ("disconnect_from_waraps", "shut_down_monitor", "disconnect_from_waraps"):
+        for message_type in ("disconnect_from_mqtt_broker", "shut_down_monitor", "disconnect_from_mqtt_broker"):
             await processor.inbound_queue.put({"type": message_type})
         await settle()
-        assert session.names() == ["disconnect_from_waraps", "shut_down_monitor", "disconnect_from_waraps"]
+        assert session.names() == ["disconnect_from_mqtt_broker", "shut_down_monitor", "disconnect_from_mqtt_broker"]
 
     @pytest.mark.parametrize("message_type", known_message_types())
     async def test_every_client_message_type_is_known_to_the_processor(self, setup, message_type):
@@ -268,7 +225,7 @@ class TestErrors:
         await send(
             processor,
             {
-                "type": "connect_to_waraps",
+                "type": "connect_to_mqtt_broker",
                 "user": "u",
                 "password": "p",
                 "agent_broker": "a",
@@ -279,49 +236,32 @@ class TestErrors:
                 "geofence": {"latitude": 0, "longitude": 0, "radius_meters": 1},
             },
         )
-        assert session.errors == ["Failed to connect to WARA-PS broker broker.example:1883. No CONNACK"]
+        assert session.errors == ["Failed to connect to MQTT broker broker.example:1883. No CONNACK"]
 
-    async def test_scene_generation_errors_are_reported(self, setup):
+    @pytest.mark.parametrize("message_type", ["generate_scene", "generate_trajectories", "stop_scene_generation", "stop_trajectory_generation", "monitor_scene"])
+    async def test_generation_messages_are_unknown_since_the_cluster_runs_them(self, setup, message_type):
         session, processor = setup
-        session.fail_with = RuntimeError("parse error")
-        await send(
-            processor,
-            {"type": "generate_scene", "requestId": "r", "functionalScenarioContent": "", "colregsConstraintsContent": "", "vesselTypesContent": "", "obstacleTypesContent": "", "timeout": 1},
-        )
-        assert session.errors == ["Failed to generate scene: parse error"]
-
-    async def test_trajectory_generation_errors_are_reported(self, setup):
-        session, processor = setup
-        session.fail_with = RuntimeError("no scenario")
-        await send(processor, {"type": "generate_trajectories", "requestId": "r", "scenarioContent": "", "colregsConstraintsContent": ""})
-        assert session.errors == ["Failed to generate trajectories: no scenario"]
+        await send(processor, {"type": message_type})
+        assert session.errors == [f"Unknown message type: {message_type}"]
 
     async def test_background_command_failures_are_reported(self, setup):
         session, processor = setup
         session.fail_with = RuntimeError("down")
-        await send(processor, {"type": "stop_scene_generation"})
-        await send(processor, {"type": "stop_trajectory_generation"})
         await send(processor, {"type": "reset_simulation"})
-        await send(processor, {"type": "monitor_scene", "requestId": "r", "scenarioContent": "{}"})
-        assert session.errors == [
-            "Failed to stop scene generation: down",
-            "Failed to stop trajectory generation: down",
-            "Failed to reset simulation: down",
-            "Failed to monitor scene: down",
-        ]
+        assert session.errors == ["Failed to reset simulation: down"]
 
     async def test_a_message_without_its_fields_does_not_stop_the_worker(self, setup):
         session, processor = setup
         await send(processor, {"type": "load_scenario_file"})
         assert session.errors and session.errors[0].startswith("Unhandled message processing error")
-        await send(processor, {"type": "disconnect_from_waraps"})
-        assert session.names() == ["disconnect_from_waraps"]
+        await send(processor, {"type": "disconnect_from_mqtt_broker"})
+        assert session.names() == ["disconnect_from_mqtt_broker"]
 
     async def test_cancel_stops_the_worker(self, setup):
         session, processor = setup
         processor.cancel()
         await settle()
         assert processor.worker_task.cancelled()
-        await processor.inbound_queue.put({"type": "disconnect_from_waraps"})
+        await processor.inbound_queue.put({"type": "disconnect_from_mqtt_broker"})
         await settle()
         assert session.calls == []

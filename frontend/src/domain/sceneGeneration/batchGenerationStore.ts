@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import type { EvaluationData, GeneratedSceneData, SimulationFrame } from "../simulation/types";
 import { hasExceededEvaluationTimeout, evaluationTimeBaseline } from "./evaluationTime";
-import { createEvaluationTimeWatcher } from "./evaluationTimeWait";
 
 export interface BatchRunResult {
   presetPath: string;
@@ -39,6 +38,8 @@ interface BatchGenerationState {
   clearBatchRequestIds: () => void;
   isBatchRequest: (requestId: string) => boolean;
   handleBatchGeneratedScene: (requestId: string, scene: GeneratedSceneData) => void;
+  /** The status of one scene's cluster job; a scene that already ended keeps its status. */
+  setBatchRequestStatus: (requestId: string, status: BatchRunResult["status"], message?: string) => void;
   markAllBatchStopped: () => void;
 }
 
@@ -114,6 +115,12 @@ export const useBatchGenerationStore = create<BatchGenerationState>((set, get) =
         return updated;
       }),
     })),
+  setBatchRequestStatus: (requestId, status, message) =>
+    set((state) => ({
+      results: state.results.map((r) =>
+        r.requestId === requestId && !TERMINAL_STATUSES.includes(r.status) ? { ...r, status, message } : r
+      ),
+    })),
   markAllBatchStopped: () =>
     set((state) => ({
       running: false,
@@ -124,63 +131,3 @@ export const useBatchGenerationStore = create<BatchGenerationState>((set, get) =
       ),
     })),
 }));
-
-export function waitForBatchRequestResult(
-  requestId: string,
-  timeoutSeconds: number,
-  isAborted: () => boolean
-): Promise<void> {
-  return new Promise((resolve) => {
-    const getResult = () =>
-      useBatchGenerationStore.getState().results.find((r) => r.requestId === requestId);
-
-    const watcher = createEvaluationTimeWatcher({
-      timeoutSeconds,
-      isAborted,
-      getEvaluationData: () => getResult()?.evaluationData,
-      getBaselineSeconds: () => getResult()?.evaluationTimeBaseline ?? 0,
-      isTerminal: () => {
-        const result = getResult();
-        return !!result && TERMINAL_STATUSES.includes(result.status);
-      },
-      onTimedOut: () => {
-        useBatchGenerationStore.getState().setResults((prev) =>
-          prev.map((r) =>
-            r.requestId === requestId && (r.status === "pending" || r.status === "running")
-              ? { ...r, status: "timeout", message: undefined }
-              : r
-          )
-        );
-      },
-      onComplete: () => {
-        clearTimeout(hardTimer);
-        unsubscribe();
-        resolve();
-      },
-    });
-
-    const unsubscribe = useBatchGenerationStore.subscribe(() => {
-      watcher.evaluate();
-    });
-
-    // Wall-clock safety net: the evaluation-time watcher only trips while the
-    // backend keeps streaming progress for this request. If it never does, force
-    // a timeout so runBatchGeneration's Promise.all cannot hang indefinitely.
-    // Assigned before the final evaluate() below, so onComplete can always clear it.
-    const hardTimer = setTimeout(
-      () => {
-        useBatchGenerationStore.getState().setResults((prev) =>
-          prev.map((r) =>
-            r.requestId === requestId && (r.status === "pending" || r.status === "running")
-              ? { ...r, status: "timeout", message: undefined }
-              : r
-          )
-        );
-        watcher.evaluate();
-      },
-      Math.max(1, timeoutSeconds + 30) * 1000
-    );
-
-    watcher.evaluate();
-  });
-}

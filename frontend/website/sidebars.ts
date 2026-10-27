@@ -13,7 +13,7 @@ const sidebars: SidebarsConfig = {
         'domain-configuration',
         'scene-generation',
         'simulation',
-        'waraps',
+        'connections',
       ],
     },
     {

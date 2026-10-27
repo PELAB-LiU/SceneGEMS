@@ -12,9 +12,10 @@ import pytest
 
 from logical_level.constraint_satisfaction.evaluation_data import EvaluationData
 from scenegems_tool.gateway.protocol import SimulationStatus
-from scenegems_tool.gateway.socket_session import NO_TRAJECTORIES_MESSAGE, SocketSession
+from scenegems_tool.gateway.socket_session import NO_TRAJECTORIES_MESSAGE, SocketSession, master_broker, master_broker_label
 from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, SimulationLayerId
-from scenegems_tool.vessel_stack.contracts.vessel_stack_config import AgentContext
+from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.vessel_stack_config import AgentContext, VesselStackConfig
 from scenegems_tool.workbench.empty_subsystem_integration_session import EmptySubsystemIntegrationSession
 from tests.scenegems_tool.gateway.conftest import settle
 from tests.scenegems_tool.vessel_stack.scenarios import encounter_scene, encounter_trajectories, stack_instance
@@ -66,7 +67,7 @@ class TestSending:
         assert {"type": "error", "message": "something failed"} in websocket.sent
 
     async def test_status_and_chunk_messages_are_not_logged(self, session, capsys):
-        for message_type in ("simulation_status", "monitor_status", "waraps_status", "preview_trajectory_chunk", "simulation_trajectory_chunk"):
+        for message_type in ("simulation_status", "monitor_status", "mqtt_broker_status", "preview_trajectory_chunk", "simulation_trajectory_chunk"):
             session.log_payload("outgoing", {"type": message_type})
         assert capsys.readouterr().out == ""
 
@@ -77,15 +78,15 @@ class TestSending:
 
 class TestOfflineBehaviour:
     async def test_disconnect_reports_disconnected_and_keeps_an_empty_session(self, session, websocket):
-        session.disconnect_from_waraps()
+        session.disconnect_from_mqtt_broker()
         await settle()
-        assert {"type": "waraps_status", "status": "disconnected"} in websocket.sent
+        assert {"type": "mqtt_broker_status", "status": "disconnected", "masterBroker": None} in websocket.sent
         assert isinstance(session.subsystem_integration_session, EmptySubsystemIntegrationSession)
 
     async def test_initializing_the_monitor_while_offline_is_an_error(self, session, websocket):
         session.set_monitor_session("monitor", "topic", "scope", "constraints")
         await settle()
-        assert {"type": "error", "message": "WARAPS is not connected"} in websocket.sent
+        assert {"type": "error", "message": "No MQTT broker is connected: connect one on the Connections page"} in websocket.sent
 
     async def test_shutting_down_the_monitor_reports_it(self, session, websocket):
         session.shut_down_monitor()
@@ -98,9 +99,27 @@ class TestOfflineBehaviour:
         await settle()
         assert [payload["message"] for payload in websocket.sent if payload["type"] == "error"] == ["No scenario loaded", "No scenario loaded"]
 
-    async def test_monitoring_a_scene_rejects_malformed_json(self, session):
-        with pytest.raises(ValueError):
-            await session.monitor_scene("r1", "{not json")
+    async def test_the_master_broker_is_refused_when_the_server_has_none(self, session, monkeypatch):
+        monkeypatch.delenv("SCENEGEMS_BROKER_HOST", raising=False)
+        with pytest.raises(ValueError, match="no master broker"):
+            await session.connect_to_mqtt_broker("", "", "", "", 1883, False, False, Geofence(57.7, 11.9, 1000.0), use_master_broker=True)
+        assert isinstance(session.subsystem_integration_session, EmptySubsystemIntegrationSession)
+
+    async def test_the_status_names_the_master_broker(self, session, monkeypatch):
+        monkeypatch.setenv("SCENEGEMS_BROKER_HOST", "cluster-broker")
+        monkeypatch.setenv("SCENEGEMS_BROKER_PORT", "1884")
+        assert session.mqtt_broker_status_message() == {"type": "mqtt_broker_status", "status": "disconnected", "masterBroker": "cluster-broker:1884"}
+
+
+class TestMasterBroker:
+    def test_the_master_broker_comes_from_the_master_settings(self):
+        assert master_broker({"SCENEGEMS_BROKER_HOST": "cluster-broker"}) == ("cluster-broker", 1883)
+        assert master_broker({"SCENEGEMS_BROKER_HOST": " cluster-broker ", "SCENEGEMS_BROKER_PORT": "1999"}) == ("cluster-broker", 1999)
+
+    def test_without_a_host_there_is_no_master_broker(self):
+        assert master_broker({}) is None
+        assert master_broker({"SCENEGEMS_BROKER_HOST": "  ", "SCENEGEMS_BROKER_PORT": "1883"}) is None
+        assert master_broker_label({}) is None
 
 
 class TestSimulationConfigValidation:
@@ -133,6 +152,7 @@ class TestSimulationConfigValidation:
     async def test_with_a_real_vessel_usv_navigation_is_refused_since_arduagent_cannot_drive_it(self, session, loaded, websocket):
         config = stack_instance(SimulationLayerId.ARDUPILOT_SIM, [0, 1], asv_software=AsvSoftwareId.USV_NAVIGATION)
         config.vessels["1"].context = AgentContext.REAL
+        config.vessels["1"].stack = VesselStackConfig(AsvSoftwareId.ON_BOARD, ControlLayerId.REAL_VESSEL, SimulationLayerId.REAL_VESSEL)
         session.set_simulation_session(config)
         await settle()
         assert loaded.initialized == []
@@ -227,4 +247,4 @@ class TestCancel:
         session.cancel()
         await settle()
         assert session.outbound_task.cancelled()
-        assert session.waraps_connection_task.cancelled()
+        assert session.mqtt_broker_status_task.cancelled()

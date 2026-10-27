@@ -53,6 +53,9 @@ class LayerSpec:
     containers: Tuple[ContainerSpec, ...] = ()
     status: SpecStatus = SpecStatus.AVAILABLE
     planned_phase: Optional[int] = None
+    # The layer brings the vessel's own ASV software, so the vessel can run with ASV software
+    # on_board. Only such a layer may be the target of an adapter from on_board (the registry checks it).
+    on_board_asv_software: bool = False
 
     @property
     def id(self) -> str:
@@ -78,6 +81,9 @@ class AdapterSpec:
     containers: Tuple[ContainerSpec, ...] = ()
     status: SpecStatus = SpecStatus.AVAILABLE
     planned_phase: Optional[int] = None
+    # Part of one integration that covers both layers (SITL's own physics, a real vessel's
+    # autopilot), not a bridge SceneGEMS adds between two separate pieces of software.
+    built_in: bool = False
 
     def note_for(self, capability: str) -> Optional[str]:
         return dict(self.restriction_notes).get(capability)

@@ -8,7 +8,17 @@ export interface MqttConnectionInfo {
   allow_certificates?: boolean;
 }
 
-export const live_mqtt_connection: MqttConnectionInfo = {
+/**
+ * The broker profiles of the Connections page. The master's own broker is the default: the
+ * server knows its address (`mqtt_broker_status.masterBroker`), so the form sends
+ * `use_master_broker` instead of an address. Any other broker is an external one.
+ */
+export type MqttConnectionPresetKey = "master_broker" | "waraps_tls_broker";
+
+export const MASTER_BROKER_PRESET = "master_broker" satisfies MqttConnectionPresetKey;
+
+/** The public broker of broker.waraps.org, over TLS, where real vessels and external agents meet. */
+export const waraps_tls_broker: MqttConnectionInfo = {
   user: "mqtt",
   password: "",
   agent_broker: "broker.waraps.org",
@@ -17,33 +27,13 @@ export const live_mqtt_connection: MqttConnectionInfo = {
   tls_connection: true,
 };
 
-export const local_mqtt_connection: MqttConnectionInfo = {
-  user: "",
-  password: "",
-  agent_broker: "broker",
-  client_broker: "broker",
-  port: 1883,
-  tls_connection: false,
+/** The fields a profile fills in; the master broker has none of its own. */
+export const mqttConnectionLibrary: Record<Exclude<MqttConnectionPresetKey, "master_broker">, MqttConnectionInfo> = {
+  waraps_tls_broker,
 };
 
-/**
- * A broker published on the host rather than run inside the SceneGEMS compose project,
- * such as the `Local_Broker` container of the OTG stack (host port 1882). The backend
- * resolves `localhost` to the Docker host gateway, so this works from the container too.
- */
-export const host_mqtt_connection: MqttConnectionInfo = {
-  user: "",
-  password: "",
-  agent_broker: "localhost",
-  client_broker: "localhost",
-  port: 1882,
-  tls_connection: false,
+export const PRESET_LABELS: Record<MqttConnectionPresetKey | "", string> = {
+  master_broker: "Master broker (default)",
+  waraps_tls_broker: "broker.waraps.org over TLS",
+  "": "Other broker",
 };
-
-export const mqttConnectionLibrary = {
-  live_mqtt_connection,
-  local_mqtt_connection,
-  host_mqtt_connection,
-} as const;
-
-export type MqttConnectionPresetKey = keyof typeof mqttConnectionLibrary;

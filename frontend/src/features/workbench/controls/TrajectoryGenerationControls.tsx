@@ -22,6 +22,8 @@ import {
 import type { TrajectoryGeneratorWire } from "../../../domain/simulation/wireTypes";
 import { Disclosure } from "../../../components/Disclosure";
 import { AnimationPlaybackControls } from "./AnimationPlaybackControls";
+import { TRAJECTORY_GENERATION_JOB } from "../cluster/workbenchJobs";
+import { describeResources } from "../cluster/workbenchResources";
 
 interface TrajectoryGenerationControlsProps {
   streamControls: ReturnType<typeof useSimulationWorkflow>;
@@ -98,8 +100,10 @@ export function TrajectoryGenerationControls({
   const straight = generator === "straight";
   const timespanValid = Number.isFinite(timespan) && timespan > 0;
   const connected = streamStatus === "connected";
+  // Trajectories are planned by a job on the active cluster: without a node that plans, nothing runs.
+  const trajectoryResources = streamControls.clusterResources(TRAJECTORY_GENERATION_JOB);
   const canGenerate =
-    connected && !running && handoffScene?.valid === true && (!straight || timespanValid);
+    trajectoryResources.blocker === null && !running && handoffScene?.valid === true && (!straight || timespanValid);
   const hasResult = status === "done" && resultValid && !!resultScenarioJson;
 
   // Restore the last generated trajectory as the on-canvas preview whenever the page
@@ -200,9 +204,9 @@ export function TrajectoryGenerationControls({
     const file = new File([resultScenarioJson], "planned_trajectory.json", {
       type: "application/json",
     });
-    void streamControls.loadScenarioFromFile(file);
+    void streamControls.loadScenarioFromFile(file, { colregsConstraintsContent });
     onNavigateToSimulation();
-  }, [onNavigateToSimulation, resultScenarioJson, streamControls]);
+  }, [colregsConstraintsContent, onNavigateToSimulation, resultScenarioJson, streamControls]);
 
   const handleExportTrajectory = useCallback(() => {
     if (!resultScenarioJson) {
@@ -243,11 +247,16 @@ export function TrajectoryGenerationControls({
           <span className="meta" role="status">
             {statusLabel}
           </span>
-          <span className="meta">
-            Backend: <span className={`status-text ${streamStatus}`}>{streamStatus}</span>
+          <span className="meta" title="Trajectory generation runs as jobs on the active cluster">
+            Cluster: {describeResources(trajectoryResources)}
           </span>
         </div>
       </div>
+      {trajectoryResources.blocker !== null && (
+        <p className="meta resource-blocker" role="status">
+          {trajectoryResources.blocker}
+        </p>
+      )}
 
       <div className="scene-gen-tabs" role="tablist" aria-label="Trajectory generation">
         {TABS.map(({ id, label }) => (

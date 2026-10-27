@@ -11,6 +11,11 @@ from scenegems_tool.workbench.scenario_session import ScenarioSession
 
 
 class SubsystemIntegrationSession(ABC):
+    """The workbench's interactive simulation over one MQTT broker: the simulation session and its live monitor.
+
+    Scene and trajectory generation are not here: the workbench runs them as jobs on the cluster.
+    """
+
     def __init__(self, send_payload: Callable[[ServerMessage], None]):
         self.send_payload = send_payload
         self.monitor_session: MonitorSession = EmptyMonitorSession(send_payload)
@@ -50,21 +55,3 @@ class SubsystemIntegrationSession(ABC):
         self.monitor_session.destroy()
         self.monitor_session = EmptyMonitorSession(send_payload=self.send_payload)
         self.simulation_session.set_monitor_session(self.monitor_session)
-
-    @abstractmethod
-    def generate_scene(
-        self, request_id: str, functional_scenario_content: str, colregs_constraints_content: str, vessel_types_content: str, obstacle_types_content: str, timeout: int, enforce_low_tcpa: bool = False
-    ) -> None:
-        pass
-
-    @abstractmethod
-    async def stop_scene_generation(self) -> None:
-        pass
-
-    @abstractmethod
-    def generate_trajectories(self, request_id: str, scenario_content: str, colregs_constraints_content: str, params: dict) -> None:
-        pass
-
-    @abstractmethod
-    async def stop_trajectory_generation(self) -> None:
-        pass

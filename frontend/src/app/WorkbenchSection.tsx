@@ -7,12 +7,13 @@ import { usePlaybackStore } from "../domain/playback/playbackStore";
 import { useUiStore, type WorkbenchView } from "./uiStore";
 import { usePersistedState } from "./usePersistedState";
 import {
+  buildConnectMessage,
   connectionFormIsValid,
   useConnectionStore,
 } from "../features/workbench/connection/connectionStore";
 import { useSimulationWorkflow } from "../domain/simulation/useSimulationWorkflow";
 import type { ClientToServerMessage } from "../domain/simulation/wireTypes";
-import { PlaybackControls } from "../features/workbench/controls/PlaybackControls";
+import { SimulationRunPanel } from "../features/workbench/controls/SimulationRunPanel";
 import { DomainConfigurationPanel } from "../features/workbench/controls/DomainConfigurationPanel";
 import {
   DEFAULT_COLREGS_PRESET,
@@ -25,10 +26,12 @@ import { runBatchGeneration } from "../features/workbench/controls/runBatchGener
 import { TrajectoryGenerationControls } from "../features/workbench/controls/TrajectoryGenerationControls";
 import { TrajectoryMonitorSidebar } from "../features/workbench/controls/TrajectoryMonitorSidebar";
 import { useTrajectoryGenerationStore } from "../domain/trajectoryGeneration/trajectoryGenerationStore";
-import { WarapsConnectionPanel } from "../features/workbench/connection/WarapsConnectionPanel";
+import { MqttBrokerPanel } from "../features/workbench/connection/MqttBrokerPanel";
+import { buildInitializeMonitorMessage, canInitializeMonitor } from "../features/workbench/controls/monitorConfig";
+import { SCENE_GENERATION_JOB } from "../features/workbench/cluster/workbenchJobs";
+import { describeResources } from "../features/workbench/cluster/workbenchResources";
 import { SceneCanvas } from "../features/workbench/scene/SceneCanvas";
 import { WorkbenchEncounterStrip } from "../features/workbench/monitor/WorkbenchEncounterPanels";
-import { waitForSceneGeneration } from "../domain/playback/waitForSceneGeneration";
 import { useBatchGenerationStore } from "../domain/sceneGeneration/batchGenerationStore";
 import {
   formatScenarioJsonForExport,
@@ -91,7 +94,6 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
   }, [latestGeneratedScene]);
   const clearVisualizedScenario = usePlaybackStore((s) => s.clearVisualizedScenario);
   const setVisualizedScenario = usePlaybackStore((s) => s.setVisualizedScenario);
-  const beginSceneMonitor = usePlaybackStore((s) => s.beginSceneMonitor);
   const requestAutoFit = usePlaybackStore((s) => s.requestAutoFit);
   const [scenarioSourceName, setScenarioSourceName] = usePersistedState<string | null>(
     "scenario-source-name",
@@ -194,17 +196,17 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
     previousViewRef.current = activeView;
   }, [activeView, requestAutoFit]);
 
-  // Auto-connect to the configured (default) WARA-PS profile once the backend
-  // socket connects, so a reconnect/refresh re-establishes the session hands-free.
+  // Auto-connect to the configured MQTT broker (the master's by default) once the server
+  // socket connects, so a reconnect or refresh re-establishes the session hands-free.
   useEffect(() => {
     const attemptAutoConnect = () => {
       const conn = useConnectionStore.getState();
-      if (usePlaybackStore.getState().warapsStatus === "connected") {
+      if (usePlaybackStore.getState().mqttBrokerStatus === "connected") {
         return;
       }
       // Honour an explicit user Disconnect: do not silently reconnect on a
       // transient backend-socket blip.
-      if (conn.userDisconnectedWaraps) {
+      if (conn.userDisconnected) {
         return;
       }
       if (!connectionFormIsValid(conn)) {
@@ -213,17 +215,7 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
       // Mark the attempt so a failure lands in the connection panel with its hints,
       // exactly as it would for a Connect click.
       conn.beginConnectionAttempt();
-      streamControlsRef.current.sendMessage({
-        type: "connect_to_waraps",
-        user: conn.user.trim(),
-        password: conn.password,
-        agent_broker: conn.agentBroker.trim(),
-        client_broker: conn.clientBroker.trim(),
-        port: conn.port,
-        tls_connection: conn.tlsConnection,
-        allow_certificates: conn.allowCertificates,
-        geofence: conn.geofence,
-      });
+      streamControlsRef.current.sendMessage(buildConnectMessage(conn));
     };
     const unsubscribe = usePlaybackStore.subscribe((state, prev) => {
       if (state.streamStatus === "connected" && prev.streamStatus !== "connected") {
@@ -233,6 +225,23 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
         }
       } else if (state.streamStatus !== "connected" && prev.streamStatus === "connected") {
         autoConnectAttemptedRef.current = false;
+      }
+    });
+    return unsubscribe;
+  }, []);
+
+  // The live monitor of the interactive simulation starts with the broker connection: it is
+  // part of the session, not something to set up by hand.
+  const colregsTextRef = useRef(colregsConstraintsText);
+  useEffect(() => {
+    colregsTextRef.current = colregsConstraintsText;
+  }, [colregsConstraintsText]);
+  useEffect(() => {
+    const unsubscribe = usePlaybackStore.subscribe((state, prev) => {
+      if (state.mqttBrokerStatus === "connected" && prev.mqttBrokerStatus !== "connected") {
+        if (canInitializeMonitor(state.mqttBrokerStatus, state.monitorStatus, colregsTextRef.current)) {
+          streamControlsRef.current.sendMessage(buildInitializeMonitorMessage(colregsTextRef.current));
+        }
       }
     });
     return unsubscribe;
@@ -346,6 +355,7 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
     obstacleTypesText.trim().length > 0;
 
   const globalErrorMessage = resolveGlobalErrorMessage(sceneGenerationError, errorMessage);
+  const sceneGenerationResources = streamControls.clusterResources(SCENE_GENERATION_JOB);
 
   const showRightPane =
     activeView === "sceneGeneration" ||
@@ -383,31 +393,21 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
       clearVisualizedScenario();
       setLoadedScenarioFileContent(null);
       const requestId = crypto.randomUUID();
-      streamControls.generateScene(
-        requestId,
-        specText,
-        colregsConstraintsText,
-        vesselTypesText,
-        obstacleTypesText,
-        sceneGenerationTimeoutSeconds,
-        enforceLowTcpa
-      );
-      const outcome = await waitForSceneGeneration(requestId, sceneGenerationTimeoutSeconds);
+      const outcome = await streamControls.generateScene(requestId, {
+        functionalScenarioContent: specText,
+        colregsConstraintsContent: colregsConstraintsText,
+        vesselTypesContent: vesselTypesText,
+        obstacleTypesContent: obstacleTypesText,
+        timeoutSeconds: sceneGenerationTimeoutSeconds,
+        enforceLowTcpa,
+      });
       if (!outcome.ok) {
-        return {
-          ok: false,
-          message: outcome.message ?? "No valid scene received.",
-          superseded: outcome.superseded,
-        };
+        return { ok: false, message: outcome.message, superseded: outcome.stopped };
       }
-      if (!outcome.scene?.evaluationData) {
-        return { ok: false, message: "No valid scene received." };
+      if (!outcome.valid) {
+        return { ok: false, message: "The generation found no valid scene within its timeout. The best attempt is shown." };
       }
-      return {
-        ok: true,
-        evaluationData: outcome.scene.evaluationData,
-        scene: outcome.scene.scene,
-      };
+      return { ok: true, evaluationData: outcome.evaluationData, scene: outcome.scene };
     },
     [
       clearVisualizedScenario,
@@ -422,17 +422,16 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
   );
 
   const enqueueSceneGeneration = useCallback(
-    (requestId: string, specText: string) => {
+    async (requestId: string, specText: string) => {
       if (!domainReadyForGeneration) return;
-      streamControls.enqueueSceneGeneration(
-        requestId,
-        specText,
-        colregsConstraintsText,
-        vesselTypesText,
-        obstacleTypesText,
-        sceneGenerationTimeoutSeconds,
-        enforceLowTcpa
-      );
+      await streamControls.enqueueSceneGeneration(requestId, {
+        functionalScenarioContent: specText,
+        colregsConstraintsContent: colregsConstraintsText,
+        vesselTypesContent: vesselTypesText,
+        obstacleTypesContent: obstacleTypesText,
+        timeoutSeconds: sceneGenerationTimeoutSeconds,
+        enforceLowTcpa,
+      });
     },
     [
       colregsConstraintsText,
@@ -455,12 +454,12 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
       const content =
         fileContent ?? formatScenarioJsonForExport(evaluationData, scene);
       const evaluationFile = new File([content], fileName, { type: "application/json" });
-      await streamControls.loadScenarioFromFile(evaluationFile);
+      await streamControls.loadScenarioFromFile(evaluationFile, { colregsConstraintsContent: colregsConstraintsText });
       setControlPanelMode("animation");
       setActiveView("simulation");
       requestAutoFit();
     },
-    [streamControls, requestAutoFit, setActiveView, setControlPanelMode]
+    [colregsConstraintsText, streamControls, requestAutoFit, setActiveView, setControlPanelMode]
   );
 
   const handleScenarioFileSelected = useCallback(
@@ -472,17 +471,8 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
         setLoadedScenarioFileContent(hasFullTrajectories ? text : null);
         setScenarioSourceName(file.name);
         setSceneGenerationError(null);
-        // The backend runs the scene through the active monitor and answers with a
-        // `generated_scene` carrying this id, merged in by useSimulationWorkflow.
-        const monitorRequestId = crypto.randomUUID();
-        beginSceneMonitor(monitorRequestId);
-        streamControls.sendMessage({
-          type: "monitor_scene",
-          requestId: monitorRequestId,
-          scenarioContent: hasFullTrajectories
-            ? text
-            : formatScenarioJsonForExport(evaluationData, scene),
-        });
+        // The cluster's post-hoc monitor judges the first scene; its verdicts merge into the shown scene.
+        void streamControls.monitorScene(crypto.randomUUID(), JSON.parse(text) as Record<string, unknown>, colregsConstraintsText);
       } catch (error) {
         setScenarioSourceName(null);
         setLoadedScenarioFileContent(null);
@@ -493,8 +483,8 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
       }
     },
     [
-      beginSceneMonitor,
       clearVisualizedScenario,
+      colregsConstraintsText,
       setVisualizedScenario,
       setScenarioSourceName,
       streamControls,
@@ -540,12 +530,9 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
         hidden={!active}
       >
         <section className="center-pane">
-          {activeView === "waraps" ? (
-            <div className="load-scenario-layout waraps-view">
-              <WarapsConnectionPanel
-                sendMessage={(message: ClientToServerMessage) => streamControls.sendMessage(message)}
-                colregsConstraintsContent={colregsConstraintsText}
-              />
+          {activeView === "connections" ? (
+            <div className="load-scenario-layout mqtt-broker-view">
+              <MqttBrokerPanel sendMessage={(message: ClientToServerMessage) => streamControls.sendMessage(message)} />
             </div>
           ) : activeView === "domainConfig" ? (
             <div className="load-scenario-layout">
@@ -690,20 +677,27 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
                             : "generated"
                           : "none yet"}
                       </span>
-                      <span className="meta">
-                        Backend: <span className={`status-text ${streamStatus}`}>{streamStatus}</span>
+                      <span className="meta" title="Scene generation runs as jobs on the active cluster">
+                        Cluster: {describeResources(sceneGenerationResources)}
                       </span>
                     </div>
                   </div>
+                  {sceneGenerationResources.blocker !== null && (
+                    <p className="meta resource-blocker" role="status">
+                      {sceneGenerationResources.blocker}
+                    </p>
+                  )}
                   <div className="toolbar-row scene-generation-toolbar">
                     {(() => {
                       const isBatch = sceneGenerationTab === "batch";
                       const sceneCount = isBatch ? selectedBatchPaths.length : 1;
-                      const disabled = isBatch
-                        ? !domainReadyForGeneration ||
-                          isSceneGenerationBusy ||
-                          selectedBatchPaths.length === 0
-                        : !canGenerateScene || isSceneGenerationBusy;
+                      const disabled =
+                        sceneGenerationResources.blocker !== null ||
+                        (isBatch
+                          ? !domainReadyForGeneration ||
+                            isSceneGenerationBusy ||
+                            selectedBatchPaths.length === 0
+                          : !canGenerateScene || isSceneGenerationBusy);
                       return (
                         <button
                           className="primary-btn accent"
@@ -734,7 +728,7 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
                             })();
                           }}
                         >
-                          Generate Initial Scenes ({sceneCount})
+                          {sceneCount === 1 ? "Generate scene" : `Generate ${sceneCount} scenes`}
                         </button>
                       );
                     })()}
@@ -946,7 +940,7 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
               />
               <footer className="bottom-toolbar bottom-toolbar-compact bottom-toolbar-single">
                 <div className="bottom-slot bottom-slot-controls">
-                  <PlaybackControls streamControls={streamControls} />
+                  <SimulationRunPanel streamControls={streamControls} colregsConstraintsContent={colregsConstraintsText} />
                 </div>
               </footer>
             </div>

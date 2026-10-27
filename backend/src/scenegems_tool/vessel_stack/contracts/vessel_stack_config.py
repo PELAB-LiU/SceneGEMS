@@ -69,12 +69,12 @@ class EnvironmentConfig:
 
 class AgentContext(str, Enum):
     SIMULATION = "simulation"  # part of the simulation instance
-    REAL = "real"  # a physical vessel joined over WARA-PS MQTT; no stack is generated for it
+    REAL = "real"  # a physical vessel joined over MQTT through its ArduAgent; no stack is generated for it
 
 
 @dataclass
 class AgentConnection:
-    """How the workbench reaches a vessel's agent over WARA-PS MQTT."""
+    """How the workbench reaches a vessel's agent over the MQTT broker."""
 
     agent_name: str
     topic: str
@@ -84,8 +84,8 @@ class AgentConnection:
 @dataclass
 class VesselConfig:
     agent_id: str
-    # For a real vessel only asv_software applies (how its agent is commanded); its control
-    # and simulation layers are the physical vessel and are not resolved.
+    # A real vessel's stack is (ASV software, real_vessel, real_vessel): its own autopilot and hull,
+    # commanded through its ArduAgent by replay or Mission Planner, or left to its on_board software.
     stack: VesselStackConfig
     context: AgentContext = AgentContext.SIMULATION
     connection: Optional[AgentConnection] = None

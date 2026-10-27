@@ -203,7 +203,7 @@ def test_the_reasons_tell_why_a_resolver_stack_is_not_a_campaign_stack(stacks):
     impossible = entries[("replay", "ardupilot", "kinematic")]
     assert impossible["status"] == "unavailable" and impossible["design_status"] == "no" and "integrates control internally" in impossible["reasons"][0]
     interactive = entries[("mission_planner", "ardupilot", "gazebo")]
-    assert interactive["available_in_resolver"] is True and "interactive only" in interactive["reasons"][0] and interactive["design_status"] == "yes, interactive only"
+    assert interactive["available_in_resolver"] is True and "workbench only" in interactive["reasons"][0] and interactive["design_status"] == "yes, interactive only"
 
 
 def test_the_stacks_view_is_plain_json(stacks):

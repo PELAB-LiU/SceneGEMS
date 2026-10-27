@@ -59,9 +59,9 @@ async def test_initial_simulation_status_is_sent_on_connection():
     assert socket.sent[0] == {"type": "simulation_status", "status": "not initialized"}
 
 
-async def test_waraps_status_is_disconnected_on_connection():
+async def test_mqtt_broker_status_is_disconnected_on_connection():
     socket = await converse()
-    assert {"type": "waraps_status", "status": "disconnected"} in socket.sent
+    assert any(message["type"] == "mqtt_broker_status" and message["status"] == "disconnected" for message in socket.sent)
 
 
 async def test_the_session_is_removed_when_the_client_disconnects():

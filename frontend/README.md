@@ -2,7 +2,7 @@
 
 A Scenario Generation and Execution Framework for Simulation-Based Assurance of Maritime Autonomous Surface Vehicles.
 
-Browser-based console for exploring autonomous surface vehicle (ASV) maritime assurance scenarios: functional scenario specs (`.problem`), domain YAML configuration, 3D trajectory playback, COLREGS monitoring, and WARA-PS connection.
+Browser-based console for exploring autonomous surface vehicle (ASV) maritime assurance scenarios: functional scenario specs (`.problem`), domain YAML configuration, trajectory playback, COLREGS monitoring, and jobs on a SceneGEMS cluster.
 
 ## Prerequisites
 

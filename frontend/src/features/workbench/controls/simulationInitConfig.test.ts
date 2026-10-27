@@ -9,6 +9,7 @@ import {
   groundControlEndpointLabels,
   mergePersistedVesselSettings,
   normalizeDraftStack,
+  realVesselSoftwareChoice,
   toPersistedVesselDrafts,
   toTopicSegment,
   type PersistedVesselConnectionDraft,
@@ -81,7 +82,7 @@ describe("simulationInitConfig", () => {
     });
   });
 
-  it("omits port and control layer for real context in backend map", () => {
+  it("sends a real vessel on its own autopilot, without a port", () => {
     const draft: VesselInitConnectionDraft = {
       vesselId: "os",
       context: "real",
@@ -96,6 +97,7 @@ describe("simulationInitConfig", () => {
       os: {
         context: "real",
         asvSoftware: "mission_planner",
+        controlLayer: "real_vessel",
         controlMode: "external",
         agentName: "OS_0_REAL",
         topic: "waraps/unit/surface/real/OS_0_REAL",
@@ -255,5 +257,34 @@ describe("groundControlEndpointLabels", () => {
       "vessel 10: TCP localhost:49155",
     ]);
     expect(groundControlEndpointLabels({})).toEqual([]);
+  });
+});
+
+describe("real vessel choices", () => {
+  const REAL_OPTIONS: StackOptionsPayload = {
+    ...OPTIONS,
+    combinations: [
+      ...OPTIONS.combinations,
+      option("Real vessel", "replay", "real_vessel"),
+      option("Real vessel", "mission_planner", "real_vessel"),
+      option("Real vessel", "on_board", "real_vessel"),
+      option("Real vessel", "usv_navigation", "real_vessel", "ArduAgent has no command for USV Navigation"),
+    ],
+  };
+
+  it("offers what ArduAgent can steer and the vessel's own software", () => {
+    expect(realVesselSoftwareChoice(REAL_OPTIONS, "on_board")).toEqual({ available: true, reason: "" });
+    expect(realVesselSoftwareChoice(REAL_OPTIONS, "usv_navigation")).toEqual({ available: false, reason: "ArduAgent has no command for USV Navigation" });
+    expect(realVesselSoftwareChoice(OPTIONS, "replay")).toEqual({ available: false, reason: "The server does not offer real vessels." });
+    expect(realVesselSoftwareChoice(null, "on_board").available).toBe(true);
+  });
+
+  it("gives a real vessel software that can steer it, and a simulated one software it runs", () => {
+    const [draft] = buildInitialVesselConnectionDrafts([{ id: "0", isOwnShip: true }]);
+    const real = { ...draft!, context: "real" as const, asvSoftware: "usv_navigation" as const };
+    expect(normalizeDraftStack(real, "Gazebo", REAL_OPTIONS).asvSoftware).toBe("replay");
+    const onBoard = { ...real, asvSoftware: "on_board" as const };
+    expect(normalizeDraftStack(onBoard, "Gazebo", REAL_OPTIONS)).toBe(onBoard);
+    expect(normalizeDraftStack({ ...onBoard, context: "simulation" }, "Kinematic", REAL_OPTIONS)).toMatchObject({ asvSoftware: "replay", controlLayer: "none" });
   });
 });

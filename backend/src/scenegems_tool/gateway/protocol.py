@@ -24,33 +24,10 @@ class LoadScenarioFileMessage(TypedDict):
     fileContent: str
 
 
-class GenerateSceneMessage(TypedDict):
-    type: Literal["generate_scene"]
-    requestId: str
-    functionalScenarioContent: str
-    colregsConstraintsContent: str
-    vesselTypesContent: str
-    obstacleTypesContent: str
-    timeout: int
-    enforceLowTcpa: NotRequired[bool]
-
-
-class MonitorSceneMessage(TypedDict):
-    """Run a scene loaded on the frontend through the active monitor.
-
-    Answered with a `generated_scene` message carrying the same `requestId`.
-    """
-
-    type: Literal["monitor_scene"]
-    requestId: str
-    # Scenario JSON: evaluation-data shape with `best_scene`, or a TrajectoryData payload.
-    scenarioContent: str
-
-
 class GeofencePayload(TypedDict):
     """Circular reference geofence: WGS84 center and radius in meters.
 
-    Matches the frontend `wireTypes.ts` `connect_to_waraps.geofence` shape and the
+    Matches the frontend `wireTypes.ts` `connect_to_mqtt_broker.geofence` shape and the
     keys read in `socket_message_processor.py`.
     """
 
@@ -59,8 +36,14 @@ class GeofencePayload(TypedDict):
     radius_meters: float
 
 
-class ConnectToWARAPSMessage(TypedDict):
-    type: Literal["connect_to_waraps"]
+class ConnectToMqttBrokerMessage(TypedDict):
+    """Connect the workbench's interactive simulation to an MQTT broker.
+
+    With use_master_broker the broker is the master's own cluster broker (mqtt_broker_status
+    names it in masterBroker) and the address, user and TLS fields are ignored.
+    """
+
+    type: Literal["connect_to_mqtt_broker"]
     user: str
     password: str
     agent_broker: str
@@ -69,6 +52,7 @@ class ConnectToWARAPSMessage(TypedDict):
     tls_connection: bool
     allow_certificates: bool
     geofence: GeofencePayload
+    use_master_broker: NotRequired[bool]
 
 
 class SimulationStatusMessage(TypedDict):
@@ -92,24 +76,8 @@ class StackOptionsMessage(TypedDict):
     combinations: List[Dict[str, Any]]
 
 
-class StopSceneGenerationMessage(TypedDict):
-    type: Literal["stop_scene_generation"]
-
-
-class GenerateTrajectoriesMessage(TypedDict):
-    type: Literal["generate_trajectories"]
-    requestId: str
-    scenarioContent: str
-    colregsConstraintsContent: str
-    params: Dict[str, Any]
-
-
-class StopTrajectoryGenerationMessage(TypedDict):
-    type: Literal["stop_trajectory_generation"]
-
-
-class DisconnectFromWARAPSMessage(TypedDict):
-    type: Literal["disconnect_from_waraps"]
+class DisconnectFromMqttBrokerMessage(TypedDict):
+    type: Literal["disconnect_from_mqtt_broker"]
 
 
 class StartSimulationMessage(TypedDict):
@@ -172,19 +140,16 @@ class ShutDownMonitorMessage(TypedDict):
     type: Literal["shut_down_monitor"]
 
 
+# Scene generation, trajectory generation and monitoring of loaded scenes are not here: the
+# workbench submits them as jobs to the cluster's operator API.
 ClientMessage = Union[
     LoadScenarioFileMessage,
-    ConnectToWARAPSMessage,
-    DisconnectFromWARAPSMessage,
+    ConnectToMqttBrokerMessage,
+    DisconnectFromMqttBrokerMessage,
     StartSimulationMessage,
     ResetSimulationMessage,
     InitializeSimulationMessage,
     InitializeMonitorMessage,
-    GenerateSceneMessage,
-    MonitorSceneMessage,
-    StopSceneGenerationMessage,
-    GenerateTrajectoriesMessage,
-    StopTrajectoryGenerationMessage,
     ShutDownMonitorMessage,
     GenerateSimulationModelsMessage,
     QueryStackOptionsMessage,
@@ -246,9 +211,11 @@ class ErrorMessage(TypedDict):
     message: str
 
 
-class WarAPSStatusMessage(TypedDict):
-    type: Literal["waraps_status"]
+class MqttBrokerStatusMessage(TypedDict):
+    type: Literal["mqtt_broker_status"]
     status: str
+    # The master's own broker as this server dials it ("host:port"), None when it has none.
+    masterBroker: Optional[str]
 
 
 class SimulationStatus(Enum):
@@ -274,7 +241,7 @@ ServerMessage = Union[
     PreviewTrajectoryChunkMessage,
     SimulationTrajectoryChunkMessage,
     ErrorMessage,
-    WarAPSStatusMessage,
+    MqttBrokerStatusMessage,
     Dict[str, Any],
     SimulationStatusMessage,
     StackOptionsMessage,
@@ -308,8 +275,8 @@ def make_error_message(message: str) -> ErrorMessage:
     return {"type": "error", "message": message}
 
 
-def make_waraps_status_message(*, status: str) -> WarAPSStatusMessage:
-    return {"type": "waraps_status", "status": status}
+def make_mqtt_broker_status_message(*, status: str, master_broker: Optional[str]) -> MqttBrokerStatusMessage:
+    return {"type": "mqtt_broker_status", "status": status, "masterBroker": master_broker}
 
 
 def make_generated_scene_message(request_id: str, scene: Dict[str, Any], evaluation_data: Dict[str, Any], valid: bool) -> GeneratedSceneMessage:
@@ -369,8 +336,8 @@ def simulation_config_from_body(body: SimulationModelsBody) -> SimulationInstanc
     """Convert an inbound simulation-models body (initialize_simulation /
     generate_simulation_models / simulation_models) into a typed simulation instance.
     simulatorType and each agent's asvSoftware and controlLayer (or controlMode) become one
-    stack triple per vessel; an instance with a real vessel selects the ArduAgent adapters
-    (see gateway.workbench_stack_mapping)."""
+    stack triple per vessel; a real agent's stack is on its own layers (real_vessel), and an
+    instance with a real vessel selects the ArduAgent adapters (see gateway.workbench_stack_mapping)."""
     wave = body["wave"]
     wind_vector = list(body["windVector"])
     if len(wind_vector) != 3:
@@ -379,7 +346,16 @@ def simulation_config_from_body(body: SimulationModelsBody) -> SimulationInstanc
     connections = body["connectionsByAgentId"]
     contexts = {agent_id: _parse_agent_context(connection) for agent_id, connection in connections.items()}
     has_real_vessel = any(context == AgentContext.REAL for context in contexts.values())
-    stacks = {agent_id: workbench_stack(simulator_type, connection.get("asvSoftware"), connection.get("controlLayer"), connection.get("controlMode")) for agent_id, connection in connections.items()}
+    stacks = {
+        agent_id: workbench_stack(
+            simulator_type,
+            connection.get("asvSoftware"),
+            connection.get("controlLayer"),
+            connection.get("controlMode"),
+            real_vessel=contexts[agent_id] == AgentContext.REAL,
+        )
+        for agent_id, connection in connections.items()
+    }
     return SimulationInstanceConfig(
         simulation_layer=simulation_layer_from_simulator_type(simulator_type),
         environment=EnvironmentConfig(

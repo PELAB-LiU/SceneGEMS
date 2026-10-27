@@ -17,6 +17,13 @@ ARDUPILOT_SIM = SimulationLayerId.ARDUPILOT_SIM
 NONE = ControlLayerId.NONE
 ARDUPILOT = ControlLayerId.ARDUPILOT
 CUSTOM = ControlLayerId.CUSTOM
+REAL_VESSEL_STACK = VesselStackConfig(AsvSoftwareId.ON_BOARD, ControlLayerId.REAL_VESSEL, SimulationLayerId.REAL_VESSEL)
+
+
+def with_real_vessel(instance: SimulationInstanceConfig) -> SimulationInstanceConfig:
+    """The instance with a real vessel 9 that its own software steers."""
+    instance.vessels["9"] = VesselConfig(agent_id="9", stack=REAL_VESSEL_STACK, context=AgentContext.REAL)
+    return instance
 
 
 def waves_environment() -> EnvironmentConfig:
@@ -71,22 +78,55 @@ class TestInstanceShape:
         assert not resolution.accepted
         assert "vessel 1 uses simulation layer gazebo, but all vessels of one instance share ardupilot_sim" in resolution.reason
 
-    def test_instance_without_simulated_vessels_has_no_capabilities(self, resolver):
-        stack = VesselStackConfig(AsvSoftwareId.REPLAY, ARDUPILOT, GAZEBO)
-        instance = SimulationInstanceConfig(simulation_layer=GAZEBO, environment=EnvironmentConfig.calm(), vessels={"7": VesselConfig(agent_id="7", stack=stack, context=AgentContext.REAL)})
+    def test_instance_without_vessels_has_no_capabilities(self, resolver):
+        instance = SimulationInstanceConfig(simulation_layer=GAZEBO, environment=EnvironmentConfig.calm(), vessels={})
         resolution = resolver.resolve_instance(instance)
         assert resolution.accepted
         assert resolution.chains == {}
         assert resolution.capabilities is None
         assert resolution.repeatability_tier is None
 
-    def test_real_vessels_are_not_resolved(self, resolver):
+    def test_real_vessels_are_resolved_on_their_own_layers(self, resolver):
+        instance = with_real_vessel(stack_instance(GAZEBO, [0], adapter_ids=["replay_arduagent_follower"]))
+        resolution = resolver.resolve_instance(instance)
+        assert resolution.accepted
+        assert set(resolution.chains) == {"0", "9"}
+        assert resolution.chains["9"].asv_adapter.id == "on_board_arduagent_real_vessel"
+
+    def test_a_real_vessel_makes_the_instance_workbench_only_and_real_time(self, resolver):
+        instance = with_real_vessel(stack_instance(GAZEBO, [0], adapter_ids=["replay_arduagent_follower"]))
+        capabilities = resolver.resolve_instance(instance).capabilities
+        assert capabilities.interactive_only
+        assert not capabilities.faster_than_real_time
+        instance.speedup = 2
+        assert "cannot run faster than real time" in resolver.resolve_instance(instance).reason
+
+    def test_a_real_vessel_is_rejected_for_unattended_runs(self, resolver):
+        resolution = resolver.resolve_instance(with_real_vessel(stack_instance(GAZEBO, [0])), attended=False)
+        assert "is interactive only and is rejected for unattended runs: a physical vessel is run from the workbench only" in resolution.reason
+
+    def test_requested_wind_applies_to_the_simulated_vessels_only(self, resolver):
+        instance = with_real_vessel(stack_instance(GAZEBO, [0], environment=wind_environment(), adapter_ids=["replay_arduagent_follower"]))
+        resolution = resolver.resolve_instance(instance)
+        assert "real_vessel" not in resolution.reason
+        assert all("real_vessel" not in warning for warning in resolution.warnings)
+
+    def test_a_real_vessel_on_simulator_layers_is_rejected(self, resolver):
         instance = stack_instance(GAZEBO, [0])
         stack = VesselStackConfig(AsvSoftwareId.MISSION_PLANNER, ControlLayerId.CUSTOM, KINEMATIC)
         instance.vessels["9"] = VesselConfig(agent_id="9", stack=stack, context=AgentContext.REAL)
         resolution = resolver.resolve_instance(instance)
-        assert resolution.accepted
-        assert set(resolution.chains) == {"0"}
+        assert not resolution.accepted
+        assert "vessel 9 is a real vessel, so its control and simulation layers are real_vessel, not (mission_planner, custom, kinematic)" in resolution.reason
+
+    def test_a_simulated_vessel_cannot_use_the_real_vessel_layers(self, resolver):
+        instance = stack_instance(GAZEBO, [0])
+        instance.vessels["1"] = VesselConfig(agent_id="1", stack=REAL_VESSEL_STACK)
+        assert "vessel 1 uses simulation layer real_vessel, but all vessels of one instance share gazebo" in resolver.resolve_instance(instance).reason
+
+    def test_an_instance_does_not_run_on_the_real_vessel_layer(self, resolver):
+        instance = SimulationInstanceConfig(simulation_layer=SimulationLayerId.REAL_VESSEL, environment=EnvironmentConfig.calm())
+        assert "real_vessel is the layer of a real vessel only" in resolver.resolve_instance(instance).reason
 
     def test_require_raises_with_every_reason(self, resolver):
         resolution = resolver.resolve_instance(stack_instance(GAZEBO, [0], control_layer=NONE))

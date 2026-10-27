@@ -23,4 +23,5 @@ SITL_INTERNAL_PHYSICS = AdapterSpec(
     capabilities=Capabilities(repeatability_tier=RepeatabilityTier.BOUNDED, max_speedup=None),
     provides_ports=frozenset({Port.ACTUATOR_CMD}),
     requires_ports=frozenset({Port.VESSEL_STATE}),
+    built_in=True,
 )

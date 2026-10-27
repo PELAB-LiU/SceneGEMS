@@ -29,7 +29,7 @@ def test_every_registered_layer_and_adapter_is_a_node_or_an_edge(document):
 
 def test_the_rows_are_the_resolvers_matrix(document):
     matrix = default_resolver().availability_matrix()
-    assert len(document.combinations) == len(matrix) == 27
+    assert len(document.combinations) == len(matrix) == 64
     expected = {
         (f"asv_software/{chain.stack.asv_software.value}", f"control_layer/{chain.stack.control_layer.value}", f"simulation_layer/{chain.stack.simulation_layer.value}")
         for chain in matrix
@@ -96,3 +96,13 @@ def test_a_new_simulator_and_adapter_show_up_without_a_change_in_the_description
     assert result.nodes[1].status == "planned" and fact(result.nodes[1], "wind").measured and result.nodes[1].evidence == "measured today"
     assert [(edge.id, edge.source, edge.target) for edge in result.edges] == [("custom_to_new_sim", "control_layer/custom", "simulation_layer/new_sim")]
     assert result.combinations == ()  # the matrix runs over the role enums, and this registry has not every layer of a row
+
+
+def test_built_in_adapters_and_on_board_layers_are_marked(document):
+    edges = {edge.id: edge for edge in document.edges}
+    assert "built-in" in edges["real_vessel_autopilot"].tags
+    assert "built-in" in edges["sitl_internal_physics"].tags
+    assert "built-in" not in edges["replay_arduagent_real_vessel"].tags
+    nodes = {node.id: node for node in document.nodes}
+    assert any(fact.key == "on_board_asv_software" for fact in nodes["control_layer/real_vessel"].facts)
+    assert not any(fact.key == "on_board_asv_software" for fact in nodes["control_layer/ardupilot"].facts)

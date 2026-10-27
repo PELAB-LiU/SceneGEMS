@@ -2,22 +2,23 @@ import { formatFunctionalPresetLabel } from "./functionalPresetPaths";
 import { loadFunctionalPresetsManifest } from "./functionalPresets";
 import {
   useBatchGenerationStore,
-  waitForBatchRequestResult,
   type BatchRunResult,
 } from "../../../domain/sceneGeneration/batchGenerationStore";
 
 export interface RunBatchGenerationParams {
   selectedPaths: string[];
   loadPresetText: (path: string) => Promise<string>;
-  enqueueSceneGeneration: (requestId: string, specText: string) => void;
+  /** Runs one scene as a cluster job; resolves once the job ended and its row is updated. */
+  enqueueSceneGeneration: (requestId: string, specText: string) => Promise<void>;
   sceneGenerationTimeoutSeconds: number;
   /** Returns true if generation has been stopped externally (e.g. shared Stop button). */
   isAborted: () => boolean;
 }
 
 /**
- * Queues all selected presets for parallel scene generation with a per-scene timeout.
- * Drives the shared batch-generation store so the batch tab reflects progress.
+ * Submits every selected preset as a scene generation job at once, so the cluster runs as many
+ * as it has free slots and queues the rest. Each row follows its job (queued, running, done);
+ * the per-scene timeout is the generation's own, not the wait in the queue.
  */
 export async function runBatchGeneration({
   selectedPaths,
@@ -67,15 +68,7 @@ export async function runBatchGeneration({
       return;
     }
 
-    for (const job of jobs) {
-      enqueueSceneGeneration(job.requestId, job.specText);
-    }
-
-    await Promise.all(
-      jobs.map((job) =>
-        waitForBatchRequestResult(job.requestId, sceneGenerationTimeoutSeconds, isAborted)
-      )
-    );
+    await Promise.all(jobs.map((job) => enqueueSceneGeneration(job.requestId, job.specText)));
   } catch (error) {
     useBatchGenerationStore.getState().setResults((prev) =>
       prev.map((r) =>

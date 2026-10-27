@@ -9,8 +9,8 @@ describe("resolveGlobalErrorMessage", () => {
   });
 
   it("falls back to playback error when page-local one is missing", () => {
-    expect(resolveGlobalErrorMessage(null, "Failed to connect to WARAPS")).toBe(
-      "Failed to connect to WARAPS"
+    expect(resolveGlobalErrorMessage(null, "Failed to connect to the MQTT broker")).toBe(
+      "Failed to connect to the MQTT broker"
     );
   });
 

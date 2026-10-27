@@ -307,6 +307,8 @@ class ScenarioExecutionWorker:
         if not self.simulation_parser.are_agents_ready:
             raise RuntimeError("Cannot start scenario: agents are not ready to start")
         for client in self.simulation_parser.clients:
+            if client.on_board_control_mode:
+                continue
             max_speed = self.trajectories.get_max_speed(client.actor)
             if client.external_control_mode:
                 client.publish_go_to(

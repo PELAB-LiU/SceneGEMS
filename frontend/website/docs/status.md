@@ -8,7 +8,7 @@ title: Status indicators & errors
 ## Connection statuses
 
 - **Backend socket**: WebSocket link to the Python simulation server (`VITE_WS_URL`)
-- **WARA-PS status**: MQTT session state (connected / disconnected / etc.)
+- **MQTT broker status**: the live session's broker connection (connected / disconnected)
 - **Monitor status**: COLREGS monitor lifecycle
 - **Simulation status**: Agent readiness and execution state
 

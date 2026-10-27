@@ -57,6 +57,12 @@ describe("uiStore sections", () => {
     expect(state).toEqual({ section: "cluster", workbenchView: "domainConfig" });
   });
 
+  it("renames the WARA-PS view to connections in v5", () => {
+    expect(migrate({ section: "workbench", workbenchView: "waraps" }, 4).workbenchView).toBe("connections");
+    storage.setItem(ui.LEGACY_ACTIVE_VIEW_KEY, JSON.stringify("waraps"));
+    expect(migrate({}, 3).workbenchView).toBe("connections");
+  });
+
   it("takes the workbench view from the old key when there is no stored ui state", async () => {
     vi.resetModules();
     storage.setItem(ui.LEGACY_ACTIVE_VIEW_KEY, JSON.stringify("domainConfig"));
@@ -75,6 +81,6 @@ describe("uiStore sections", () => {
     const persisted = partialize(ui.useUiStore.getState()) as Record<string, unknown>;
     expect(persisted.section).toBe("observe");
     expect(persisted.workbenchView).toBe("trajectoryGeneration");
-    expect(ui.useUiStore.persist.getOptions().version).toBe(4);
+    expect(ui.useUiStore.persist.getOptions().version).toBe(5);
   });
 });

@@ -11,7 +11,7 @@ The interface is organized into persistent regions:
 : Collapsible navigation menu with the SceneGEMS brand, hamburger toggle, and links to the four main views plus documentation.
 
 **Center pane**
-: Primary workspace: domain editors, scene canvas, WARA-PS connection form, or simulation view depending on the active menu item.
+: Primary workspace: domain editors, scene canvas, MQTT broker connection form, or simulation view depending on the active menu item.
 
 **Right pane**
 : Contextual sidebar shown in **Simulation** (monitoring panel) and **Scene Generation** (functional spec editor and preset catalog). Can be hidden and restored via the Monitor button or panel controls.

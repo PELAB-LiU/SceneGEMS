@@ -7,7 +7,7 @@ title: Data persistence
 
 The application stores user preferences and editor content in browser local storage so work survives page reloads:
 
-- Active menu view (Domain Configuration, Scene Generation, Simulation, WARA-PS)
+- Active menu view (Domain Configuration, Scene Generation, Trajectory Generation, Simulation, Connections)
 - Domain YAML texts (COLREGS, vessel types, obstacle types)
 - Functional specification text
 - Scene generation timeout setting
