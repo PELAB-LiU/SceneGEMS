@@ -32,9 +32,9 @@ npm run dev
 
 1. Run `./start.sh` from the repo root (or ensure the backend is up and `VITE_WS_URL` in `.env` is correct).
 2. Open **Domain Configuration**: presets load automatically from `public/domain_config/`.
-3. Open **Scene Generation**: search functional presets, load one, click **Generate Initial Scene**.
-4. **Initialize Scenario**, then open **Simulation** for dual-stream playback, metrics, and exports.
-5. Optional: **Record & replay** in the right sidebar; **batch** multiple presets from Scene Generation.
+3. Open **Scene Generation**: pick a functional preset (use **Find a preset** to search and filter), then click **Generate Initial Scenes**.
+4. Click **Next: Trajectory Generation**, generate trajectories, then **Load for Simulation** to open **Simulation** for dual-stream playback, metrics, and exports.
+5. Optional: **Record and replay** under Simulation controls, and the **Batch** tab in Scene Generation to run several presets.
 
 ## Documentation
 
