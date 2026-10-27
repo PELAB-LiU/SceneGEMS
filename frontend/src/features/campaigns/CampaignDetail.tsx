@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Disclosure } from "../../components/Disclosure";
 import { describeOperatorError } from "../../domain/cluster/operatorApi";
 import type { CampaignDetail as CampaignDetailView } from "../../domain/cluster/schemas";
 import { formatDateTime, plural, runDuration } from "./campaignFormat";
@@ -26,29 +27,43 @@ function Totals({ detail }: { detail: CampaignDetailView }) {
   const verdicts = totals.verdicts;
   const failed = verdicts.failed ?? 0;
   return (
-    <div className="stat-tiles camp-tiles">
-      <div className="stat-tile camp-tile-wide">
-        <span className="stat-tile-label">Complete cases</span>
-        <span className="stat-tile-value">
-          {progress.complete} <span className="camp-tile-of">of {progress.quota}</span>
-        </span>
-        <ProgressBar fraction={progress.fraction} tone={detail.actual_state === "completed" ? "ok" : "info"} />
+    <>
+      <div className="stat-tiles camp-tiles">
+        <div className="stat-tile camp-tile-wide">
+          <span className="stat-tile-label">Complete cases</span>
+          <span className="stat-tile-value">
+            {progress.complete} <span className="camp-tile-of">of {progress.quota}</span>
+          </span>
+          <ProgressBar fraction={progress.fraction} tone={detail.actual_state === "completed" ? "ok" : "info"} />
+          <span className="stat-tile-detail">
+            {progress.inFlight} in flight
+            {progress.dropped > 0 ? `, ${progress.dropped} dropped (they count against the failure budgets)` : ""}
+          </span>
+        </div>
+        <Tile
+          label="Verdicts"
+          value={Object.values(verdicts).reduce((sum, count) => sum + count, 0)}
+          detail={`${verdicts.passed ?? 0} passed, ${failed} failed`}
+          tone={failed > 0 ? "warn" : undefined}
+        />
+        {totals.classes_abandoned > 0 && (
+          <Tile label="Abandoned classes" value={totals.classes_abandoned} detail="out of failure budget" tone="bad" />
+        )}
       </div>
-      <Tile label="In flight" value={progress.inFlight} detail="cases being worked on" />
-      <Tile label="Dropped" value={progress.dropped} detail="count against the failure budgets" tone={progress.dropped > 0 ? "warn" : undefined} />
-      <Tile
-        label="Classes"
-        value={totals.classes}
-        detail={`${totals.classes_open} open, ${totals.classes_complete} complete, ${totals.classes_abandoned} abandoned`}
-        tone={totals.classes_abandoned > 0 ? "bad" : undefined}
-      />
-      <Tile
-        label="Verdicts"
-        value={Object.values(verdicts).reduce((sum, count) => sum + count, 0)}
-        detail={`${verdicts.passed ?? 0} passed, ${failed} failed, ${verdicts.unmonitored ?? 0} unmonitored`}
-        tone={failed > 0 ? "warn" : undefined}
-      />
-    </div>
+      <Disclosure id="campaign:more-numbers" variant="link" headingLevel={null} title="More numbers" openTitle="Fewer numbers">
+        <div className="stat-tiles camp-tiles">
+          <Tile label="In flight" value={progress.inFlight} detail="cases being worked on" />
+          <Tile label="Dropped" value={progress.dropped} detail="count against the failure budgets" tone={progress.dropped > 0 ? "warn" : undefined} />
+          <Tile
+            label="Classes"
+            value={totals.classes}
+            detail={`${totals.classes_open} open, ${totals.classes_complete} complete, ${totals.classes_abandoned} abandoned`}
+            tone={totals.classes_abandoned > 0 ? "bad" : undefined}
+          />
+          <Tile label="Unmonitored verdicts" value={verdicts.unmonitored ?? 0} detail="runs without a monitor result" />
+        </div>
+      </Disclosure>
+    </>
   );
 }
 
@@ -114,7 +129,15 @@ export function CampaignDetail({ campaignId, onBack }: CampaignDetailProps) {
             <strong>{detail.actual_state === "stalled" ? "Why it is stalled." : "State reason."}</strong> {detail.state_reason}
           </p>
         )}
-        <dl className="camp-facts">
+        <Disclosure
+          id="campaign:details"
+          variant="link"
+          headingLevel={null}
+          title="Campaign details"
+          openTitle="Hide campaign details"
+          hint={`ran for ${runDuration(detail.started_at, detail.finished_at, now)}`}
+        >
+          <dl className="camp-facts">
           <div>
             <dt>Campaign id</dt>
             <dd>
@@ -144,20 +167,25 @@ export function CampaignDetail({ campaignId, onBack }: CampaignDetailProps) {
             </dd>
           </div>
         </dl>
+        </Disclosure>
         <div className="camp-results-link">
-          <button type="button" className="primary-btn accent" onClick={() => showCampaignResults(campaignId)}>
+          <button type="button" className="primary-btn accent" onClick={() => showCampaignResults(campaignId)} title="Verdicts, cases and recorded runs are in the Results section">
             Open the results
           </button>
-          <span className="meta">Verdicts, cases and recorded runs of this master's campaigns are in the Results section.</span>
         </div>
       </div>
       {feed.error && <p className="meta warning">The numbers may be stale: {describeOperatorError(feed.error)}</p>}
       <ControlsBar campaign={detail} onChanged={feed.applySummary} />
       <Totals detail={detail} />
-      <div className="camp-detail-grid">
-        <CoverageTable classes={detail.classes} runNames={names} />
+      <CoverageTable classes={detail.classes} runNames={names} />
+      <Disclosure
+        id="campaign:events"
+        title="Activity log"
+        hint={`${events.length} ${events.length === 1 ? "event" : "events"}${feed.source === "live" ? ", live" : ""}`}
+        headingLevel={3}
+      >
         <EventsFeed events={events} live={feed.source === "live"} />
-      </div>
+      </Disclosure>
       <ConfigPanel config={config.data} error={config.error} loading={config.isLoading} />
     </div>
   );

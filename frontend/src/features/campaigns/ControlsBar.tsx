@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Disclosure } from "../../components/Disclosure";
 import type { CampaignControl } from "../../domain/cluster/operatorApi";
 import { OperatorApiError } from "../../domain/cluster/operatorApi";
 import type { CampaignSummary } from "../../domain/cluster/schemas";
@@ -24,20 +25,19 @@ function refusal(error: unknown): { title: string; detail: string } {
 
 function ControlButton({ spec, enabled, reason, busy, onPress }: { spec: ControlSpec; enabled: boolean; reason: string | null; busy: boolean; onPress: () => void }) {
   return (
-    <div className={`camp-control${enabled ? "" : " camp-control--off"}`}>
-      <button
-        type="button"
-        className={`camp-control-btn camp-control-btn--${spec.tone}`}
-        disabled={!enabled || busy}
-        onClick={onPress}
-        aria-describedby={`camp-control-${spec.control}`}
-      >
-        {spec.label}
-      </button>
-      <span id={`camp-control-${spec.control}`} className="camp-control-text">
+    <button
+      type="button"
+      className={`camp-control-btn camp-control-btn--${spec.tone}`}
+      disabled={!enabled || busy}
+      onClick={onPress}
+      title={enabled ? spec.description : (reason ?? undefined)}
+      aria-describedby={`camp-control-${spec.control}`}
+    >
+      {spec.label}
+      <span id={`camp-control-${spec.control}`} className="sr-only">
         {enabled ? spec.description : reason}
       </span>
-    </div>
+    </button>
   );
 }
 
@@ -66,7 +66,7 @@ export function ControlsBar({ campaign, onChanged }: { campaign: CampaignSummary
 
   return (
     <section className="panel camp-controls" aria-label="Campaign controls">
-      <div className="camp-controls-grid">
+      <div className="camp-controls-row">
         {CONTROL_SPECS.map((spec) => (
           <ControlButton
             key={spec.control}
@@ -78,6 +78,22 @@ export function ControlsBar({ campaign, onChanged }: { campaign: CampaignSummary
           />
         ))}
       </div>
+      <Disclosure
+        id="campaign:control-help"
+        variant="link"
+        headingLevel={null}
+        title="What do these buttons do?"
+        openTitle="Hide the explanations"
+      >
+        <dl className="camp-control-help">
+          {CONTROL_SPECS.map((spec) => (
+            <div key={spec.control}>
+              <dt>{spec.label}</dt>
+              <dd>{availability[spec.control].enabled ? spec.description : availability[spec.control].reason}</dd>
+            </div>
+          ))}
+        </dl>
+      </Disclosure>
       {pending && (
         <div className="camp-confirm" role="alertdialog" aria-label={`Confirm ${pending.label.toLowerCase()}`}>
           <p>

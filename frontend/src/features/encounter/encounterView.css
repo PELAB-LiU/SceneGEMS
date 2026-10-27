@@ -97,7 +97,7 @@
   color: #fecaca;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
 }
 
 .enc-view-body {

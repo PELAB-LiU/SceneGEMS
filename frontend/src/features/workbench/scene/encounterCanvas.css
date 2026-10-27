@@ -39,7 +39,7 @@
   right: 64px;
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-2);
   align-items: center;
   pointer-events: none;
 }
@@ -50,9 +50,9 @@
 
 .enc-canvas-toolbar button,
 .enc-canvas-toolbar select {
-  height: 22px;
-  padding: 0 7px;
-  font-size: var(--font-size-xs);
+  min-height: var(--hit-target);
+  padding: 0 var(--space-3);
+  font-size: var(--font-size-sm);
   background: rgba(15, 23, 42, 0.86);
   border: 1px solid var(--border);
   color: var(--text-muted);
@@ -78,6 +78,24 @@
   display: inline-flex;
 }
 
+.enc-toggle-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.enc-canvas-toolbar .popover-menu-panel button,
+.enc-canvas-toolbar .popover-menu-panel select {
+  background: var(--bg-control);
+}
+
+.enc-canvas-toolbar .popover-menu-panel .enc-select {
+  background: transparent;
+  border: none;
+  padding-left: 0;
+  gap: var(--space-3);
+}
+
 .enc-seg button:first-child {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
@@ -94,7 +112,7 @@
   align-items: center;
   gap: 4px;
   padding-left: 6px;
-  height: 22px;
+  min-height: var(--hit-target);
   font-size: var(--font-size-xs);
   color: var(--text-muted);
   background: rgba(15, 23, 42, 0.86);
@@ -104,7 +122,7 @@
 
 .enc-select select {
   border: none;
-  height: 20px;
+  min-height: var(--hit-target);
   background: transparent;
 }
 
@@ -135,8 +153,8 @@
 
 .enc-layer-menu summary {
   list-style: none;
-  height: 22px;
-  line-height: 20px;
+  min-height: var(--hit-target);
+  line-height: 1.25;
   padding: 0 8px;
   cursor: pointer;
   color: var(--text-muted);
@@ -177,8 +195,7 @@
   color: var(--text);
 }
 
-.enc-canvas-actions .scene-view-toggle-btn,
-.enc-canvas-actions .scene-export-toolbar {
+.enc-canvas-actions .scene-view-toggle-btn {
   position: static;
   max-width: none;
   margin: 0;

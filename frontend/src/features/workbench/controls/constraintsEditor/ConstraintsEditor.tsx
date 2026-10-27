@@ -1,5 +1,6 @@
 import CodeMirror from "@uiw/react-codemirror";
 import { useMemo, useState } from "react";
+import { usePersistedState } from "../../../../app/usePersistedState";
 import { yamlEditorExtensions } from "../yamlEditorExtensions";
 import "./constraintsEditor.css";
 import { ConstraintsForm } from "./ConstraintsForm";
@@ -15,30 +16,40 @@ export interface ConstraintsEditorProps extends ModelOptions {
   initialTab?: ConstraintsEditorTab;
   /** Names the editor for assistive technology, for example "COLREGS constraints". */
   label?: string;
+  /** Names the file in the remembered state of its collapsible sections; defaults to the label. */
+  scope?: string;
 }
 
 /**
  * Edits a constraints YAML text as a form generated from the YAML itself, or as raw YAML. Both tabs edit
  * the same text, so a change in one shows in the other, and comments and key order survive form edits.
  */
-export function ConstraintsEditor({ text, onTextChange, initialTab = "form", label = "Constraints", protectedRows, tableMinRows }: ConstraintsEditorProps) {
+export function ConstraintsEditor({ text, onTextChange, initialTab = "form", label = "Constraints", scope, protectedRows, tableMinRows }: ConstraintsEditorProps) {
   const [tab, setTab] = useState<ConstraintsEditorTab>(initialTab);
+  const [showKeys, setShowKeys] = usePersistedState("constraints-show-keys", false);
   const failure = useMemo(() => findParseFailure(text), [text]);
 
   return (
-    <div className="ce-editor">
+    <div className="ce-editor" data-show-keys={showKeys ? "true" : undefined}>
       <div className="ce-tabs" role="tablist" aria-label={`${label} view`}>
         <button type="button" role="tab" aria-selected={tab === "form"} className={`ce-tab${tab === "form" ? " active" : ""}`} onClick={() => setTab("form")}>
           Form
         </button>
         <button type="button" role="tab" aria-selected={tab === "yaml"} className={`ce-tab${tab === "yaml" ? " active" : ""}`} onClick={() => setTab("yaml")}>
-          YAML
+          YAML text
           {failure ? <span className="ce-tab-flag" title="The YAML does not parse">!</span> : null}
         </button>
+        {tab === "form" ? (
+          <label className="check ce-keys-toggle">
+            <input type="checkbox" checked={showKeys} onChange={(event) => setShowKeys(event.target.checked)} />
+            <span>Show technical names</span>
+          </label>
+        ) : null}
       </div>
       {tab === "form" ? (
         <div className="ce-body" role="tabpanel" aria-label={`${label} form`}>
           <ConstraintsForm
+            scope={scope ?? label}
             text={text}
             onTextChange={onTextChange}
             onShowYaml={() => setTab("yaml")}

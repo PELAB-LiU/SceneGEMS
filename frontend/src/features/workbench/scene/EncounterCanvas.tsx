@@ -1,3 +1,4 @@
+import { PopoverMenu } from "../../../components/PopoverMenu";
 import {
   useEffect,
   useRef,
@@ -560,63 +561,67 @@ export function EncounterCanvas({
       {!frame ? <p className="enc-canvas-empty">{emptyMessage}</p> : null}
 
       <div className="enc-canvas-toolbar" role="toolbar" aria-label="Canvas view">
-        <div className="enc-seg" role="group" aria-label="Orientation">
-          <button
-            type="button"
-            className={merged.orientation === "north-up" ? "is-active" : ""}
-            aria-pressed={merged.orientation === "north-up"}
-            onClick={() => {
-              update({ orientation: "north-up" });
-              setPendingFit(true);
-            }}
-          >
-            North up
-          </button>
-          <button
-            type="button"
-            className={merged.orientation === "head-up" ? "is-active" : ""}
-            aria-pressed={merged.orientation === "head-up"}
-            disabled={!ownState}
-            title={ownState ? "Own ship's heading at the top" : "Head-up needs an own ship"}
-            onClick={() => {
-              update({ orientation: "head-up" });
-              setPendingFit(true);
-            }}
-          >
-            Head up
-          </button>
-        </div>
-        <label className="enc-select">
-          <span>Vector</span>
-          <select value={merged.vectorMinutes} onChange={(event) => update({ vectorMinutes: Number(event.target.value) })}>
-            {VECTOR_MINUTES.map((minutes) => (
-              <option key={minutes} value={minutes}>
-                {minutes} min
-              </option>
-            ))}
-          </select>
-        </label>
-        {(
-          [
-            ["rings", "Rings"],
-            ["cpa", "CPA"],
-            ["labels", "Labels"],
-            ["legend", "Legend"],
-          ] as const
-        ).map(([key, label]) => (
-          <button
-            key={key}
-            type="button"
-            className={`enc-toggle${merged[key] ? " is-active" : ""}`}
-            aria-pressed={merged[key]}
-            onClick={() => update({ [key]: !merged[key] })}
-          >
-            {label}
-          </button>
-        ))}
         <button type="button" className="enc-toggle" onClick={() => fit()} title="Fit every vessel into the view (double-click)">
-          Fit
+          Fit view
         </button>
+        <PopoverMenu label="View options" ariaLabel="View options">
+          <div className="enc-seg" role="group" aria-label="Orientation">
+            <button
+              type="button"
+              className={merged.orientation === "north-up" ? "is-active" : ""}
+              aria-pressed={merged.orientation === "north-up"}
+              onClick={() => {
+                update({ orientation: "north-up" });
+                setPendingFit(true);
+              }}
+            >
+              North up
+            </button>
+            <button
+              type="button"
+              className={merged.orientation === "head-up" ? "is-active" : ""}
+              aria-pressed={merged.orientation === "head-up"}
+              disabled={!ownState}
+              title={ownState ? "Own ship's heading at the top" : "Head-up needs an own ship"}
+              onClick={() => {
+                update({ orientation: "head-up" });
+                setPendingFit(true);
+              }}
+            >
+              Head up
+            </button>
+          </div>
+          <label className="enc-select">
+            <span>Vector length</span>
+            <select value={merged.vectorMinutes} onChange={(event) => update({ vectorMinutes: Number(event.target.value) })}>
+              {VECTOR_MINUTES.map((minutes) => (
+                <option key={minutes} value={minutes}>
+                  {minutes} min
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="enc-toggle-group" role="group" aria-label="Show on the canvas">
+            {(
+              [
+                ["rings", "Range rings"],
+                ["cpa", "CPA"],
+                ["labels", "Labels"],
+                ["legend", "Legend"],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                className={`enc-toggle${merged[key] ? " is-active" : ""}`}
+                aria-pressed={merged[key]}
+                onClick={() => update({ [key]: !merged[key] })}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </PopoverMenu>
         {children ? <div className="enc-canvas-actions">{children}</div> : null}
       </div>
       <span className="enc-canvas-readout" ref={readoutRef} aria-live="off" />

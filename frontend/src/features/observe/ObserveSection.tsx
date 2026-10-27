@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
 import "./observe.css";
+import { Disclosure } from "../../components/Disclosure";
+import { EmptyState } from "../../components/EmptyState";
 import { SectionFrame } from "../../components/SectionFrame";
 import { useSelectedCluster } from "../../domain/cluster/clusterStore";
 import { useNodesFeed, useNodesStore } from "../../domain/cluster/nodesStore";
@@ -33,8 +35,11 @@ export function ObserveSection() {
 
   const badges = cluster && (
     <div className="section-badges">
-      <span className={`section-badge${liveStatus === "open" ? " section-badge--ok" : liveStatus === "reconnecting" ? " section-badge--warn" : ""}`}>
-        live channel {liveStatus}
+      <span
+        className={`section-badge${liveStatus === "open" ? " section-badge--ok" : liveStatus === "reconnecting" ? " section-badge--warn" : ""}`}
+        title={`Live channel: ${liveStatus}`}
+      >
+        {liveStatus === "open" ? "Live updates on" : liveStatus === "reconnecting" ? "Reconnecting" : "Live updates off"}
       </span>
       {viewed && (
         <span className="section-badge section-badge--ok">
@@ -45,22 +50,19 @@ export function ObserveSection() {
   );
 
   return (
-    <SectionFrame title="Observe" subtitle="Follow one subsystem instance of the cluster live. The master observes an instance only while you view it." actions={badges}>
+    <SectionFrame title="Observe" subtitle="Watch one running instance of the cluster live." actions={badges}>
       {!cluster ? (
-        <div className="section-empty" role="status">
-          <h3>No cluster selected</h3>
-          <p className="meta">Select or add a cluster in the left pane to observe its instances.</p>
-        </div>
+        <EmptyState title="No cluster selected">
+          <p>Select or add a cluster in the left pane to observe its instances.</p>
+        </EmptyState>
       ) : !loaded ? (
-        <div className="section-empty" role="status">
-          <h3>{nodesState.unreachable ? "The master is not reachable" : "Loading the nodes"}</h3>
-          <p className="meta">{nodesState.error ?? "The nodes of the cluster arrive in a moment."}</p>
-        </div>
+        <EmptyState title={nodesState.unreachable ? "The master is not reachable" : "Loading the nodes"} tone={nodesState.unreachable ? "error" : "neutral"}>
+          <p>{nodesState.error ?? "The nodes of the cluster arrive in a moment."}</p>
+        </EmptyState>
       ) : nodes.length === 0 ? (
-        <div className="section-empty" role="status">
-          <h3>No nodes in this cluster</h3>
-          <p className="meta">Instances appear once a node has registered with the master.</p>
-        </div>
+        <EmptyState title="No nodes in this cluster">
+          <p>Instances appear once a node has registered with the master.</p>
+        </EmptyState>
       ) : (
         <div className="observe-layout">
           <InstancePicker
@@ -87,13 +89,13 @@ export function ObserveSection() {
                 <InstanceViewer key={viewed.topic} instance={viewed} />
               </>
             ) : (
-              <div className="section-empty" role="status">
-                <h3>Nothing observed</h3>
-                <p className="meta">
-                  Choose a node and an instance. Scene generation and trajectory search instances show their latest sample or preview, a simulation shows its
-                  frames at a pace you choose, and other jobs show their status and log.
-                </p>
-              </div>
+              <EmptyState title="Nothing observed yet">
+                <p>Choose a node and then an instance on the left. The master observes an instance only while you view it.</p>
+                <Disclosure id="observe:what-you-see" variant="link" headingLevel={null} title="What will I see?" openTitle="Hide the explanation">
+                  Scene generation and trajectory search instances show their latest sample or preview, a simulation shows its frames at a pace you
+                  choose, and other jobs show their status and log.
+                </Disclosure>
+              </EmptyState>
             )}
           </div>
         </div>

@@ -1,10 +1,12 @@
 import type { ReactNode } from "react";
 import { useSelectedCluster } from "../domain/cluster/clusterStore";
+import { PageHeader } from "./PageHeader";
 
 interface SectionFrameProps {
   title: string;
+  /** One plain sentence on what the section is for. */
   subtitle?: string;
-  /** Badges or controls at the right of the header. */
+  /** The primary action and the status badges of the section, at the right of the header. */
   actions?: ReactNode;
   children: ReactNode;
 }
@@ -14,9 +16,10 @@ export function SectionFrame({ title, subtitle, actions, children }: SectionFram
   const cluster = useSelectedCluster();
   return (
     <main className="section-layout">
-      <header className="section-header">
-        <div className="section-header-text">
-          <h2 className="section-title">{title}</h2>
+      <PageHeader
+        title={title}
+        description={subtitle}
+        meta={
           <p className="section-cluster">
             {cluster ? (
               <>
@@ -24,13 +27,12 @@ export function SectionFrame({ title, subtitle, actions, children }: SectionFram
                 <span className="section-cluster-url">{cluster.operatorUrl}</span>
               </>
             ) : (
-              <span className="section-cluster-none">no cluster selected</span>
+              <span className="section-cluster-none">No cluster selected</span>
             )}
           </p>
-          {subtitle && <p className="meta section-subtitle">{subtitle}</p>}
-        </div>
-        {actions}
-      </header>
+        }
+        actions={actions}
+      />
       <div className="section-body">{children}</div>
     </main>
   );

@@ -47,14 +47,7 @@ export function ProgressBar({
   );
 }
 
-export function EmptyState({ title, children }: { title: string; children?: ReactNode }) {
-  return (
-    <div className="section-empty" role="status">
-      <h3>{title}</h3>
-      {children}
-    </div>
-  );
-}
+export { EmptyState } from "../../components/EmptyState";
 
 /** A tile with a label, a value and a line of detail. */
 export function Tile({ label, value, detail, tone }: { label: string; value: ReactNode; detail?: ReactNode; tone?: Tone }) {

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Disclosure } from "../../components/Disclosure";
 import { createOperatorClient, describeOperatorError } from "../../domain/cluster/operatorApi";
 import { useNodesStore } from "../../domain/cluster/nodesStore";
 import type { NodeView } from "../../domain/cluster/schemas";
@@ -44,6 +45,7 @@ export function NodeCard({ node, operatorUrl, nowMs }: NodeCardProps) {
   const { resources } = node;
   const memoryUsed = resources.memory_mb - resources.free_memory_mb;
   const draining = node.status === "draining";
+  const memoryLow = memoryUseFraction(resources.memory_mb, resources.free_memory_mb) >= 0.9;
 
   const toggleDrain = async () => {
     setPending(true);
@@ -108,6 +110,24 @@ export function NodeCard({ node, operatorUrl, nowMs }: NodeCardProps) {
         </div>
       )}
 
+      <div className="node-card-summary">
+        <div className="node-card-block-head">
+          <span>Slots in use</span>
+          <span className="node-card-block-total">
+            {totals.inUse} / {totals.slots}
+          </span>
+        </div>
+        <Meter value={totals.inUse} max={totals.slots} label="Slots in use" />
+        {memoryLow && <span className="node-chip node-chip--warn">Memory is low</span>}
+      </div>
+
+      <Disclosure
+        id={`cluster:node:${node.node_id}`}
+        variant="link"
+        headingLevel={null}
+        title="Details"
+        openTitle="Hide details"
+      >
       <div className="node-card-block">
         <div className="node-card-block-head">
           <span>Capabilities</span>
@@ -147,7 +167,7 @@ export function NodeCard({ node, operatorUrl, nowMs }: NodeCardProps) {
             <Meter value={memoryUsed} max={resources.memory_mb} label="Memory in use" />
             <span className="node-fact-sub">
               {formatMegabytes(memoryUsed)} of {formatMegabytes(resources.memory_mb)} used
-              {memoryUseFraction(resources.memory_mb, resources.free_memory_mb) >= 0.9 ? " (low)" : ""}
+              {memoryLow ? " (low)" : ""}
             </span>
           </dd>
         </div>
@@ -195,6 +215,7 @@ export function NodeCard({ node, operatorUrl, nowMs }: NodeCardProps) {
           </ul>
         </details>
       )}
+      </Disclosure>
     </article>
   );
 }

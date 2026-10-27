@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { useUiStore } from "../../../app/uiStore";
+import { Disclosure } from "../../../components/Disclosure";
 import { usePlaybackStore } from "../../../domain/playback/playbackStore";
 import type { SimulationStreamControls } from "./types";
 import { AnimationPlaybackControls } from "./AnimationPlaybackControls";
@@ -93,7 +94,7 @@ export function PlaybackControls({ streamControls }: Props) {
   return (
     <div className="panel">
       <div className="toolbar-row control-panel-header">
-        <h3>Control Panel</h3>
+        <h3>Simulation controls</h3>
       </div>
       <div className="scene-gen-tabs" role="tablist" aria-label="Playback source">
         <button
@@ -103,7 +104,7 @@ export function PlaybackControls({ streamControls }: Props) {
           className={`scene-gen-tab${controlPanelMode === "animation" ? " active" : ""}`}
           onClick={() => setControlPanelMode("animation")}
         >
-          Animation
+          Preview playback
         </button>
         <button
           type="button"
@@ -112,7 +113,7 @@ export function PlaybackControls({ streamControls }: Props) {
           className={`scene-gen-tab${controlPanelMode === "simulation" ? " active" : ""}`}
           onClick={() => setControlPanelMode("simulation")}
         >
-          Simulation
+          Live simulation
         </button>
       </div>
 
@@ -151,15 +152,20 @@ export function PlaybackControls({ streamControls }: Props) {
             setSpeed={streamControls.setSpeed}
           />
 
-          <section className="animation-control-group" aria-label="Record and replay controls">
+          <Disclosure
+            id="simulation:record-replay"
+            title="Record and replay"
+            hint="Save a run or replay a saved one"
+            headingLevel={4}
+          >
             <RecordingControls />
-          </section>
+          </Disclosure>
         </div>
       ) : (
         <div className="simulation-control-stack">
           <div className="toolbar-row simulation-actions-toolbar">
             <button
-              className="primary-btn"
+              className="primary-btn accent"
               type="button"
               disabled={initializeSimulationDisabled}
               onClick={() => simInitRef.current?.initializeSimulation()}
@@ -167,6 +173,7 @@ export function PlaybackControls({ streamControls }: Props) {
               Initialize Simulation
             </button>
             <button
+              className={canStartSimulation ? "primary-btn accent" : undefined}
               type="button"
               onClick={() => {
                 streamControls.startSimulation();
@@ -176,39 +183,70 @@ export function PlaybackControls({ streamControls }: Props) {
             >
               Start
             </button>
-            <button type="button" onClick={streamControls.resetSimulation}>
-              Reset Simulation
-            </button>
-            <button
-              className={`live-btn${followLatestPush && !isPlaying ? " active" : ""}`}
-              type="button"
-              onClick={() =>
-                handleLivePlayback({
-                  liveTimestamp: latestSimulationTimestamp,
-                  followSimulationLive,
-                })
-              }
-              disabled={latestSimulationTimestamp === null || areSimulationControlsDisabled}
-            >
-              Live
-            </button>
-            <button
-              type="button"
-              onClick={() => simInitRef.current?.generateSimulationWorld()}
-              disabled={simInitVesselCount === 0}
-              title={
-                simInitVesselCount === 0
-                  ? "Load a scenario to generate vessel physics models"
-                  : undefined
-              }
-            >
-              Generate Vessel Physics Models
-            </button>
           </div>
-          <p className="meta simulation-actions-hint">
-            Initialize when scenario is ready and WARA-PS is connected. Vessels in table:{" "}
-            {simInitVesselCount}
-          </p>
+          <Disclosure
+            id="simulation:more-actions"
+            variant="link"
+            headingLevel={null}
+            title="More actions"
+            openTitle="Fewer actions"
+          >
+            <div className="toolbar-row">
+              <button type="button" onClick={streamControls.resetSimulation}>
+                Reset Simulation
+              </button>
+              <button
+                className={`live-btn${followLatestPush && !isPlaying ? " active" : ""}`}
+                type="button"
+                onClick={() =>
+                  handleLivePlayback({
+                    liveTimestamp: latestSimulationTimestamp,
+                    followSimulationLive,
+                  })
+                }
+                disabled={latestSimulationTimestamp === null || areSimulationControlsDisabled}
+              >
+                Live
+              </button>
+              <button
+                type="button"
+                onClick={() => simInitRef.current?.generateSimulationWorld()}
+                disabled={simInitVesselCount === 0}
+                title={
+                  simInitVesselCount === 0
+                    ? "Load a scenario to generate vessel physics models"
+                    : undefined
+                }
+              >
+                Generate Vessel Physics Models
+              </button>
+            </div>
+          </Disclosure>
+          {simulationInitialized && warapsStatus === "connected" ? (
+            <p className="meta simulation-actions-hint">
+              Ready: the scenario is loaded and WARA-PS is connected. Initialize, then Start. Vessels
+              in the scenario: {simInitVesselCount}.
+            </p>
+          ) : (
+            <ul className="readiness-list" aria-label="Before you can initialize">
+              {!simulationInitialized && (
+                <li className="is-missing">
+                  <span className="readiness-mark" aria-hidden>
+                    {"\u2022"}
+                  </span>
+                  Load a scenario first (Scene Generation or Trajectory Generation).
+                </li>
+              )}
+              {warapsStatus !== "connected" && (
+                <li className="is-missing">
+                  <span className="readiness-mark" aria-hidden>
+                    {"\u2022"}
+                  </span>
+                  Connect to WARA-PS on the Connections page (now: {warapsStatus}).
+                </li>
+              )}
+            </ul>
+          )}
 
           <SimulationInitControls
             ref={simInitRef}

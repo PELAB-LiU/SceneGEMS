@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { Disclosure } from "../../components/Disclosure";
 import { DEFAULT_OPERATOR_URL, useClusterStore, type ClusterEntry } from "../../domain/cluster/clusterStore";
 
 export const SSH_TUNNEL_COMMAND = "ssh -L 5174:127.0.0.1:5174 <user>@<master>";
@@ -108,7 +109,7 @@ function ClusterRow({ cluster, selected }: { cluster: ClusterEntry; selected: bo
   );
 }
 
-/** The browser's cluster list: select, add, edit and remove clusters, with the tunnel hint. */
+/** The browser's cluster list: select, add, edit and remove clusters. The tunnel hint is behind a toggle. */
 export function ClusterListPanel() {
   const clusters = useClusterStore((s) => s.clusters);
   const selectedClusterId = useClusterStore((s) => s.selectedClusterId);
@@ -151,17 +152,25 @@ export function ClusterListPanel() {
           }}
         />
       )}
-      <div className="cluster-hint">
-        <p className="meta">
-          The UI talks to a master's operator API, which listens on the master's 127.0.0.1:5174 only. On the master
-          itself use {DEFAULT_OPERATOR_URL}; from another machine, open a tunnel first and keep that URL:
-        </p>
-        <code className="cluster-hint-command">{SSH_TUNNEL_COMMAND}</code>
-        <p className="meta">
-          For several clusters, give each tunnel its own local port (such as <code>-L 5175:127.0.0.1:5174</code>) and
-          use that port in the cluster's URL. The workbench keeps its own gateway socket.
-        </p>
-      </div>
+      <Disclosure
+        id="cluster:tunnel-hint"
+        variant="link"
+        headingLevel={null}
+        title="How do I reach a remote master?"
+        openTitle="Hide the tunnel instructions"
+      >
+        <div className="cluster-hint">
+          <p>
+            The UI talks to a master's operator API, which listens on the master's 127.0.0.1:5174 only. On the
+            master itself use {DEFAULT_OPERATOR_URL}; from another machine, open a tunnel first and keep that URL:
+          </p>
+          <code className="cluster-hint-command">{SSH_TUNNEL_COMMAND}</code>
+          <p>
+            For several clusters, give each tunnel its own local port (such as <code>-L 5175:127.0.0.1:5174</code>)
+            and use that port in the cluster's URL. The workbench keeps its own gateway socket.
+          </p>
+        </div>
+      </Disclosure>
     </section>
   );
 }

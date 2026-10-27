@@ -11,6 +11,8 @@ import {
   OBSTACLE_TYPES_PRESETS,
   VESSEL_TYPES_PRESETS,
 } from "./domainConfigPresets";
+import { Disclosure } from "../../../components/Disclosure";
+import { PageHeader } from "../../../components/PageHeader";
 import { ConstraintsEditor } from "./constraintsEditor";
 
 type DomainConfigTab = "colregs" | "vesselObstacleTypes";
@@ -24,6 +26,74 @@ const DUAL_COLUMN_SPLIT_MAX = 85;
 
 function clampDualColumnSplit(value: number): number {
   return Math.min(DUAL_COLUMN_SPLIT_MAX, Math.max(DUAL_COLUMN_SPLIT_MIN, value));
+}
+
+interface DomainFileToolsProps {
+  /** Which file the tools belong to; names the remembered open state of the file options. */
+  scope: string;
+  presets: readonly string[];
+  hasContent: boolean;
+  onLoadFromPreset: (path: string) => void;
+  onLoadFromFile: (file: File) => void;
+  onExport: () => void;
+}
+
+/** Pick a preset (the usual way to change a file) and, behind one toggle, load a file from the computer or export. */
+function DomainFileTools({ scope, presets, hasContent, onLoadFromPreset, onLoadFromFile, onExport }: DomainFileToolsProps) {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  return (
+    <div className="domain-file-tools">
+      <select
+        aria-label="Load a preset"
+        onChange={(event) => {
+          const path = event.target.value;
+          if (path) {
+            onLoadFromPreset(path);
+          }
+        }}
+        defaultValue=""
+      >
+        <option value="" disabled>
+          Load a preset...
+        </option>
+        {presets.map((path) => (
+          <option key={path} value={path}>
+            {path}
+          </option>
+        ))}
+      </select>
+      <Disclosure
+        id={`domain-config:${scope}:file-options`}
+        variant="link"
+        headingLevel={null}
+        title="Files: load or export"
+        openTitle="Hide file options"
+        keepMounted
+      >
+        <div className="toolbar-row">
+          <input
+            ref={fileInputRef}
+            hidden
+            type="file"
+            accept=".yaml,.yml,text/yaml,text/x-yaml"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) {
+                onLoadFromFile(file);
+              }
+              event.target.value = "";
+            }}
+          />
+          <button type="button" onClick={() => fileInputRef.current?.click()}>
+            Load from computer
+          </button>
+          <button type="button" onClick={onExport} disabled={!hasContent}>
+            Export as YAML file
+          </button>
+        </div>
+      </Disclosure>
+    </div>
+  );
 }
 
 interface YamlEditorColumnProps {
@@ -49,51 +119,19 @@ function YamlEditorColumn({
   onExport,
   style,
 }: YamlEditorColumnProps) {
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const hasContent = useMemo(() => text.trim().length > 0, [text]);
 
   return (
     <div className="domain-config-column" style={style}>
       <h4>{title}</h4>
-      <div className="toolbar-row">
-        <select
-          onChange={(event) => {
-            const path = event.target.value;
-            if (path) {
-              onLoadFromPreset(path);
-            }
-          }}
-          defaultValue=""
-        >
-          <option value="" disabled>
-            Load preset...
-          </option>
-          {presets.map((path) => (
-            <option key={path} value={path}>
-              {path}
-            </option>
-          ))}
-        </select>
-        <input
-          ref={fileInputRef}
-          hidden
-          type="file"
-          accept=".yaml,.yml,text/yaml,text/x-yaml"
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            if (file) {
-              onLoadFromFile(file);
-            }
-            event.target.value = "";
-          }}
-        />
-        <button type="button" onClick={() => fileInputRef.current?.click()}>
-          Load from computer
-        </button>
-        <button type="button" onClick={onExport} disabled={!hasContent}>
-          Export
-        </button>
-      </div>
+      <DomainFileTools
+        scope={title.toLowerCase().replace(/\s+/g, "-")}
+        presets={presets}
+        hasContent={hasContent}
+        onLoadFromPreset={onLoadFromPreset}
+        onLoadFromFile={onLoadFromFile}
+        onExport={onExport}
+      />
       <ConstraintsEditor
         text={text}
         onTextChange={onTextChange}
@@ -121,6 +159,8 @@ interface Props {
   onLoadObstacleTypesFromPreset: (path: string) => void;
   onLoadObstacleTypesFromFile: (file: File) => void;
   onExportObstacleTypes: () => void;
+  /** Moves on to the next step of the workflow (Scene Generation). */
+  onContinue?: () => void;
 }
 
 export function DomainConfigurationPanel({
@@ -139,6 +179,7 @@ export function DomainConfigurationPanel({
   onLoadObstacleTypesFromPreset,
   onLoadObstacleTypesFromFile,
   onExportObstacleTypes,
+  onContinue,
 }: Props) {
   const [activeTab, setActiveTab] = useState<DomainConfigTab>("colregs");
   const [vesselColumnSplitPercent, setVesselColumnSplitPercent] = useState(50);
@@ -147,7 +188,6 @@ export function DomainConfigurationPanel({
   const dualColumnSplitDragRef = useRef<{ startX: number; startSplit: number; width: number } | null>(
     null
   );
-  const colregsInputRef = useRef<HTMLInputElement | null>(null);
   const hasColregs = useMemo(() => colregsText.trim().length > 0, [colregsText]);
 
   const onDualColumnResizeStart = useCallback(
@@ -189,6 +229,18 @@ export function DomainConfigurationPanel({
 
   return (
     <aside className="right-pane scene-generation-sidebar domain-configuration-panel">
+      <PageHeader
+        eyebrow="Step 1 of 4"
+        title="Domain Configuration"
+        description="The rules and vessel types the generators work with. The defaults are already loaded, so you can usually go straight on to the next step."
+        actions={
+          onContinue ? (
+            <button type="button" className="primary-btn accent" onClick={onContinue}>
+              Next: Scene Generation
+            </button>
+          ) : undefined
+        }
+      />
       <div className="scene-gen-tabs" role="tablist" aria-label="Domain configuration section">
         <button
           className={`scene-gen-tab${activeTab === "colregs" ? " active" : ""}`}
@@ -197,7 +249,7 @@ export function DomainConfigurationPanel({
           aria-selected={activeTab === "colregs"}
           onClick={() => setActiveTab("colregs")}
         >
-          COLREGS Constraints
+          Collision rules (COLREGS)
         </button>
         <button
           className={`scene-gen-tab${activeTab === "vesselObstacleTypes" ? " active" : ""}`}
@@ -206,57 +258,24 @@ export function DomainConfigurationPanel({
           aria-selected={activeTab === "vesselObstacleTypes"}
           onClick={() => setActiveTab("vesselObstacleTypes")}
         >
-          Vessel and Obstacle constraints
+          Vessel and obstacle types
         </button>
       </div>
 
       {activeTab === "colregs" ? (
         <div className="scene-editor-panel">
-          <h3>COLREGS Constraints (.yaml)</h3>
-          <div className="toolbar-row">
-            <select
-              onChange={(event) => {
-                const path = event.target.value;
-                if (path) {
-                  onLoadColregsFromPreset(path);
-                }
-              }}
-              defaultValue=""
-            >
-              <option value="" disabled>
-                Load preset...
-              </option>
-              {COLREGS_CONSTRAINTS_PRESETS.map((path) => (
-                <option key={path} value={path}>
-                  {path}
-                </option>
-              ))}
-            </select>
-            <input
-              ref={colregsInputRef}
-              hidden
-              type="file"
-              accept=".yaml,.yml,text/yaml,text/x-yaml"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) {
-                  onLoadColregsFromFile(file);
-                }
-                event.target.value = "";
-              }}
-            />
-            <button type="button" onClick={() => colregsInputRef.current?.click()}>
-              Load from computer
-            </button>
-            <button type="button" onClick={onExportColregs} disabled={!hasColregs}>
-              Export
-            </button>
-          </div>
-          <ConstraintsEditor text={colregsText} onTextChange={onColregsTextChange} label="COLREGS constraints" />
+          <DomainFileTools
+            scope="colregs"
+            presets={COLREGS_CONSTRAINTS_PRESETS}
+            hasContent={hasColregs}
+            onLoadFromPreset={onLoadColregsFromPreset}
+            onLoadFromFile={onLoadColregsFromFile}
+            onExport={onExportColregs}
+          />
+          <ConstraintsEditor text={colregsText} onTextChange={onColregsTextChange} label="COLREGS constraints" scope="colregs" />
         </div>
       ) : (
         <div className="scene-editor-panel domain-config-dual-panel">
-          <h3>Vessel and Obstacle constraints (.yaml)</h3>
           <div
             ref={dualColumnsRef}
             className={`domain-config-dual-columns${isResizingDualColumns ? " is-resizing" : ""}`}

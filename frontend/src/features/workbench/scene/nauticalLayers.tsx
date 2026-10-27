@@ -65,7 +65,7 @@ export function RangeRings({
                 x={center.x + Math.cos(labelAngle) * r + 3}
                 y={center.y + Math.sin(labelAngle) * r - 3}
                 fill={CANVAS_COLORS.ringLabel}
-                fontSize={10}
+                fontSize={12}
               >
                 {label}
               </text>
@@ -116,7 +116,7 @@ export function BearingScale({
           y={center.y + dir.y * (radius - 19) + 3.5}
           textAnchor="middle"
           fill={CANVAS_COLORS.bearingLabel}
-          fontSize={10}
+          fontSize={12}
         >
           {String(deg).padStart(3, "0")}
         </text>
@@ -160,7 +160,7 @@ export function ScaleBar({ view }: { view: ViewTransform }) {
       <line x1={x} y1={y - 5} x2={x} y2={y + 3} stroke={CANVAS_COLORS.labelText} strokeWidth={1.5} />
       <line x1={x + px} y1={y - 5} x2={x + px} y2={y + 3} stroke={CANVAS_COLORS.labelText} strokeWidth={1.5} />
       <line x1={x + px / 2} y1={y - 3} x2={x + px / 2} y2={y} stroke={CANVAS_COLORS.labelText} strokeWidth={1} />
-      <text x={x + px / 2} y={y - 7} textAnchor="middle" fill={CANVAS_COLORS.labelText} fontSize={10.5}>
+      <text x={x + px / 2} y={y - 7} textAnchor="middle" fill={CANVAS_COLORS.labelText} fontSize={13}>
         {bar.label}
       </text>
     </g>
@@ -186,7 +186,7 @@ export function NorthArrow({ view, headUp }: { view: ViewTransform; headUp: bool
         y={cy + dir.y * 26 + 4}
         textAnchor="middle"
         fill={CANVAS_COLORS.labelText}
-        fontSize={11}
+        fontSize={14}
         fontWeight={600}
       >
         N
@@ -578,7 +578,7 @@ export function CpaLayer({
             : CANVAS_COLORS.cpaNeutral;
         const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
         const text = `CPA ${formatNm(mark.dcpa)} in ${formatClock(mark.tcpa)}`;
-        const width = text.length * 5.9 + 10;
+        const width = text.length * 7.4 + 14;
         const diamond = (p: Point) =>
           `${p.x},${p.y - 5} ${p.x + 5},${p.y} ${p.x},${p.y + 5} ${p.x - 5},${p.y}`;
         return (
@@ -588,15 +588,15 @@ export function CpaLayer({
             <polygon points={diamond(b)} fill="none" stroke={colorByActorId[mark.bId] ?? tone} strokeWidth={1.6} />
             <rect
               x={mid.x + 8}
-              y={mid.y - 17}
+              y={mid.y - 20}
               width={width}
-              height={15}
+              height={19}
               rx={3}
               fill={CANVAS_COLORS.labelBackground}
               stroke={tone}
               strokeWidth={0.8}
             />
-            <text x={mid.x + 13} y={mid.y - 6} fill={tone} fontSize={10.5} fontWeight={600}>
+            <text x={mid.x + 14} y={mid.y - 6} fill={tone} fontSize={13} fontWeight={600}>
               {text}
             </text>
           </g>
@@ -608,22 +608,22 @@ export function CpaLayer({
 
 export function SelectionLine({ a, b, label }: { a: Point; b: Point; label: string }) {
   const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-  const width = label.length * 5.9 + 10;
+  const width = label.length * 7.4 + 14;
   return (
     <g aria-label="Selected pair" pointerEvents="none">
       <circle cx={a.x} cy={a.y} r={15} fill="none" stroke={CANVAS_COLORS.selection} strokeWidth={1.2} strokeDasharray="2 3" />
       <circle cx={b.x} cy={b.y} r={15} fill="none" stroke={CANVAS_COLORS.selection} strokeWidth={1.2} strokeDasharray="2 3" />
       <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={CANVAS_COLORS.selection} strokeOpacity={0.7} strokeWidth={1} strokeDasharray="6 4" />
-      <rect x={mid.x - width / 2} y={mid.y + 4} width={width} height={15} rx={3} fill={CANVAS_COLORS.labelBackground} />
-      <text x={mid.x} y={mid.y + 15} textAnchor="middle" fill={CANVAS_COLORS.selection} fontSize={10.5}>
+      <rect x={mid.x - width / 2} y={mid.y + 4} width={width} height={19} rx={3} fill={CANVAS_COLORS.labelBackground} />
+      <text x={mid.x} y={mid.y + 18} textAnchor="middle" fill={CANVAS_COLORS.selection} fontSize={13}>
         {label}
       </text>
     </g>
   );
 }
 
-const LABEL_LINE = 13;
-const CHAR_WIDTH = 6;
+const LABEL_LINE = 17;
+const CHAR_WIDTH = 7.4;
 
 export function VesselLabels({
   vessels,
@@ -644,7 +644,7 @@ export function VesselLabels({
     const widest = Math.max(
       actor.name.length * (CHAR_WIDTH + 0.5),
       kinematics.length * CHAR_WIDTH,
-      ...tagTexts.map((text) => text.length * CHAR_WIDTH + 26)
+      ...tagTexts.map((text) => text.length * CHAR_WIDTH + 34)
     );
     return {
       actor,
@@ -652,8 +652,8 @@ export function VesselLabels({
       tags,
       tagTexts,
       anchor: screen,
-      width: widest + 10,
-      height: LABEL_LINE * (2 + tags.length) + 6,
+      width: widest + 12,
+      height: LABEL_LINE * (2 + tags.length) + 8,
     };
   });
   const boxes = placeLabels(contents, bounds);
@@ -666,10 +666,10 @@ export function VesselLabels({
           <g key={content.actor.id}>
             <rect x={box.x} y={box.y} width={box.width} height={box.height} rx={3} fill={CANVAS_COLORS.labelBackground} />
             <rect x={box.x} y={box.y} width={2.5} height={box.height} fill={color} />
-            <text x={box.x + 6} y={box.y + LABEL_LINE} fill={color} fontSize={11.5} fontWeight={600}>
+            <text x={box.x + 7} y={box.y + LABEL_LINE - 1} fill={color} fontSize={14} fontWeight={600}>
               {content.actor.name}
             </text>
-            <text x={box.x + 6} y={box.y + LABEL_LINE * 2} fill={CANVAS_COLORS.labelMuted} fontSize={10.5}>
+            <text x={box.x + 7} y={box.y + LABEL_LINE * 2 - 1} fill={CANVAS_COLORS.labelMuted} fontSize={13}>
               {content.kinematics}
             </text>
             {content.tags.map((tag, tagIndex) => {
@@ -677,11 +677,11 @@ export function VesselLabels({
               const roleColor = tag.role ? ROLE_COLORS[tag.role] : "#64748b";
               return (
                 <g key={`${tag.otherId}-${tagIndex}`}>
-                  <rect x={box.x + 6} y={y - 9.5} width={19} height={11.5} rx={2} fill={roleColor} />
-                  <text x={box.x + 15.5} y={y - 0.5} textAnchor="middle" fill="#0b1220" fontSize={8.5} fontWeight={700}>
+                  <rect x={box.x + 7} y={y - 12} width={24} height={15} rx={2} fill={roleColor} />
+                  <text x={box.x + 19} y={y - 0.5} textAnchor="middle" fill="#0b1220" fontSize={11} fontWeight={700}>
                     {tag.role ? ROLE_CODES[tag.role] : "-"}
                   </text>
-                  <text x={box.x + 29} y={y} fill={CANVAS_COLORS.labelText} fontSize={10.5}>
+                  <text x={box.x + 36} y={y - 1} fill={CANVAS_COLORS.labelText} fontSize={13}>
                     {content.tagTexts[tagIndex]}
                   </text>
                 </g>
@@ -711,12 +711,12 @@ export function CanvasLegend({
   streams: LegendStream[];
   vectorMinutes: number;
 }) {
-  const width = 214;
-  const rowHeight = 14;
+  const width = 284;
+  const rowHeight = 18;
   const rows: ReactNode[] = [];
-  let y = 13;
+  let y = 16;
   const text = (x: number, yy: number, content: string, muted = false) => (
-    <text x={x} y={yy + 3.5} fill={muted ? CANVAS_COLORS.labelMuted : CANVAS_COLORS.labelText} fontSize={10}>
+    <text x={x} y={yy + 4.5} fill={muted ? CANVAS_COLORS.labelMuted : CANVAS_COLORS.labelText} fontSize={12.5}>
       {content}
     </text>
   );
@@ -726,8 +726,8 @@ export function CanvasLegend({
   };
   const chip = (x: number, yy: number, role: "give-way" | "stand-on") => (
     <g>
-      <rect x={x} y={yy - 5.5} width={18} height={11} rx={2} fill={ROLE_COLORS[role]} />
-      <text x={x + 9} y={yy + 3} textAnchor="middle" fill="#0b1220" fontSize={8} fontWeight={700}>
+      <rect x={x} y={yy - 7} width={22} height={14} rx={2} fill={ROLE_COLORS[role]} />
+      <text x={x + 11} y={yy + 4} textAnchor="middle" fill="#0b1220" fontSize={10.5} fontWeight={700}>
         {ROLE_CODES[role]}
       </text>
     </g>
@@ -747,7 +747,7 @@ export function CanvasLegend({
           {text(x + 18, y, stream.label)}
         </g>
       );
-      x += 26 + stream.label.length * 5.6;
+      x += 30 + stream.label.length * 7.2;
     }
     row("streams", cells);
   }
@@ -756,8 +756,8 @@ export function CanvasLegend({
     <>
       <line x1={8} y1={y} x2={26} y2={y} stroke={CANVAS_COLORS.labelText} strokeWidth={1.8} />
       {text(30, y, "so far")}
-      <line x1={66} y1={y} x2={84} y2={y} stroke={CANVAS_COLORS.labelText} strokeOpacity={0.6} strokeDasharray="4 3" />
-      {text(88, y, "ahead (plan or record)")}
+      <line x1={84} y1={y} x2={102} y2={y} stroke={CANVAS_COLORS.labelText} strokeOpacity={0.6} strokeDasharray="4 3" />
+      {text(106, y, "ahead (plan or record)")}
     </>
   );
   row(
@@ -782,9 +782,9 @@ export function CanvasLegend({
     "roles",
     <>
       {chip(8, y, "give-way")}
-      {text(30, y, "give-way")}
-      {chip(84, y, "stand-on")}
-      {text(106, y, "stand-on")}
+      {text(34, y, "give-way")}
+      {chip(100, y, "stand-on")}
+      {text(126, y, "stand-on")}
     </>
   );
   row("codes", text(8, y, "HO head-on, CR crossing, OT overtaking", true));
@@ -792,11 +792,11 @@ export function CanvasLegend({
     "domains",
     <>
       <ellipse cx={17} cy={y} rx={9} ry={4} fill="none" stroke={CANVAS_COLORS.labelText} strokeDasharray="3 2" />
-      {text(30, y, "safety")}
-      <circle cx={74} cy={y} r={4} fill="none" stroke={CANVAS_COLORS.labelText} strokeDasharray="1 2.5" strokeLinecap="round" />
-      {text(82, y, "static")}
-      <polygon points={`118,${y + 3} 123,${y - 3} 131,${y - 3} 136,${y + 3}`} fill="none" stroke={MANEUVERING_DOMAIN_KITE_COLOR} strokeDasharray="3 2" />
-      {text(140, y, "corridor")}
+      {text(32, y, "safety")}
+      <circle cx={92} cy={y} r={4} fill="none" stroke={CANVAS_COLORS.labelText} strokeDasharray="1 2.5" strokeLinecap="round" />
+      {text(100, y, "static")}
+      <polygon points={`150,${y + 3} 155,${y - 3} 163,${y - 3} 168,${y + 3}`} fill="none" stroke={MANEUVERING_DOMAIN_KITE_COLOR} strokeDasharray="3 2" />
+      {text(172, y, "corridor")}
     </>
   );
   const height = y - rowHeight / 2 + 4;

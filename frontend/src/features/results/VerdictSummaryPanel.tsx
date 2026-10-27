@@ -1,3 +1,4 @@
+import { Disclosure } from "../../components/Disclosure";
 import type { CampaignTotals } from "../../domain/cluster/schemas";
 import { percent, type VerdictSummary } from "../../domain/cluster/resultsApi";
 import { formatSeconds } from "./resultsFormat";
@@ -60,8 +61,13 @@ export function VerdictSummaryPanel({ summary, loading, filtered, campaignTotals
           <Tile label="Unmonitored" count={summary.byState.unmonitored} whole={whole} tone="unmonitored" />
         </div>
 
-        <div>
-          <h4 className="results-subhead">Per run</h4>
+        <Disclosure
+          id="results:per-run"
+          title="Counts per run"
+          hint={`${summary.byRun.length} ${summary.byRun.length === 1 ? "run" : "runs"}`}
+          variant="plain"
+          headingLevel={4}
+        >
           {summary.byRun.length === 0 ? (
             <p className="meta">No verdicts match.</p>
           ) : (
@@ -94,10 +100,16 @@ export function VerdictSummaryPanel({ summary, loading, filtered, campaignTotals
               </tbody>
             </table>
           )}
-        </div>
+        </Disclosure>
 
-        <div>
-          <h4 className="results-subhead">Failed rules, most often first</h4>
+        <Disclosure
+          id="results:failed-rules"
+          title="Which rules failed"
+          hint={summary.failedRules.length === 0 ? "none" : `${summary.failedRules.length} ${summary.failedRules.length === 1 ? "rule" : "rules"}, most often first`}
+          defaultOpen={summary.byState.failed > 0}
+          variant="plain"
+          headingLevel={4}
+        >
           {summary.failedRules.length === 0 ? (
             <p className="meta">No rule failed in these verdicts.</p>
           ) : (
@@ -115,7 +127,7 @@ export function VerdictSummaryPanel({ summary, loading, filtered, campaignTotals
               {summary.failedRules.length > 8 && <li className="meta">and {summary.failedRules.length - 8} more rules</li>}
             </ol>
           )}
-        </div>
+        </Disclosure>
       </div>
     </section>
   );
