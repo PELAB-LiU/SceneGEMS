@@ -510,12 +510,12 @@
 
 .wiz-folder-name {
   justify-content: flex-start;
-  min-height: 0;
-  padding: 0;
+  min-height: var(--hit-target);
+  padding: 0 var(--space-2);
   border: none;
   background: none;
   font-family: var(--font-mono);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;

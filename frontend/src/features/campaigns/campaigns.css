@@ -512,8 +512,8 @@
 }
 
 .camp-sort {
-  min-height: 0;
-  padding: 0;
+  min-height: var(--hit-target);
+  padding: 0 var(--space-2);
   border: none;
   background: none;
   color: inherit;
