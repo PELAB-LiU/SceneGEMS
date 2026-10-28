@@ -32,9 +32,20 @@ describe("showing results from another section", () => {
     expect(results.useResultsStore.getState()).toMatchObject({ campaignId: "c7", caseId: null });
   });
 
+  it("opens a workbench entry on the step view asked for", () => {
+    show.showCampaignResults("wb1", "trajectory_generation");
+    expect(ui.useUiStore.getState().section).toBe("results");
+    expect(results.useResultsStore.getState()).toMatchObject({ campaignId: "wb1", step: "trajectory_generation", caseId: null });
+  });
+
   it("opens one case of a campaign", () => {
     show.showCaseResults("c7", 42);
     expect(ui.useUiStore.getState().section).toBe("results");
     expect(results.useResultsStore.getState()).toMatchObject({ campaignId: "c7", caseId: 42 });
+  });
+
+  it("opens one case on a step", () => {
+    show.showCaseResults("c7", 42, "scene_generation");
+    expect(results.useResultsStore.getState()).toMatchObject({ campaignId: "c7", caseId: 42, step: "scene_generation" });
   });
 });

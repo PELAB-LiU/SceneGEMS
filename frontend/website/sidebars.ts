@@ -41,6 +41,14 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Cluster pages',
+      collapsed: false,
+      items: [
+        'results',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Reference',
       collapsed: false,
       items: [

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { CampaignStep } from "./schemas";
 import {
   clampPage,
   DEFAULT_PAGE_SIZE,
@@ -8,13 +9,15 @@ import {
 } from "./resultsApi";
 
 /**
- * What the Results section shows: the campaign, the verdict table's filters and page, and the
- * case page that is open. Kept in memory (not persisted): a reload starts at the newest campaign.
+ * What the Results section shows: the entry (a campaign or a workbench run, `campaignId`), the
+ * step view that was picked, the verdict table's filters and page, and the case page that is open. Kept in memory (not persisted): a reload starts at the newest campaign.
  * Other sections open a campaign's results with `openCampaign` (or `openCase`) and then show
  * the section (`features/results/showResults.ts`).
  */
 export interface ResultsState {
   campaignId: string | null;
+  /** The step view the user picked; null shows the last step the entry executed. */
+  step: CampaignStep | null;
   /** The case page that is open, or null for the verdict table. */
   caseId: number | null;
   filters: VerdictFilterState;
@@ -22,10 +25,12 @@ export interface ResultsState {
   page: number;
   pageSize: number;
   direction: SortDirection;
-  /** Shows a campaign's verdict table with no filters. */
-  openCampaign: (campaignId: string) => void;
-  /** Shows one case of a campaign (its page). */
-  openCase: (campaignId: string, caseId: number) => void;
+  /** Shows an entry's results with no filters, on `step` when given (the entry's last step otherwise). */
+  openCampaign: (campaignId: string, step?: CampaignStep) => void;
+  /** Shows one case of an entry (its page). */
+  openCase: (campaignId: string, caseId: number, step?: CampaignStep) => void;
+  /** Picks the step view; the filters and the page start over. */
+  setStep: (step: CampaignStep) => void;
   /** Back from the case page to the table. */
   closeCase: () => void;
   /** A filter change returns to the first page. */
@@ -40,6 +45,7 @@ export interface ResultsState {
 
 const INITIAL = {
   campaignId: null,
+  step: null,
   caseId: null,
   filters: DEFAULT_VERDICT_FILTERS,
   page: 0,
@@ -49,19 +55,22 @@ const INITIAL = {
 
 export const useResultsStore = create<ResultsState>()((set, get) => ({
   ...INITIAL,
-  openCampaign: (campaignId) => {
-    if (get().campaignId === campaignId && get().caseId === null) {
+  openCampaign: (campaignId, step) => {
+    const state = get();
+    if (state.campaignId === campaignId && state.caseId === null && (step === undefined || step === state.step)) {
       return;
     }
-    set({ campaignId, caseId: null, filters: DEFAULT_VERDICT_FILTERS, page: 0 });
+    set({ campaignId, step: step ?? (state.campaignId === campaignId ? state.step : null), caseId: null, filters: DEFAULT_VERDICT_FILTERS, page: 0 });
   },
-  openCase: (campaignId, caseId) => {
-    if (get().campaignId === campaignId) {
-      set({ caseId });
+  openCase: (campaignId, caseId, step) => {
+    const state = get();
+    if (state.campaignId === campaignId) {
+      set({ caseId, step: step ?? state.step });
     } else {
-      set({ campaignId, caseId, filters: DEFAULT_VERDICT_FILTERS, page: 0 });
+      set({ campaignId, step: step ?? null, caseId, filters: DEFAULT_VERDICT_FILTERS, page: 0 });
     }
   },
+  setStep: (step) => set({ step, caseId: null, filters: DEFAULT_VERDICT_FILTERS, page: 0 }),
   closeCase: () => set({ caseId: null }),
   setFilters: (changes) => set((state) => ({ filters: { ...state.filters, ...changes }, page: 0 })),
   resetFilters: () => set({ filters: DEFAULT_VERDICT_FILTERS, page: 0 }),
