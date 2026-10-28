@@ -12,7 +12,7 @@ SceneGEMS runs in two ways:
 | Path | Content |
 |------|---------|
 | [`backend/`](backend/) | Python package roots under `backend/src/`: `scenegems_tool` (workbench gateway, subsystems, vessel stacks, the cluster's master and node, the assurance pipeline, persistence), `functional_level`, `logical_level`, `concrete_level`, `evaluation`, `visualization`, `scripts`, `utils`, `tests`. Domain configuration, the 828 functional scenario classes and runtime assets are in `backend/assets/` |
-| [`frontend/`](frontend/) | React and Vite web console with the sections Workbench, Cluster, Campaigns, Observe and Results; in-app documentation in `frontend/website/` |
+| [`frontend/`](frontend/) | React and Vite web console with the sections Workbench, Cluster, Capabilities, Campaigns, Campaign History and Results; in-app documentation in `frontend/website/` |
 | [`deploy/images/`](deploy/images/) | One folder per Docker image: `node`, `mqtt_broker`, the subsystems `monitoring`, `scenario_generation`, `scenario_execution`, `trajectory_generation`, and the simulation images `gazebo`, `sitl`, `mavproxy`, `arduagent`. `upstream_pins.env` pins the upstream sources of the Gazebo and SITL images |
 | [`deploy/master/`](deploy/master/), [`deploy/node/`](deploy/node/) | The compose file and `.env.example` of each cluster role |
 | [`deploy/workbench/`](deploy/workbench/) | The compose file of the single-machine workbench |
@@ -153,7 +153,7 @@ SceneGEMS does not install machines or set up their network. Machine Hub, a sepa
    ```
 
    `--api` (or `SCENEGEMS_OPERATOR_URL`) chooses another master; the default is `http://127.0.0.1:5174`. An example config is `backend/src/tests/scenegems_tool/assurance/campaign/data/exit_campaign.yaml`.
-10. **Follow and inspect.** **Campaigns** shows the coverage per class, the events and the controls (start, pause, drain, resume, stop). **Observe** shows a node's pools (scene generation samples, trajectory search previews) and running jobs live, a simulation at a chosen speed. **Results** lists the verdicts with filters, totals and CSV export, and a case's jobs, run records and recorded run with the monitor's frames.
+10. **Follow and inspect.** **Campaign History** lists campaigns and workbench entries; an entry shows the outputs of each step (open one in the workbench, or watch a running job live), and a campaign its coverage per class, events and controls (start, pause, drain, resume, stop). **Cluster** shows each node's pools (scene generation samples, trajectory search previews) and running jobs live, a simulation at a chosen speed. **Results** summarizes the monitor findings of an entry per executed step and lists the verdicts with filters, totals and CSV export, and a case's steps, run records and recorded run with the monitor's frames.
 
 ### Updating and removing a cluster
 
