@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { OperatorClient } from "./operatorApi";
-import { campaignDetailSchema } from "./schemas";
+import { campaignDetailSchema, campaignStepSchema, type CampaignKind, type CampaignOrigin, type CampaignStep } from "./schemas";
 
 /**
  * The campaign routes the wizard needs besides the ones in `operatorApi.ts`: the class and stack
@@ -55,6 +55,8 @@ export const catalogStackSchema = z.object({
   available: z.boolean(),
   reasons: z.array(z.string()),
   repeatability_tier: z.string().nullable(),
+  /** Whether the live monitor can stop a run on this stack early; an older master leaves it out (the kinematic stacks can). */
+  supports_early_stop: z.boolean().default(true),
   vessels: z.record(z.string(), stackTripleSchema),
   /** wind and waves: `supported`, `unmeasured` or `unsupported`. */
   environment: z.object({
@@ -113,12 +115,8 @@ export const catalogStacksSchema = z.object({
   note: z.string(),
   resolver: z.object({ combinations: z.number().int(), available: z.number().int() }),
 });
-
-export type ParameterType = z.infer<typeof parameterTypeSchema>;
 export type CatalogParameter = z.infer<typeof catalogParameterSchema>;
 export type CatalogStack = z.infer<typeof catalogStackSchema>;
-export type UnavailableStack = z.infer<typeof unavailableStackSchema>;
-export type CatalogMonitor = z.infer<typeof catalogMonitorSchema>;
 export type CatalogGenerator = z.infer<typeof catalogGeneratorSchema>;
 export type CatalogStacks = z.infer<typeof catalogStacksSchema>;
 
@@ -149,8 +147,6 @@ export const validationResultSchema = z.object({
     })
   ),
 });
-
-export type ValidatedClass = z.infer<typeof validatedClassSchema>;
 export type ValidationResult = z.infer<typeof validationResultSchema>;
 
 const CAMPAIGNS_PATH = "/cluster/campaigns";
@@ -196,11 +192,94 @@ export async function validateCampaignConfig(client: OperatorClient, yamlText: s
   return (await client.request("POST", `${CAMPAIGNS_PATH}/validate`, validationResultSchema, { body: { config: yamlText }, signal })).data;
 }
 
-/** Creates the campaign from a config (YAML text): paused, or running at once with `start`. */
-export async function createCampaign(client: OperatorClient, yamlText: string, options: { name?: string; start?: boolean } = {}) {
-  const body: { config: string; name?: string; start: boolean } = { config: yamlText, start: options.start === true };
+export interface CreateCampaignOptions {
+  name?: string;
+  start?: boolean;
+  /** `campaign` (the master's default) or `workbench`. Travels in the request, not in the config, so the config hash does not change. */
+  kind?: CampaignKind;
+  /** Who made the entry (`wizard` for the master's default of a campaign, or the workbench page's subsystem). */
+  origin?: CampaignOrigin;
+}
+
+/**
+ * Creates the campaign from a config (YAML text): paused, or running at once with `start`. A master
+ * with Phase 6 wakes its engine on create, so a workbench entry starts without waiting for a tick.
+ */
+export async function createCampaign(client: OperatorClient, yamlText: string, options: CreateCampaignOptions = {}) {
+  const body: { config: string; name?: string; start: boolean; kind?: CampaignKind; origin?: CampaignOrigin } = {
+    config: yamlText,
+    start: options.start === true,
+  };
   if (options.name !== undefined) {
     body.name = options.name;
   }
+  if (options.kind !== undefined) {
+    body.kind = options.kind;
+  }
+  if (options.origin !== undefined) {
+    body.origin = options.origin;
+  }
   return (await client.request("POST", CAMPAIGNS_PATH, campaignDetailSchema, { body })).data;
+}
+
+// Config format 2 (Phase 6, design doc 6.3). Format 1 still loads on the master, read as the full chain.
+
+/** The monitor of a step that is not the simulation: a post-hoc judgment, or none (the default). */
+export const stepMonitorSchema = z.enum(["post_hoc", "empty"]);
+export type StepMonitor = z.infer<typeof stepMonitorSchema>;
+
+/** An artifact reference as the config writes it (`size_bytes` and `media_type` are filled in by the master). */
+export const configArtifactRefSchema = z.object({
+  sha256: z.string(),
+  kind: z.string(),
+  size_bytes: z.number().int().nonnegative().optional(),
+  media_type: z.string().optional(),
+  pointer: z.string().nullish(),
+});
+export type ConfigArtifactRef = z.infer<typeof configArtifactRefSchema>;
+
+/** Where an input item came from: an output of a campaign in Campaign History, or an uploaded file. */
+export const inputItemSourceSchema = z.union([
+  z.object({ campaign_id: z.string(), case_id: z.number().int(), step: campaignStepSchema }),
+  z.object({ file: z.string() }),
+]);
+export type InputItemSource = z.infer<typeof inputItemSourceSchema>;
+
+/** A scenario given as content (scene generation only). Its class id is `scenario/<name>`. */
+export const functionalScenarioInputSchema = z.object({
+  name: z.string(),
+  ref: configArtifactRefSchema,
+  quota: z.number().int().positive().optional(),
+  failure_budget: z.number().int().nonnegative().optional(),
+});
+
+/** A scene (trajectory generation) or a trajectory set (simulation) to start from. Its class id is `item/<n>`. */
+export const inputItemSchema = z.object({
+  name: z.string(),
+  ref: configArtifactRefSchema,
+  source: inputItemSourceSchema.optional(),
+});
+
+export const campaignInputSchema = z.object({
+  functional_scenarios: z.array(functionalScenarioInputSchema).optional(),
+  items: z.array(inputItemSchema).optional(),
+});
+export type CampaignInput = z.infer<typeof campaignInputSchema>;
+
+/**
+ * The parts of a format 2 config that Phase 6 adds. The rest (`domain`, `execution`, `resources`,
+ * `policy`, `scene_generation` fields other than `monitor`, ...) are as in format 1 and stay loose
+ * here; the wizard's `configBuilder.ts` owns their shape.
+ */
+export interface CampaignConfigFormat2 {
+  format: 2;
+  name: string;
+  /** Consecutive, in chain order. */
+  steps: CampaignStep[];
+  /** Catalog classes, as today; only when `steps` start with scene generation. */
+  scope?: unknown[];
+  input?: CampaignInput;
+  scene_generation?: { monitor?: StepMonitor; [key: string]: unknown };
+  trajectories?: { monitor?: StepMonitor; [key: string]: unknown };
+  [section: string]: unknown;
 }

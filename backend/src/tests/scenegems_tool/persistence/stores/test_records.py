@@ -80,9 +80,9 @@ def test_node_record():
         last_seen_at=START,
     )
     row.capabilities = [NodeCapabilityRow(job_type=JobType.SCENE_GENERATION, slots=4, slots_in_use=1)]
-    row.fingerprints = [NodeFingerprintRow(image="scenegems-scenario-generation", fingerprint="f1")]
+    row.fingerprints = [NodeFingerprintRow(image="scenegems-scene-generation", fingerprint="f1")]
     record = NodeRecord.from_row(row)
     assert record.status == NodeStatus.DRAINING
     assert record.capabilities == {JobType.SCENE_GENERATION: CapabilityUsage(slots=4, slots_in_use=1)}
-    assert record.fingerprints == {"scenegems-scenario-generation": "f1"}
+    assert record.fingerprints == {"scenegems-scene-generation": "f1"}
     assert record.resources.free_memory_mb == 9000

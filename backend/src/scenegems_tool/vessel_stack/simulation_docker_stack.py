@@ -19,7 +19,7 @@ from concrete_level.models.trajectories import Trajectories
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.vessel_stack.contracts.docker_stack import DockerControlLayer, DockerSimulationLayer, DockerStackArtifacts, DockerStackRequest
 from scenegems_tool.vessel_stack.contracts.roles import LayerRef
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import SimulationInstanceConfig
 from scenegems_tool.vessel_stack.registry.adapter_registry import AdapterRegistry
 from scenegems_tool.vessel_stack.registry.catalog import default_resolver

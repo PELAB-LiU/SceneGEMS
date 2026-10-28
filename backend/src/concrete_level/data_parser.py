@@ -1,17 +1,18 @@
+import gzip
 import multiprocessing
-import pickle, gzip
-from abc import ABC, abstractmethod
-from concurrent.futures import ProcessPoolExecutor
-from dataclasses import asdict
+import pickle
 import tarfile
-from typing import Iterable, List, Optional, Tuple
 import zipfile
+from abc import ABC, abstractmethod
+from dataclasses import asdict
+from typing import Iterable, List, Optional, Tuple
+
 import pandas as pd
 from tqdm import tqdm
+
 from logical_level.constraint_satisfaction.evaluation_data import EvaluationData
-from utils.file_system_utils import GEN_DATA_FOLDER, get_all_file_paths
 from utils.file_folder_opener import FileFolderOpener, TkinterFileOpener
-from concrete_level.trajectory_generation.trajectory_data import TrajectoryData
+from utils.file_system_utils import GEN_DATA_FOLDER, get_all_file_paths
 
 
 def _load_eval_model_from_file(file: str) -> EvaluationData:
@@ -29,11 +30,7 @@ def _parse_eval_json_bytes(item: Tuple[str, bytes]) -> EvaluationData:
 
 def _load_zip_eval_data_from_path(file: str) -> List[EvaluationData]:
     with zipfile.ZipFile(file, "r") as z:
-        items = [
-            (name, z.read(name))
-            for name in z.namelist()
-            if name.endswith(".json")
-        ]
+        items = [(name, z.read(name)) for name in z.namelist() if name.endswith(".json")]
     return [_parse_eval_json_bytes(item) for item in items]
 
 
@@ -55,15 +52,25 @@ def _load_pkl_gzip_compressed_eval_data_from_path(file: str) -> List[EvaluationD
         eval_datas.extend(loaded)
     return eval_datas
 
+
 class DataParser(ABC):
     RRT_DIR = f"{GEN_DATA_FOLDER}/RRTStar_algo"
     EVAL_DATA_COLUMN_NAMES = list(sorted(asdict(EvaluationData()).keys()))
-    
-    TRAJ_COLUMN_NAMES = ['trajectories', 'config_name', 'measurement_name', 'rrt_evaluation_times',
-                         'iter_numbers', 'overall_eval_time', 'path', 'env_path', 'expand_distance',
-                         'goal_sample_rate', 'random_seed', ]
-    
-    
+
+    TRAJ_COLUMN_NAMES = [
+        "trajectories",
+        "config_name",
+        "measurement_name",
+        "rrt_evaluation_times",
+        "iter_numbers",
+        "overall_eval_time",
+        "path",
+        "env_path",
+        "expand_distance",
+        "goal_sample_rate",
+        "random_seed",
+    ]
+
     def __init__(
         self,
         column_names: List[str],
@@ -73,8 +80,8 @@ class DataParser(ABC):
         self.column_names = column_names
         self.dir = dir
         self._opener = file_opener if file_opener is not None else TkinterFileOpener()
-        
-    def get_data_lines(self, files : List[str]) -> List[dict]:
+
+    def get_data_lines(self, files: List[str]) -> List[dict]:
         return [self.load_dict_from_file(file) for file in files]
 
     @abstractmethod
@@ -98,15 +105,6 @@ class DataParser(ABC):
 
         return pd.DataFrame(data_lists, columns=self.column_names)
 
-    def load_dirs_merged(self, dirs=[]) -> Tuple[pd.DataFrame, List[str]]:
-        files = []
-        if len(dirs) == 0:
-            dirs = self._opener.ask_open_dirs(initialdir=self.dir)
-        for dir in dirs:
-            files += get_all_file_paths(dir, ['json'])['json']
-            if len(files) == 0:
-                continue
-        return self.load_df_from_files(files), dirs
 
 class EvalDataParser(DataParser):
     def __init__(self, file_opener: Optional[FileFolderOpener] = None) -> None:
@@ -120,30 +118,27 @@ class EvalDataParser(DataParser):
         # Keep loading in-process to avoid Windows multiprocessing pickling issues
         # for nested model fields (e.g. dict view objects inside scene caches).
         files = list(files)
-        return [
-            _load_eval_model_from_file(file)
-            for file in tqdm(files, total=len(files), desc="Loading files")
-        ]
+        return [_load_eval_model_from_file(file) for file in tqdm(files, total=len(files), desc="Loading files")]
 
     def load_dirs_merged_as_models(self) -> List[EvaluationData]:
         files = []
         for dir in self._opener.ask_open_dirs(initialdir=self.dir):
-            files += get_all_file_paths(dir, ['json'])['json']
+            files += get_all_file_paths(dir, ["json"])["json"]
             if len(files) == 0:
                 continue
         return self.load_data_models_from_files(files)
-    
-    def load_dict_from_file(self, file : str) -> dict:
+
+    def load_dict_from_file(self, file: str) -> dict:
         dict = EvaluationData.load_dict_from_json_file(file)
-        dict['path'] = file
+        dict["path"] = file
         return dict
 
     def load_model_from_file(self, file: str) -> EvaluationData:
         model: EvaluationData = EvaluationData.load_from_json(file)
         model.path = file
         return model
-    
-    def load_pkl_gzip_compressed_eval_data(self, file_path : Optional[str] = None) -> List[EvaluationData]:
+
+    def load_pkl_gzip_compressed_eval_data(self, file_path: Optional[str] = None) -> List[EvaluationData]:
         if file_path is None:
             files = self._opener.ask_open_files(initialdir=self.dir, filetypes=[("pkl.gz files", "*.pkl.gz")])
         else:
@@ -154,65 +149,21 @@ class EvalDataParser(DataParser):
                 eval_datas.extend(pickle.load(f))
         return eval_datas
         # return [EvaluationData.from_dict(d) for d in data]
-        
-    def load_zip_eval_data(self, file : str) -> List[EvaluationData]:
 
-        return _load_zip_eval_data_from_path(file)
-    def load_multiple_zip_eval_data(self) -> List[EvaluationData]:
-        files = self._opener.ask_open_files(
-            initialdir=self.dir,
-            filetypes=[("zip files", "*.zip")],
-        )
-        
-        with ProcessPoolExecutor() as executor:
-            results = list(
-                tqdm(
-                    executor.map(_load_zip_eval_data_from_path, files),
-                    total=len(files),
-                    desc="Loading files",
-                )
-            )
-        return [item for sublist in results for item in sublist]
-    
-    def load_multiple_tar_eval_data(self) -> List[EvaluationData]:
-        files = self._opener.ask_open_files(
-            initialdir=self.dir,
-            filetypes=[("tar.gz files", "*.tar.gz")],
-        )
-        with ProcessPoolExecutor() as executor:
-            results = list(
-                tqdm(
-                    executor.map(_load_tar_eval_data_from_path, files),
-                    total=len(files),
-                    desc="Loading tar.gz files",
-                )
-            )
-        return [item for sublist in results for item in sublist]
-
-    def _parse_json_bytes(self, item):
-        file_name, content = item
-        data = EvaluationData.load_from_json_bytes(content)
-        data.path = file_name
-        return data
-    
-    
-    def load_tar_eval_data(self, file : str) -> List[EvaluationData]:
-        return _load_tar_eval_data_from_path(file)
-            
     def load_eval_data_complex(self) -> List[EvaluationData]:
         jsons: List[str] = []
         zips: List[str] = []
         gz_tars: List[str] = []
         pkl_gzs: List[str] = []
         for dir in self._opener.ask_open_dirs(initialdir=self.dir):
-            files = get_all_file_paths(dir, ['json','zip','tar.gz', 'pkl.gz'])
-            jsons += files['json']
-            zips += files['zip']
-            gz_tars += files['tar.gz']
-            pkl_gzs += files['pkl.gz']
+            files = get_all_file_paths(dir, ["json", "zip", "tar.gz", "pkl.gz"])
+            jsons += files["json"]
+            zips += files["zip"]
+            gz_tars += files["tar.gz"]
+            pkl_gzs += files["pkl.gz"]
 
         results: List[List[EvaluationData]] = []
-        with multiprocessing.Pool(multiprocessing.cpu_count()-2 or 1) as executor:
+        with multiprocessing.Pool(multiprocessing.cpu_count() - 2 or 1) as executor:
             if zips:
                 results.extend(
                     tqdm(
@@ -247,8 +198,8 @@ class EvalDataParser(DataParser):
                     )
                 )
         return [item for sublist in results for item in sublist]
-    
-    def dump_eval_datas_to_gz(self, eval_datas : List[EvaluationData], file = None) -> None:
+
+    def dump_eval_datas_to_gz(self, eval_datas: List[EvaluationData], file=None) -> None:
         if file is None:
             file = self._opener.ask_save_file(initialdir=self.dir, filetypes=[("gz files", "*.gz")])
         if file is None:
@@ -256,25 +207,3 @@ class EvalDataParser(DataParser):
             exit()
         with gzip.open(file, "wb") as f:
             pickle.dump(eval_datas, f, protocol=pickle.HIGHEST_PROTOCOL)
-    
-class TrajDataParser(DataParser):
-    def __init__(self, file_opener: Optional[FileFolderOpener] = None) -> None:
-        super().__init__(self.TRAJ_COLUMN_NAMES, self.RRT_DIR, file_opener=file_opener)
-
-    def load_data_models(self) -> List[TrajectoryData]:
-        files = self._opener.ask_open_files(initialdir=self.dir)
-        return self.load_models_from_files(files)
-
-    def load_models_from_files(self, files: List[str]) -> List[TrajectoryData]:
-        data_models = [self.load_model_from_file(file) for file in files]
-        return [model for model in data_models]
-
-    def load_dict_from_file(self, file: str) -> dict:
-        dict = TrajectoryData.load_dict_from_json(file)
-        dict["path"] = file
-        return dict
-
-    def load_model_from_file(self, file: str) -> TrajectoryData:
-        model = TrajectoryData.load_from_json(file)
-        model.path = file
-        return model

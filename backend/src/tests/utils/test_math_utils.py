@@ -3,16 +3,7 @@ import unittest
 
 import numpy as np
 
-from utils.math_utils import (
-    abs_heading_diff,
-    calculate_heading,
-    compute_angle,
-    compute_start_point,
-    find_center_and_radius,
-    heading_diff,
-    imply,
-    rotate_heading,
-)
+from utils.math_utils import calculate_heading, compute_angle, compute_start_point, find_center_and_radius, heading_diff, rotate_heading
 
 
 class TestMathUtils(unittest.TestCase):
@@ -160,33 +151,9 @@ class TestMathUtils(unittest.TestCase):
         with self.assertRaises(ValueError):
             compute_start_point(position, velocity, speed, acceleration)
 
-    def test_abs_heading_diff_same_angle(self):
-        """Test abs_heading_diff with same angles."""
-        angle1 = math.pi / 4
-        angle2 = math.pi / 4
-        diff = abs_heading_diff(angle1, angle2)
-        self.assertAlmostEqual(diff, 0.0)
 
-    def test_abs_heading_diff_opposite_angles(self):
-        """Test abs_heading_diff with opposite angles."""
-        angle1 = math.pi / 4
-        angle2 = math.pi / 4 + math.pi
-        diff = abs_heading_diff(angle1, angle2)
-        self.assertAlmostEqual(diff, math.pi)
 
-    def test_abs_heading_diff_90_degrees(self):
-        """Test abs_heading_diff with 90-degree difference."""
-        angle1 = 0
-        angle2 = math.pi / 2
-        diff = abs_heading_diff(angle1, angle2)
-        self.assertAlmostEqual(diff, math.pi / 2)
 
-    def test_abs_heading_diff_crossing_zero(self):
-        """Test abs_heading_diff crossing zero boundary."""
-        angle1 = math.pi / 6  # 30 degrees
-        angle2 = -math.pi / 6  # -30 degrees
-        diff = abs_heading_diff(angle1, angle2)
-        self.assertAlmostEqual(diff, math.pi / 3)  # 60 degrees
 
     def test_heading_diff_same_angle(self):
         """Test heading_diff with same angles."""
@@ -247,34 +214,6 @@ class TestMathUtils(unittest.TestCase):
         angle2 = -math.pi / 4
         result = rotate_heading(angle1, angle2)
         self.assertAlmostEqual(result, -math.pi / 2)
-
-    def test_imply_true_true(self):
-        """Test imply with both arguments True."""
-        result = imply(True, True)
-        self.assertTrue(result)
-
-    def test_imply_true_false(self):
-        """Test imply with first True, second False."""
-        result = imply(True, False)
-        self.assertFalse(result)
-
-    def test_imply_false_true(self):
-        """Test imply with first False, second True."""
-        result = imply(False, True)
-        self.assertTrue(result)
-
-    def test_imply_false_false(self):
-        """Test imply with both arguments False."""
-        result = imply(False, False)
-        self.assertTrue(result)
-
-    def test_imply_edge_cases(self):
-        """Test imply with various edge cases."""
-        # Test with different boolean values
-        self.assertTrue(imply(True, True))
-        self.assertFalse(imply(True, False))
-        self.assertTrue(imply(False, True))
-        self.assertTrue(imply(False, False))
 
 
 if __name__ == "__main__":

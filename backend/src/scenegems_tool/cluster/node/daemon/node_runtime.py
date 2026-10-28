@@ -18,7 +18,7 @@ from scenegems_tool.cluster.node.instance_scope import INSTANCES_FOLDER, SCOPE_R
 from scenegems_tool.cluster.node.launchers.compose_project import ComposeProject
 from scenegems_tool.cluster.node.node_context import NodeContext
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 
 _logger = logging.getLogger(__name__)
 

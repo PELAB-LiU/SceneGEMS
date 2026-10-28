@@ -7,6 +7,8 @@ import { downloadBlob } from "../scene/sceneExport";
 import type { WaveInfoWire } from "../../../domain/simulation/wireTypes";
 import type { SimulationStreamControls } from "./types";
 import type { SimulationSetup } from "../cluster/simulationJobs";
+import { applySetupRequestToDrafts, applySimulationModels } from "./simulationSetupDrafts";
+import { useSimulationSetupRequestStore } from "./simulationSetupRequest";
 import {
   ASV_SOFTWARE,
   ASV_SOFTWARE_LABELS,
@@ -111,6 +113,10 @@ interface Props {
 
 const EMPTY_ACTORS: ActorStaticInfo[] = [];
 
+function ownShipIdsOf(actors: ActorStaticInfo[]): Set<string> {
+  return new Set(actors.filter((actor) => actor.isOwnShip).map((actor) => actor.id));
+}
+
 interface WaveParamDraft {
   amplitude: number;
   period: number;
@@ -200,8 +206,8 @@ function removeLegacyVesselDraftsWithModels(): void {
 
 export const SimulationInitControls = forwardRef<SimulationInitControlsHandle, Props>(
   function SimulationInitControls({ streamControls, onScenarioVesselCount, onSetupChange }, ref) {
-  const visualizedActors = usePlaybackStore((s) => s.latestGeneratedScene?.scene?.actors ?? EMPTY_ACTORS);
-  const animationActors = usePlaybackStore((s) => s.frames[0]?.actors ?? visualizedActors);
+  // The simulation page's own trajectories: its input, or the run it replays.
+  const animationActors = usePlaybackStore((s) => s.frames[0]?.actors ?? EMPTY_ACTORS);
   const simulationActors = usePlaybackStore((s) => s.simulationFrames[0]?.actors ?? EMPTY_ACTORS);
   const [vesselConnectionDrafts, setVesselConnectionDrafts] = useState<VesselInitConnectionDraft[]>(
     []
@@ -233,10 +239,33 @@ export const SimulationInitControls = forwardRef<SimulationInitControlsHandle, P
     () => vesselConnectionDrafts.map((draft) => normalizeDraftStack(draft, simulatorType, stackOptions)),
     [vesselConnectionDrafts, simulatorType, stackOptions]
   );
-  // Per-instance guard against re-applying the same server `simulation_models`
-  // payload. A component-scoped ref (not a module global) so navigating away and
-  // back re-applies the still-present models onto freshly rebuilt drafts.
-  const lastAppliedSimulationModelsTokenRef = useRef<number | null>(null);
+  // Per-instance guard against re-applying the same server `simulation_models` payload, and the
+  // same loaded run's setup. Component state (not a module global) so navigating away and back
+  // re-applies the still-present models onto freshly rebuilt drafts. Both apply while rendering,
+  // from the remembered token, rather than in an effect.
+  const [appliedModelsToken, setAppliedModelsToken] = useState<number | null>(null);
+  const modelsToken = receivedSimulationModels?.receivedToken ?? null;
+  if (modelsToken !== appliedModelsToken && (modelsToken === null || vesselConnectionDrafts.length > 0)) {
+    setAppliedModelsToken(modelsToken);
+    if (receivedSimulationModels) {
+      setVesselConnectionDrafts(applySimulationModels(vesselConnectionDrafts, receivedSimulationModels.vesselModelsByAgentId));
+    }
+  }
+  const setupRequest = useSimulationSetupRequestStore((s) => s.request);
+  const [appliedSetupToken, setAppliedSetupToken] = useState<number | null>(null);
+  // A loaded run's setup waits for the vessels of its trajectories.
+  if (setupRequest !== null && setupRequest.token !== appliedSetupToken && vesselConnectionDrafts.length > 0) {
+    setAppliedSetupToken(setupRequest.token);
+    setSimulatorType(setupRequest.simulatorType);
+    if (setupRequest.speedup !== null) {
+      setSimulationSpeed(setupRequest.speedup);
+    }
+    setWindEast(setupRequest.windVector[0]);
+    setWindNorth(setupRequest.windVector[1]);
+    setWindUp(setupRequest.windVector[2]);
+    setWave(setupRequest.wave ?? { ...DEFAULT_WAVE });
+    setVesselConnectionDrafts(applySetupRequestToDrafts(vesselConnectionDrafts, setupRequest.mode, ownShipIdsOf([...animationActors, ...simulationActors]), setupRequest.controlLayer));
+  }
 
   useImperativeHandle(
     ref,
@@ -295,24 +324,6 @@ export const SimulationInitControls = forwardRef<SimulationInitControlsHandle, P
     }
     setPersistedVesselSettings(toPersistedVesselDrafts(vesselConnectionDrafts));
   }, [vesselConnectionDrafts, setPersistedVesselSettings]);
-
-  useEffect(() => {
-    if (!receivedSimulationModels) {
-      lastAppliedSimulationModelsTokenRef.current = null;
-      return;
-    }
-    if (lastAppliedSimulationModelsTokenRef.current === receivedSimulationModels.receivedToken) {
-      return;
-    }
-    lastAppliedSimulationModelsTokenRef.current = receivedSimulationModels.receivedToken;
-    const { vesselModelsByAgentId } = receivedSimulationModels;
-    setVesselConnectionDrafts((drafts) =>
-      drafts.map((draft) => {
-        const model = vesselModelsByAgentId[draft.vesselId];
-        return model != null ? { ...draft, gazeboVesselModel: model } : draft;
-      })
-    );
-  }, [receivedSimulationModels, setVesselConnectionDrafts]);
 
   useEffect(() => {
     onScenarioVesselCount?.(scenarioVesselCount);

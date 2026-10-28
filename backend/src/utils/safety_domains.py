@@ -1,13 +1,12 @@
 import math
 from abc import ABC, abstractmethod
-from re import T
 from typing import List, Optional
 
 import numpy as np
 
 from concrete_level.models.actor_state import ActorState
 from utils.global_constants import EPSILON
-from utils.math_utils import Direction, calculate_heading, distance, rotate_heading
+from utils.math_utils import Direction, calculate_heading, distance
 
 # How finely a step is sampled when a domain has no closed-form segment clearance.
 SEGMENT_CLEARANCE_SAMPLES = 16
@@ -35,14 +34,6 @@ class SafetyDomain(ABC):
     @property
     def v_perp_left(self) -> np.ndarray:
         return np.array([-np.sin(self.heading), np.cos(self.heading)])
-
-    @property
-    def left_heading(self) -> float:
-        return rotate_heading(self.heading, np.pi / 2)
-
-    @property
-    def right_heading(self) -> float:
-        return rotate_heading(self.heading, -np.pi / 2)
 
     @property
     def v_perp_right(self) -> np.ndarray:
@@ -80,18 +71,6 @@ class SafetyDomain(ABC):
         if direction == Direction.BACKWARD:
             return -self.v
         raise ValueError(f"Invalid direction: {direction}")
-
-    def signed_side_offset(self, point: np.ndarray, direction: Direction) -> float:
-        """How far ``point`` lies beyond the domain boundary on the given side.
-
-        Positive means the point is clear of the domain on that side, zero means it is
-        level with the boundary there, negative means it has not cleared it. Unlike
-        ``distance_from_direction`` this carries a sign, so passing on the wrong side is
-        distinguishable from passing on the right one.
-        """
-        normal = self.direction_normal(direction)
-        extent = self.intersection_distance_from_center(calculate_heading(normal))
-        return float(np.dot(point - self.center, normal)) - extent
 
     def min_signed_clearance_over_segment(self, p_start: np.ndarray, p_end: np.ndarray, samples: int = SEGMENT_CLEARANCE_SAMPLES) -> float:
         """Smallest ``signed_clearance`` anywhere on the segment from p_start to p_end.
@@ -151,11 +130,6 @@ class SafetyDomain(ABC):
     @property
     @abstractmethod
     def center_end_distance(self) -> float:
-        pass
-
-    @property
-    @abstractmethod
-    def center_left_side_distance(self) -> float:
         pass
 
     @property
@@ -222,10 +196,6 @@ class CircularSafetyDomain(SafetyDomain):
 
     @property
     def center_end_distance(self) -> float:
-        return self.radius
-
-    @property
-    def center_left_side_distance(self) -> float:
         return self.radius
 
     @property
@@ -462,10 +432,6 @@ class EllipticalSafetyDomain(SafetyDomain):
         return self.a
 
     @property
-    def center_left_side_distance(self) -> float:
-        return self.b
-
-    @property
     def bounding_rectangle(self) -> "RectangularSafetyDomain":
         # a is the along-heading semi axis and b the cross-heading one, matching
         # RectangularSafetyDomain's own a/b convention (they were swapped here).
@@ -495,11 +461,6 @@ class RectangularSafetyDomain(SafetyDomain):
         super().__init__(center, heading)
         self.a = a
         self.b = b
-
-    def distance_from_point(self, point: np.ndarray) -> float:
-        center_to_actor_heading = calculate_heading(point - self.center)
-        intersection = self.intersection_of_line_from_center(center_to_actor_heading)
-        return distance(intersection, point)
 
     def distance_from_right_side(self, point: np.ndarray) -> float:
         right_pseudo_state = self.right_pseudo_state
@@ -676,10 +637,6 @@ class RectangularSafetyDomain(SafetyDomain):
         return self.a
 
     @property
-    def center_left_side_distance(self) -> float:
-        return self.b
-
-    @property
     def bounding_rectangle(self) -> "RectangularSafetyDomain":
         return self
 
@@ -762,13 +719,6 @@ class DomainCollection:
             self.__bounding_rectangle = RectangularSafetyDomain.bound_domains(self.domains, self.reference_heading)
             self.__has_changed = False
         return self.__bounding_rectangle
-
-    @staticmethod
-    def from_points(points: List[np.ndarray], headings: List[float], radii: List[float]) -> "DomainCollection":
-        domain_collection = DomainCollection()
-        for point, heading, radius in zip(points, headings, radii):
-            domain_collection.add_domain(point, heading, radius)
-        return domain_collection
 
     @staticmethod
     def from_domains(domains: List[SafetyDomain], reference_heading: Optional[float] = None) -> "DomainCollection":

@@ -40,11 +40,6 @@ class ActorValues(ABC):
 
     @property
     @abstractmethod
-    def v_norm_perp(self) -> np.ndarray:
-        pass
-
-    @property
-    @abstractmethod
     def h(self) -> float:
         pass
 
@@ -89,10 +84,6 @@ class VesselValues(ActorValues):
     def v_norm(self) -> np.ndarray:
         return self.v / self.sp
 
-    @property
-    def v_norm_perp(self) -> np.ndarray:
-        return np.array([self.v_norm[1], -self.v_norm[0]])
-
 
 @dataclass(frozen=True)
 class ObstacleValues(ActorValues):
@@ -104,10 +95,6 @@ class ObstacleValues(ActorValues):
 
     @property
     def v_norm(self) -> np.ndarray:
-        return np.array([0, 0])
-
-    @property
-    def v_norm_perp(self) -> np.ndarray:
         return np.array([0, 0])
 
     @property

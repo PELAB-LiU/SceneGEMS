@@ -5,6 +5,8 @@ from typing import List
 from logical_level.mapping.static_obstacle import StaticObstacleType
 from logical_level.mapping.vessel_type import VesselType
 from utils.global_constants import EPSILON, MAX_COORD, MAX_HEADING, MIN_COORD, MIN_HEADING
+
+
 @dataclass(frozen=True)
 class ActorVariable(ABC):
     id: int
@@ -48,11 +50,6 @@ class ActorVariable(ABC):
 
     @property
     @abstractmethod
-    def type_name(self) -> str:
-        pass
-    
-    @property
-    @abstractmethod
     def min_speed(self) -> float:
         pass
 
@@ -61,13 +58,10 @@ class ActorVariable(ABC):
     def max_speed(self) -> float:
         pass
 
+
 @dataclass(frozen=True)
 class VesselVariable(ActorVariable):
     vessel_type: VesselType
-
-    @property
-    def type_name(self) -> str:
-        return self.vessel_type.name
 
     @property
     def min_length(self) -> float:
@@ -179,10 +173,6 @@ class StaticObstacleVariable(ActorVariable):
     obstacle_type: StaticObstacleType
 
     @property
-    def type_name(self) -> str:
-        return self.obstacle_type.name
-
-    @property
     def name(self) -> str:
         return f"SO_{self.id}"
 
@@ -205,11 +195,11 @@ class StaticObstacleVariable(ActorVariable):
     @property
     def is_vessel(self) -> bool:
         return False
-    
+
     @property
     def min_speed(self) -> float:
         return 0.0 - EPSILON
-    
+
     @property
     def max_speed(self) -> float:
         return 0.0 + EPSILON

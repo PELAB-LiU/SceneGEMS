@@ -55,7 +55,7 @@ def test_pool_containers_dial_the_plain_broker_with_no_account_and_no_certificat
     node = build_node_context(configuration(tmp_path))
     pool = node.pools.get(Subsystem.SCENE_GENERATION)
     compose = pool.build_compose()
-    service = compose["services"]["scenario_generation"]
+    service = compose["services"]["scene_generation"]
     assert service["environment"]["MQTT_TLS"] == "0" and service["environment"]["MQTT_USER"] == "" and service["environment"]["MQTT_BROKER"] == "192.168.1.10"
     assert "MQTT_CA_CERTIFICATE" not in service["environment"] and not service.get("volumes")
     assert "MQTT_CA_CERTIFICATE" not in mqtt_container_environment(node.mqtt_connection)

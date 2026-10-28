@@ -14,7 +14,7 @@ from scenegems_tool.cluster.node.launchers.pooled.service_pools import ServicePo
 from scenegems_tool.cluster.node.subsystem import Subsystem
 from scenegems_tool.cluster.protocol.jobs import JobSpec, JobType
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 
 # The job type whose slots size each pooled subsystem's worker pool.
 _POOL_JOB_TYPES = {

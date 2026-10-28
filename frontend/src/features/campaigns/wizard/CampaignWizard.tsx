@@ -15,14 +15,18 @@ import { reasonsByStep, type Reason } from "./reasons";
 import { ResourcesStep } from "./ResourcesStep";
 import { ReviewStep } from "./ReviewStep";
 import { RunsStep } from "./RunsStep";
-import { ScopeStep } from "./ScopeStep";
+import { InputStep } from "./InputStep";
+import { StepsStep } from "./StepsStep";
+import { visibleWizardSteps } from "./stepPlan";
 import type { CatalogState, ClusterResources, StepProps } from "./stepTypes";
 import { TrajectoriesStep } from "./TrajectoriesStep";
 import { useValidation, validationFromError } from "./useValidation";
-import { useWizardStore, WIZARD_STEP_LABELS, WIZARD_STEPS, type WizardStepId } from "./wizardState";
+import { useWizardStore, WIZARD_STEP_LABELS, type WizardStepId } from "./wizardState";
 import "./wizard.css";
 
 const AUTO_CHECK_DELAY_MS = 700;
+/** How often the check of uploaded files' expiry looks at the clock. */
+const CLOCK_MS = 60_000;
 const EMPTY_BUILDER: BuilderCatalog = { stacks: [], generators: [] };
 const NO_NODES: readonly NodeView[] = [];
 
@@ -38,15 +42,23 @@ function describeCreateFailure(error: unknown): string {
   return `The campaign was not created: ${describeOperatorError(error)}`;
 }
 
-/** The create wizard: scope, domain, trajectories, runs, resources and policy, then a review that validates the config on the master. */
+/**
+ * The create wizard: the steps of the chain to run, their input, the domain, the trajectories and
+ * runs (only when those steps are chosen), resources and policy, then a review that validates the
+ * config on the master.
+ */
 export function CampaignWizard({ onClose, onCreated }: CampaignWizardProps) {
   const client = useOperatorClient();
-  const step = useWizardStore((state) => state.step);
+  const storedStep = useWizardStore((state) => state.step);
   const draft = useWizardStore((state) => state.draft);
   const visited = useWizardStore((state) => state.visited);
   const setStep = useWizardStore((state) => state.setStep);
   const update = useWizardStore((state) => state.update);
   const reset = useWizardStore((state) => state.reset);
+
+  // The pages of the chosen steps; a stored page that the steps no longer include falls back to the first
+  const pages = useMemo(() => visibleWizardSteps(draft.steps), [draft.steps]);
+  const step: WizardStepId = pages.includes(storedStep) ? storedStep : "steps";
 
   const classes = useCatalogClasses();
   const stacks = useCatalogStacks();
@@ -80,7 +92,13 @@ export function CampaignWizard({ onClose, onCreated }: CampaignWizardProps) {
   );
   const config = useMemo(() => buildCampaignConfig(draft, builderCatalog), [draft, builderCatalog]);
   const yaml = useMemo(() => configToYaml(config), [config]);
-  const localReasons = useMemo(() => checkDraft(draft, stacks.data ? builderCatalog : null), [draft, builderCatalog, stacks.data]);
+  // Uploaded files expire 24 hours after the upload: the clock makes the check see it
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), CLOCK_MS);
+    return () => clearInterval(timer);
+  }, []);
+  const localReasons = useMemo(() => checkDraft(draft, stacks.data ? builderCatalog : null, now), [draft, builderCatalog, stacks.data, now]);
 
   const plan = useMemo(
     () => (nodesLoaded ? planResources(requiredCapabilities(config), nodes, { nodes: draft.resources.fullUsage ? null : draft.resources.nodes, labels }) : null),
@@ -123,7 +141,7 @@ export function CampaignWizard({ onClose, onCreated }: CampaignWizardProps) {
   }, [step, localReasons.length, client, validation.yaml, yaml, check]);
 
   const creation = useMutation({
-    mutationFn: ({ start, target }: { start: boolean; target: OperatorClient }) => createCampaign(target, yaml, { start }),
+    mutationFn: ({ start, target }: { start: boolean; target: OperatorClient }) => createCampaign(target, yaml, { start, kind: "campaign", origin: "wizard" }),
     onSuccess: (campaign) => {
       reset();
       resetValidation();
@@ -141,13 +159,16 @@ export function CampaignWizard({ onClose, onCreated }: CampaignWizardProps) {
   const byStep = useMemo(() => reasonsByStep(allReasons), [allReasons]);
   // What the browser finds wrong shows on a step once the operator has been through it; the master's reasons always show
   const stepReasons = byStep[step].filter((reason) => reason.source === "server" || visited.includes(step));
-  const index = WIZARD_STEPS.indexOf(step);
+  const index = pages.indexOf(step);
 
   const stepProps: StepProps = { draft, update, reasons: stepReasons };
   let body;
   switch (step) {
-    case "scope":
-      body = <ScopeStep {...stepProps} catalog={catalogState} />;
+    case "steps":
+      body = <StepsStep {...stepProps} />;
+      break;
+    case "input":
+      body = <InputStep {...stepProps} catalog={catalogState} />;
       break;
     case "domain":
       body = <DomainStep {...stepProps} />;
@@ -222,7 +243,7 @@ export function CampaignWizard({ onClose, onCreated }: CampaignWizardProps) {
       </header>
       <nav className="wiz-steps" aria-label="Wizard steps">
         <ol>
-          {WIZARD_STEPS.map((id, at) => {
+          {pages.map((id, at) => {
             const count = stepBadge(id);
             return (
               <li key={id}>
@@ -242,13 +263,13 @@ export function CampaignWizard({ onClose, onCreated }: CampaignWizardProps) {
       </nav>
       <div className="wiz-body panel">{body}</div>
       <footer className="wiz-foot">
-        <button type="button" disabled={index === 0} onClick={() => setStep(WIZARD_STEPS[index - 1])}>
+        <button type="button" disabled={index === 0} onClick={() => setStep(pages[index - 1])}>
           Back
         </button>
         {step !== "review" && (
           <>
-            <button type="button" className="primary-btn accent" onClick={() => setStep(WIZARD_STEPS[index + 1])}>
-              Next: {WIZARD_STEP_LABELS[WIZARD_STEPS[index + 1]]}
+            <button type="button" className="primary-btn accent" onClick={() => setStep(pages[index + 1])}>
+              Next: {WIZARD_STEP_LABELS[pages[index + 1]]}
             </button>
             <button type="button" onClick={() => setStep("review")}>
               Review the config

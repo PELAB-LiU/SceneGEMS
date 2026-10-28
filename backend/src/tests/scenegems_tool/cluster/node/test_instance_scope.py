@@ -2,7 +2,7 @@ import re
 
 import pytest
 
-from scenegems_tool.cluster.node.instance_scope import InstanceScope, master_topic_scope, node_topic_scope, safe_id
+from scenegems_tool.cluster.node.instance_scope import InstanceScope, node_topic_scope, safe_id
 from scenegems_tool.messaging.topic_scope import TopicScope
 
 DOCKER_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]+$")
@@ -36,7 +36,7 @@ def test_every_derived_name_is_valid_for_docker_compose_and_mqtt():
 def test_instance_prefixes_lie_under_the_node_and_master_scopes():
     scope = InstanceScope.pooled("m1", "n1", "trajectory_generation", 2)
     assert scope.topic_prefix.startswith(node_topic_scope("m1", "n1"))
-    assert node_topic_scope("m1", "n1").startswith(master_topic_scope("m1"))
+    assert node_topic_scope("m1", "n1").startswith("scenegems/m1/")
 
 
 def test_two_nodes_and_two_pools_never_share_a_name():

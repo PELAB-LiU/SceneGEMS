@@ -31,6 +31,7 @@ from functional_level.metamodels.interpretation import (
 )
 from utils.scenario import Scenario
 
+
 @dataclass(frozen=True)
 class FunctionalScenario(Scenario):
     Sea_object_interpretation: SeaObjectInterpretation = field(init=False)
@@ -120,9 +121,6 @@ class FunctionalScenario(Scenario):
     def is_os(self, o: FuncObject) -> bool:
         return self.OS_interpretation.contains(o)
 
-    def is_ts(self, o: FuncObject) -> bool:
-        return self.TS_interpretation.contains(o)
-
     def is_vessel(self, o: FuncObject) -> bool:
         return self.Vessel_interpretation.contains(o)
 
@@ -131,9 +129,6 @@ class FunctionalScenario(Scenario):
 
     def is_obstacle(self, o: FuncObject) -> bool:
         return self.Static_obstacle_interpretation.contains(o)
-
-    def in_masthead_sector_of(self, o1: FuncObject, o2: FuncObject) -> bool:
-        return self.is_sea_object(o1) and self.is_vessel(o2) and (self.in_port_side_sector_of_interpretation.contains((o1, o2)) or self.in_starboard_side_sector_of_interpretation.contains((o1, o2)))
 
     def at_visibility_distance_and_may_collide(self, o1: FuncObject, o2: FuncObject) -> bool:
         return self.is_sea_object(o1) and self.is_vessel(o2) and self.at_visibility_distance_interpretation.contains((o1, o2)) and self.may_collide_interpretation.contains((o1, o2))

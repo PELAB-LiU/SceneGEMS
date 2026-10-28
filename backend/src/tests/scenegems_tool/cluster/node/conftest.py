@@ -10,7 +10,7 @@ from concrete_level.trajectory_generation.trajectory_builder import TrajectoryBu
 from scenegems_tool.cluster.node.node_context import NodeContext
 from scenegems_tool.cluster.protocol.jobs import JobSpec, JobType
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 
 
 def _vessel(vessel_id: int, is_os: bool, length: float = 30.0) -> ConcreteActor:

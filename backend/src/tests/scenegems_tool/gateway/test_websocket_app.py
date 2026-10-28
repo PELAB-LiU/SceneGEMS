@@ -102,5 +102,27 @@ def test_health_endpoint():
     assert websocket_app.health() == {"status": "ok"}
 
 
-def test_create_app_returns_the_module_app():
-    assert websocket_app.create_app() is websocket_app.app
+
+
+class TestRunRecorder:
+    async def test_the_gateway_on_its_own_records_nothing(self, monkeypatch):
+        monkeypatch.setattr(websocket_app.app.state, "run_recorder", None)
+        assert websocket_app.run_recorder() is None
+
+    async def test_each_connection_gets_the_recorder_the_master_set(self, monkeypatch):
+        monkeypatch.setattr(websocket_app.app.state, "run_recorder", None)
+        recorder = object()
+        websocket_app.set_run_recorder(recorder)
+        assert websocket_app.run_recorder() is recorder
+        sessions = []
+        create_session = websocket_app.websocket_session_manager.create_session
+
+        def created(websocket):
+            session, processor = create_session(websocket=websocket)
+            sessions.append(session)
+            return session, processor
+
+        monkeypatch.setattr(websocket_app.websocket_session_manager, "create_session", created)
+        await converse()
+        (session,) = sessions
+        assert session.run_recorder is recorder

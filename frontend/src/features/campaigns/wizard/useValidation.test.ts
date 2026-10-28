@@ -12,7 +12,7 @@ describe("validationFromError", () => {
     expect(state.status).toBe("invalid");
     expect(state.yaml).toBe("name: x\n");
     expect(state.reasons.map((reason) => [reason.step, reason.entry, reason.field])).toEqual([
-      ["scope", 0, null],
+      ["input", 0, null],
       ["runs", 0, "stack.dt"],
     ]);
   });

@@ -1,5 +1,5 @@
 from itertools import chain, permutations
-from typing import Dict, List, Set, Tuple
+from typing import List, Set, Tuple
 
 from concrete_level.models.concrete_actors import ConcreteStaticObstacle, ConcreteVessel
 from concrete_level.models.concrete_scene import ConcreteScene
@@ -27,10 +27,11 @@ from logical_level.models.relation_constraints_concept.literals import (
     OutVis,
 )
 
+
 class ConcreteSceneAbstractor:
     @staticmethod
     def get_abstractions_from_concrete(scene: ConcreteScene, init_method=RandomInstanceInitializer.name) -> MultiLevelScenario:
-        
+
         builder = FunctionalScenarioBuilder()
 
         abstractions: List[Tuple[ActorVariable, FuncObject]] = [ConcreteSceneAbstractor.create_vessel_abstraction(vessel, builder) for vessel in scene.vessels]
@@ -81,36 +82,13 @@ class ConcreteSceneAbstractor:
         return ConcreteSceneAbstractor.get_abstractions_from_concrete(eval_data.best_scene, eval_data.init_method)
 
     @staticmethod
-    def get_equivalence_class_distribution(scenes: List[ConcreteScene], is_second_level_abstraction=False) -> Dict[int, Tuple[ConcreteScene, int]]:
-        equivalence_classes: Dict[int, Tuple[ConcreteScene, int]] = {}
-        for scene in scenes:
-            if not scene.has_functional_hash:
-                raise ValueError("Scene does not have a functional hash. Annotate hash!")
-            if is_second_level_abstraction:
-                hash = scene.second_level_hash
-            else:
-                hash = scene.first_level_hash
-                
-            if hash is None:
-                print(f"WARNING:Scene {scene} does not have a functional hash. Annotate hash!")
-                continue
-
-            if hash not in equivalence_classes:
-                equivalence_classes[hash] = (scene, 1)
-            else:
-                _, count = equivalence_classes[hash]
-                equivalence_classes[hash] = (scene, count + 1)
-        return equivalence_classes
-    
-    
-    @staticmethod
     def create_static_obstacle_abstraction(obstacle: ConcreteStaticObstacle, builder: FunctionalScenarioBuilder) -> Tuple[StaticObstacleVariable, FuncObject]:
         logical_variable = obstacle.logical_variable
         obstacle_type_obj = builder.add_new_obstacle_type(obstacle.type)
         obj = builder.add_new_obstacle(obstacle.name, obstacle.id)
         builder.static_obstacle_type_interpretation.add(obj, obstacle_type_obj)
         return logical_variable, obj
-    
+
     @staticmethod
     def create_vessel_abstraction(vessel: ConcreteVessel, builder: FunctionalScenarioBuilder) -> Tuple[VesselVariable, FuncObject]:
         logical_variable = vessel.logical_variable

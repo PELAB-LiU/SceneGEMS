@@ -46,10 +46,6 @@ class COLREGSRule(ABC):
         return f"Rule {self.rule_number}: {self.title}"
 
     @property
-    def is_suggestion(self) -> bool:
-        return self.kind == SUGGESTION_KIND
-
-    @property
     def scope(self) -> str:
         """Human label for what the rule constrains: one vessel or the encounter."""
         if self.subject_actor_name:

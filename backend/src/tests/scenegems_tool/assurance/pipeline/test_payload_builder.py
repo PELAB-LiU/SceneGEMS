@@ -1,4 +1,4 @@
-"""Payloads from the config and earlier results, inline and with references, checked by their job type's models."""
+"""Payloads from the config, the case's input and earlier results, inline and with references, checked by their job type's models."""
 
 import json
 
@@ -14,11 +14,11 @@ from scenegems_tool.assurance.pipeline.payload_builder import (
     trajectories_of_trajectory_result,
     validate_payload,
 )
-from scenegems_tool.assurance.pipeline.stage_graph import SCENE_STEP, Step
+from scenegems_tool.assurance.pipeline.stage_graph import SCENE_MONITOR_STEP, SCENE_STEP, TRAJECTORIES_MONITOR_STEP, Step
 from scenegems_tool.cluster.fingerprints.job_images import SCENARIO_EXECUTION_IMAGE, SCENE_GENERATION_IMAGE
 from scenegems_tool.cluster.protocol.jobs import JobType
 from scenegems_tool.persistence.schema import PipelineStage
-from tests.scenegems_tool.assurance.pipeline.conftest import CLASS_A, config_dict
+from tests.scenegems_tool.assurance.pipeline.conftest import CLASS_A, config_dict, format2_dict
 from tests.scenegems_tool.assurance.pipeline.fake_executor import EXPECTED
 from tests.scenegems_tool.cluster.payloads import trajectories_data
 
@@ -114,3 +114,86 @@ def test_derived_seeds_are_stable_and_distinct():
     assert derived_seed(1, "trajectories") == derived_seed(1, "trajectories")
     assert derived_seed(1, "trajectories") != derived_seed(2, "trajectories")
     assert 0 <= derived_seed(99, "trajectories") < 2**31
+
+
+# Partial campaigns
+
+SCENARIO_REF = {"sha256": "12" * 32, "size_bytes": 40, "kind": "functional_scenario", "media_type": "text/plain; charset=utf-8", "pointer": None}
+SCENE_REF = {"sha256": "34" * 32, "size_bytes": 900, "kind": "scene", "media_type": "application/json", "pointer": None}
+FILE = {"file": "upload.json"}
+
+
+def _format2_builder(steps, **sections) -> PayloadBuilder:
+    return PayloadBuilder(campaign_config_from_dict(format2_dict(steps, **sections)))
+
+
+def _item(ref, name="item") -> dict:
+    return {"name": name, "ref": ref, "source": FILE}
+
+
+def test_a_scenario_given_as_content_goes_out_as_its_reference():
+    builder = _format2_builder(["scene_generation"], input={"functional_scenarios": [{"name": "mine", "ref": SCENARIO_REF, "quota": 1}]})
+    payload = builder.scene_generation("scenario/mine", SCENARIO_REF["sha256"], 9)
+    assert payload["functional_scenario_content"] == SCENARIO_REF and payload["seed"] == 9
+    validate_payload(JobType.SCENE_GENERATION, payload)  # a reference is checked for its shape only
+    with pytest.raises(PayloadError, match="pinned"):
+        builder.scene_generation("scenario/mine", "0" * 64, 9)
+    catalog = builder.scene_generation(CLASS_A, ClassCatalog.default().get(CLASS_A).content_hash, 9)
+    assert isinstance(catalog["functional_scenario_content"], str)  # catalog classes keep their inline text
+
+
+def test_a_scene_item_feeds_trajectory_generation():
+    builder = _format2_builder(["trajectory_generation", "simulation"], input={"items": [_item(SCENE_REF)]})
+    item = builder.config.input.items[0]
+    payload = builder.trajectory_generation_of_item(5, item)
+    assert payload["scenario_content"] == SCENE_REF and payload["seed"] == derived_seed(5, "trajectories")
+    validate_payload(JobType.TRAJECTORY_GENERATION, payload)
+    with pytest.raises(PayloadError, match="not trajectories"):
+        builder.simulation_of_item(5, 0, item)
+    with pytest.raises(PayloadError, match="is an item"):
+        builder.scene_generation("item/0", SCENE_REF["sha256"], 5)
+
+
+@pytest.mark.parametrize(
+    "kind, pointer, sent",
+    [("trajectory_data", None, "/trajectories"), ("trajectory_data", "/trajectories", "/trajectories"), ("trajectories", None, None), ("trajectories", "/runs/0", "/runs/0")],
+)
+def test_a_trajectories_item_feeds_the_simulation(kind, pointer, sent):
+    ref = dict(REFERENCE, kind=kind, pointer=pointer)
+    builder = _format2_builder(["simulation"], input={"items": [_item(ref)]})
+    item = builder.config.input.items[0]
+    payload = builder.simulation_of_item(5, 0, item)
+    assert payload["trajectories"] == dict(ref, pointer=sent) and payload["seed"] == builder.config.execution.runs[0].seed_for(5, 0)
+    validate_payload(JobType.SIMULATION_KINEMATIC, payload)
+    with pytest.raises(PayloadError, match="not a scene"):
+        builder.trajectory_generation_of_item(5, item)
+
+
+@pytest.mark.parametrize("keep_frames", [True, False])
+def test_the_scene_and_trajectory_monitors_judge_the_generated_outputs(keep_frames):
+    builder = _format2_builder(["scene_generation", "trajectory_generation"], policy={"keep_frames": keep_frames})
+    inline = builder.scene_monitoring("c#0#scene", {"evaluation_data": {"best_scene": {"_data": []}}})
+    assert inline["scene"] == {"best_scene": {"_data": []}} and "trajectories" not in inline
+    referenced = builder.scene_monitoring("c#0#scene", {"evaluation_data": SCENE_REF})
+    assert referenced["scene"] == SCENE_REF and referenced["scenario_id"] == "c#0#scene"
+    planned = builder.trajectory_monitoring("c#0#trajectories", {"trajectory_data": REFERENCE})
+    assert planned["trajectories"] == dict(REFERENCE, pointer="/trajectories") and "scene" not in planned
+    for payload in (inline, referenced, planned):
+        assert payload["include_frames"] is keep_frames and payload["colregs_constraints_content"] == builder.config.domain.colregs_constants
+        validate_payload(JobType.MONITORING_POST_HOC, payload)
+    with pytest.raises(PayloadError, match="no evaluation_data"):
+        builder.scene_monitoring("c#0#scene", {"valid": False})
+
+
+def test_monitor_submissions_take_their_graphs_priorities():
+    builder = _format2_builder(
+        ["scene_generation", "trajectory_generation", "simulation"],
+        scene_generation={"monitor": "post_hoc"},
+        trajectories={"generator": "straight", "timespan_s": 10, "monitor": "post_hoc"},
+        resources={"priority": 10},
+    )
+    scene = builder.submission(SCENE_MONITOR_STEP, builder.scene_monitoring("c", {"evaluation_data": SCENE_REF}), "k1", EXPECTED)
+    planned = builder.submission(TRAJECTORIES_MONITOR_STEP, builder.trajectory_monitoring("c", {"trajectory_data": REFERENCE}), "k2", EXPECTED)
+    simulate = builder.submission(Step(PipelineStage.SIMULATE, 0, 0), builder.simulation(1, 0, {"trajectory_data": REFERENCE}), "k3", EXPECTED)
+    assert (scene.priority, planned.priority, simulate.priority) == (11, 13, 14)
+    assert scene.job_type == JobType.MONITORING_POST_HOC and set(scene.requirements.fingerprints) == set(required_fingerprints(JobType.MONITORING_POST_HOC, {}, EXPECTED))

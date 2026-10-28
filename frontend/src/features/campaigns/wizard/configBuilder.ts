@@ -1,7 +1,8 @@
 import { Document, isSeq, visit, type YAMLSeq } from "yaml";
-import type { CatalogGenerator, CatalogParameter, CatalogStack } from "../../../domain/cluster/campaignApi";
-import { fullUsageQueueDepth } from "../resourcePlan";
-import { QUEUE_DEPTH_DEFAULTS, type ParamValues, type RunDraft, type WizardDraft } from "./wizardState";
+import type { CatalogGenerator, CatalogParameter, CatalogStack, ConfigArtifactRef } from "../../../domain/cluster/campaignApi";
+import { ARDUPILOT_JOB, fullUsageQueueDepth, KINEMATIC_JOB } from "../resourcePlan";
+import { activeStages, firstStep, normalizeSteps, runsStep } from "./stepPlan";
+import { QUEUE_DEPTH_DEFAULTS, type InputItemDraft, type ParamValues, type RunDraft, type ScenarioFileDraft, type ScopeEntryDraft, type WizardDraft } from "./wizardState";
 
 /**
  * The wizard's draft as a campaign config (`campaign_config.CampaignConfig`): an object in the
@@ -20,7 +21,10 @@ export interface BuilderCatalog {
   slots?: Readonly<Record<string, number>>;
 }
 
-export const CONFIG_FORMAT = 1;
+export const CONFIG_FORMAT = 2;
+
+/** The media type the master assumes for a reference that states none. */
+const DEFAULT_MEDIA_TYPE = "application/json";
 
 export function isSet(value: unknown): boolean {
   return value !== undefined && value !== null && value !== "";
@@ -74,8 +78,14 @@ export function supportsEnvironment(stack: CatalogStack | undefined): { wind: bo
   };
 }
 
+/** A scope entry that names nothing: ignored when the campaign has scenario files to start from, reported otherwise. */
+export function isEmptyScopeEntry(entry: ScopeEntryDraft): boolean {
+  return entry.classes.length === 0 && entry.patterns.length === 0;
+}
+
 function buildScope(draft: WizardDraft): ConfigObject[] {
-  return draft.scope.map((entry) => {
+  const entries = draft.input.scenarios.length > 0 ? draft.scope.filter((entry) => !isEmptyScopeEntry(entry)) : draft.scope;
+  return entries.map((entry) => {
     const item: ConfigObject = {};
     if (entry.classes.length > 0) {
       item.classes = [...entry.classes];
@@ -89,6 +99,41 @@ function buildScope(draft: WizardDraft): ConfigObject[] {
   });
 }
 
+function buildRef(ref: ConfigArtifactRef): ConfigObject {
+  const result: ConfigObject = { sha256: ref.sha256 };
+  put(result, "size_bytes", ref.size_bytes);
+  result.kind = ref.kind;
+  if (isSet(ref.media_type) && ref.media_type !== DEFAULT_MEDIA_TYPE) {
+    result.media_type = ref.media_type;
+  }
+  put(result, "pointer", ref.pointer);
+  return result;
+}
+
+function buildScenario(scenario: ScenarioFileDraft): ConfigObject {
+  const result: ConfigObject = { name: scenario.name.trim(), ref: buildRef(scenario.ref) };
+  put(result, "quota", scenario.quota);
+  put(result, "failure_budget", scenario.failureBudget);
+  return result;
+}
+
+function buildItem(item: InputItemDraft): ConfigObject {
+  return { name: item.name.trim(), ref: buildRef(item.ref), source: { ...item.source } };
+}
+
+/** The input section: scenario files for a campaign that starts with scene generation, items for one that starts later. */
+function buildInput(draft: WizardDraft): ConfigObject {
+  const input: ConfigObject = {};
+  if (firstStep(draft.steps) === "scene_generation") {
+    if (draft.input.scenarios.length > 0) {
+      input.functional_scenarios = draft.input.scenarios.map(buildScenario);
+    }
+  } else if (draft.input.items.length > 0) {
+    input.items = draft.input.items.map(buildItem);
+  }
+  return input;
+}
+
 function buildDomain(draft: WizardDraft): ConfigObject {
   const domain: ConfigObject = {};
   if (draft.domain.custom) {
@@ -96,8 +141,10 @@ function buildDomain(draft: WizardDraft): ConfigObject {
     domain.vessel_types = normalizeNewlines(draft.domain.vesselTypes);
     domain.obstacle_types = normalizeNewlines(draft.domain.obstacleTypes);
   }
-  put(domain, "scene_generation_timeout_s", draft.domain.sceneGenerationTimeoutS);
-  domain.enforce_low_tcpa = draft.domain.enforceLowTcpa;
+  if (runsStep(draft.steps, "scene_generation")) {
+    put(domain, "scene_generation_timeout_s", draft.domain.sceneGenerationTimeoutS);
+    domain.enforce_low_tcpa = draft.domain.enforceLowTcpa;
+  }
   return domain;
 }
 
@@ -114,6 +161,9 @@ function buildTrajectories(draft: WizardDraft, catalog: BuilderCatalog): ConfigO
     Object.assign(trajectories, given);
   }
   put(trajectories, "timeout_s", draft.trajectories.timeoutS);
+  if (draft.trajectoryMonitor === "post_hoc") {
+    trajectories.monitor = "post_hoc";
+  }
   return trajectories;
 }
 
@@ -170,7 +220,26 @@ export function requiredLabelsOf(draft: WizardDraft): Record<string, string> {
 
 /** The queue caps the config gets: full usage's from the cluster's slots, else the operator's. */
 export function effectiveQueueDepth(draft: WizardDraft, catalog: BuilderCatalog): Record<string, number | null> {
-  return draft.resources.fullUsage ? fullUsageQueueDepth(catalog.slots ?? {}) : draft.resources.queueDepth;
+  if (!draft.resources.fullUsage) {
+    return draft.resources.queueDepth;
+  }
+  const layers = draft.runs.map((run) => findStack(catalog, run.stackId)?.simulation_layer);
+  const simulators = [...new Set(layers.map((layer) => (layer === "ardupilot_sim" || layer === "gazebo" ? ARDUPILOT_JOB : KINEMATIC_JOB)))];
+  return fullUsageQueueDepth(catalog.slots ?? {}, simulators.length > 0 ? simulators : [KINEMATIC_JOB]);
+}
+
+/** The queue stages the campaign's cases pass through (the others get no cap in the config). */
+export function stagesOf(draft: WizardDraft): string[] {
+  const simulates = runsStep(draft.steps, "simulation");
+  const stages = activeStages(draft.steps, {
+    scene: draft.sceneMonitor === "post_hoc",
+    trajectories: draft.trajectoryMonitor === "post_hoc",
+    simulation: simulates && draft.runs.some((run) => run.monitor === "post_hoc"),
+  });
+  if (simulates && draft.runs.some((run) => (run.repeats ?? 1) > 1)) {
+    stages.push("calibrate");
+  }
+  return stages;
 }
 
 function buildResources(draft: WizardDraft, catalog: BuilderCatalog): ConfigObject {
@@ -184,8 +253,12 @@ function buildResources(draft: WizardDraft, catalog: BuilderCatalog): ConfigObje
   }
   const queueDepth: Record<string, number> = {};
   const depths = effectiveQueueDepth(draft, catalog);
+  const used = new Set(stagesOf(draft));
   for (const [stage, defaultDepth] of Object.entries(QUEUE_DEPTH_DEFAULTS)) {
     const depth = depths[stage];
+    if (!used.has(stage)) {
+      continue;
+    }
     if (depth !== null && depth !== undefined && depth !== defaultDepth) {
       queueDepth[stage] = depth;
     }
@@ -213,16 +286,42 @@ function buildPolicy(draft: WizardDraft): ConfigObject {
   return policy;
 }
 
-/** The config the draft describes. A run with an unknown stack gets the layer only; `checkDraft` reports it. */
+/**
+ * The config the draft describes (format 2). Sections of steps the campaign does not run are left out,
+ * and the scope only goes in when the campaign starts with scene generation. A run with an unknown
+ * stack gets the layer only; `checkDraft` reports it.
+ */
 export function buildCampaignConfig(draft: WizardDraft, catalog: BuilderCatalog): ConfigObject {
+  const steps = normalizeSteps(draft.steps);
+  const plan = { ...draft, steps };
   const config: ConfigObject = { format: CONFIG_FORMAT, name: draft.name.trim() };
   put(config, "description", draft.description.trim());
-  config.scope = buildScope(draft);
-  config.domain = buildDomain(draft);
-  config.trajectories = buildTrajectories(draft, catalog);
-  config.execution = { runs: draft.runs.map((run) => buildRun(run, catalog)) };
-  config.resources = buildResources(draft, catalog);
-  config.policy = buildPolicy(draft);
+  config.steps = [...steps];
+  if (firstStep(steps) === "scene_generation") {
+    const scope = buildScope(plan);
+    if (scope.length > 0) {
+      config.scope = scope;
+    }
+  }
+  const input = buildInput(plan);
+  if (Object.keys(input).length > 0) {
+    config.input = input;
+  }
+  const domain = buildDomain(plan);
+  if (Object.keys(domain).length > 0) {
+    config.domain = domain;
+  }
+  if (runsStep(steps, "scene_generation") && draft.sceneMonitor === "post_hoc") {
+    config.scene_generation = { monitor: "post_hoc" };
+  }
+  if (runsStep(steps, "trajectory_generation")) {
+    config.trajectories = buildTrajectories(plan, catalog);
+  }
+  if (runsStep(steps, "simulation")) {
+    config.execution = { runs: draft.runs.map((run) => buildRun(run, catalog)) };
+  }
+  config.resources = buildResources(plan, catalog);
+  config.policy = buildPolicy(plan);
   return config;
 }
 

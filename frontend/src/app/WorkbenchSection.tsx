@@ -3,7 +3,14 @@ import { createPortal } from "react-dom";
 import { Disclosure } from "../components/Disclosure";
 import { LoadingSpinner } from "../components/LoadingSpinner";
 import { usePlaybackTicker } from "../domain/playback/usePlaybackTicker";
-import { usePlaybackStore } from "../domain/playback/playbackStore";
+import { usePlaybackStore, useScenePlaybackStore, useTrajectoryPlaybackStore } from "../domain/playback/playbackStore";
+import { PlaybackStoreContext } from "../domain/playback/playbackContext";
+import { formatFunctionalPresetLabel } from "../features/workbench/controls/functionalPresetPaths";
+import { PageEntryStatus } from "../features/workbench/pages/PageEntryStatus";
+import { inputOfFile, sceneOfScenePage, setTrajectoryInput } from "../features/workbench/pages/pageHandoff";
+import { useScenePageStore } from "../features/workbench/pages/pageStore";
+import { useLoadedRefresh, useTargetConsumer } from "../features/workbench/pages/useWorkbenchTargets";
+import type { WorkbenchPage, WorkbenchTarget } from "../features/workbench/pages/workbenchTarget";
 import { useUiStore, type WorkbenchView } from "./uiStore";
 import { usePersistedState } from "./usePersistedState";
 import {
@@ -25,7 +32,6 @@ import { SceneMonitorPreview } from "../features/workbench/controls/SceneMonitor
 import { runBatchGeneration } from "../features/workbench/controls/runBatchGeneration";
 import { TrajectoryGenerationControls } from "../features/workbench/controls/TrajectoryGenerationControls";
 import { TrajectoryMonitorSidebar } from "../features/workbench/controls/TrajectoryMonitorSidebar";
-import { useTrajectoryGenerationStore } from "../domain/trajectoryGeneration/trajectoryGenerationStore";
 import { MqttBrokerPanel } from "../features/workbench/connection/MqttBrokerPanel";
 import { buildInitializeMonitorMessage, canInitializeMonitor } from "../features/workbench/controls/monitorConfig";
 import { SCENE_GENERATION_JOB } from "../features/workbench/cluster/workbenchJobs";
@@ -69,17 +75,19 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
   const streamControlsRef = useRef(streamControls);
   streamControlsRef.current = streamControls;
   const autoConnectAttemptedRef = useRef(false);
-  usePlaybackTicker();
+  // Each page plays its own frames.
+  usePlaybackTicker(usePlaybackStore);
+  usePlaybackTicker(useScenePlaybackStore);
+  usePlaybackTicker(useTrajectoryPlaybackStore);
   const rightPaneVisible = useUiStore((s) => s.rightPaneVisible);
   const setRightPaneVisible = useUiStore((s) => s.setRightPaneVisible);
   const errorMessage = usePlaybackStore((s) => s.errorMessage);
   const setError = usePlaybackStore((s) => s.setError);
   const streamStatus = usePlaybackStore((s) => s.streamStatus);
   const simulationInitializing = usePlaybackStore((s) => s.simulationInitializing);
-  const activeSceneGenerationRequestId = usePlaybackStore((s) => s.activeSceneGenerationRequestId);
+  const activeSceneGenerationRequestId = useScenePlaybackStore((s) => s.activeSceneGenerationRequestId);
   const batchGenerationRunning = useBatchGenerationStore((s) => s.running);
   const selectedBatchPaths = useBatchGenerationStore((s) => s.selectedPaths);
-  const setTrajectoryHandoffScene = useTrajectoryGenerationStore((s) => s.setHandoffScene);
   const sceneGenerationTab = useUiStore((s) => s.sceneGenerationTab);
   const sceneGenerationLivePreview = useUiStore((s) => s.sceneGenerationLivePreview);
   const setSceneGenerationLivePreview = useUiStore((s) => s.setSceneGenerationLivePreview);
@@ -87,13 +95,13 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
   const setControlPanelMode = useUiStore((s) => s.setControlPanelMode);
   const isSceneGenerationBusy =
     activeSceneGenerationRequestId !== null || batchGenerationRunning;
-  const latestGeneratedScene = usePlaybackStore((s) => s.latestGeneratedScene);
+  const latestGeneratedScene = useScenePlaybackStore((s) => s.latestGeneratedScene);
 
   useEffect(() => {
     setSceneValidityBadgeDismissed(false);
   }, [latestGeneratedScene]);
-  const clearVisualizedScenario = usePlaybackStore((s) => s.clearVisualizedScenario);
-  const setVisualizedScenario = usePlaybackStore((s) => s.setVisualizedScenario);
+  const clearVisualizedScenario = useScenePlaybackStore((s) => s.clearVisualizedScenario);
+  const setVisualizedScenario = useScenePlaybackStore((s) => s.setVisualizedScenario);
   const requestAutoFit = usePlaybackStore((s) => s.requestAutoFit);
   const [scenarioSourceName, setScenarioSourceName] = usePersistedState<string | null>(
     "scenario-source-name",
@@ -115,6 +123,8 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
   const [vesselTypesText, setVesselTypesText] = usePersistedState("vessel-types-text", "");
   const [obstacleTypesText, setObstacleTypesText] = usePersistedState("obstacle-types-text", "");
   const [functionalSpecText, setFunctionalSpecText] = usePersistedState("functional-spec-text", "");
+  // What the scene page calls its functional scenario: the preset or file it came from.
+  const [functionalSpecLabel, setFunctionalSpecLabel] = usePersistedState<string | null>("functional-spec-label", null);
   const [sceneGenerationTimeoutSeconds, setSceneGenerationTimeoutSeconds] = usePersistedState(
     "scene-gen-timeout",
     240
@@ -236,6 +246,21 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
   useEffect(() => {
     colregsTextRef.current = colregsConstraintsText;
   }, [colregsConstraintsText]);
+
+  // Outputs other sections open here (`openInWorkbench`), and the pages' loaded entries after a reload.
+  const openTarget = useCallback((target: WorkbenchTarget) => {
+    if (target.page === "simulation") {
+      usePlaybackStore.getState().requestAutoFit();
+    }
+    void streamControlsRef.current.openTarget(target, colregsTextRef.current);
+  }, []);
+  const refreshLoaded = useCallback((target: WorkbenchTarget) => {
+    void streamControlsRef.current.refreshLoaded(target, colregsTextRef.current);
+  }, []);
+  const activePage: WorkbenchPage | null =
+    activeView === "sceneGeneration" || activeView === "trajectoryGeneration" || activeView === "simulation" ? activeView : null;
+  useTargetConsumer(active ? activePage : null, openTarget);
+  useLoadedRefresh(streamControls.operatorUrl, refreshLoaded);
   useEffect(() => {
     const unsubscribe = usePlaybackStore.subscribe((state, prev) => {
       if (state.mqttBrokerStatus === "connected" && prev.mqttBrokerStatus !== "connected") {
@@ -374,16 +399,13 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
     : "minmax(0, 1fr)";
 
   const loadForTrajectoryGeneration = useCallback(() => {
-    const visualized = usePlaybackStore.getState().latestGeneratedScene;
-    if (!visualized?.valid || !visualized.evaluationData) {
+    const handoff = sceneOfScenePage(scenarioSourceName ?? null);
+    if (handoff === null) {
       return;
     }
-    setTrajectoryHandoffScene(
-      { scene: visualized.scene, evaluationData: visualized.evaluationData, valid: true },
-      scenarioSourceName ?? null
-    );
+    setTrajectoryInput(handoff.input, handoff.scene);
     setActiveView("trajectoryGeneration");
-  }, [scenarioSourceName, setActiveView, setTrajectoryHandoffScene]);
+  }, [scenarioSourceName, setActiveView]);
 
   const runSceneGeneration = useCallback(
     async (specText: string) => {
@@ -394,6 +416,7 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
       setLoadedScenarioFileContent(null);
       const requestId = crypto.randomUUID();
       const outcome = await streamControls.generateScene(requestId, {
+        label: functionalSpecLabel ?? "functional scenario",
         functionalScenarioContent: specText,
         colregsConstraintsContent: colregsConstraintsText,
         vesselTypesContent: vesselTypesText,
@@ -414,6 +437,7 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
       colregsConstraintsText,
       domainReadyForGeneration,
       enforceLowTcpa,
+      functionalSpecLabel,
       obstacleTypesText,
       sceneGenerationTimeoutSeconds,
       streamControls,
@@ -421,17 +445,19 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
     ]
   );
 
-  const enqueueSceneGeneration = useCallback(
-    async (requestId: string, specText: string) => {
+  const generateBatch = useCallback(
+    async (rows: { requestId: string; label: string; specText: string }[]) => {
       if (!domainReadyForGeneration) return;
-      await streamControls.enqueueSceneGeneration(requestId, {
-        functionalScenarioContent: specText,
-        colregsConstraintsContent: colregsConstraintsText,
-        vesselTypesContent: vesselTypesText,
-        obstacleTypesContent: obstacleTypesText,
-        timeoutSeconds: sceneGenerationTimeoutSeconds,
-        enforceLowTcpa,
-      });
+      await streamControls.generateBatch(
+        rows.map((row) => ({ requestId: row.requestId, label: row.label, functionalScenarioContent: row.specText })),
+        {
+          colregsConstraintsContent: colregsConstraintsText,
+          vesselTypesContent: vesselTypesText,
+          obstacleTypesContent: obstacleTypesText,
+          timeoutSeconds: sceneGenerationTimeoutSeconds,
+          enforceLowTcpa,
+        }
+      );
     },
     [
       colregsConstraintsText,
@@ -453,8 +479,7 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
     ) => {
       const content =
         fileContent ?? formatScenarioJsonForExport(evaluationData, scene);
-      const evaluationFile = new File([content], fileName, { type: "application/json" });
-      await streamControls.loadScenarioFromFile(evaluationFile, { colregsConstraintsContent: colregsConstraintsText });
+      await streamControls.setSimulationInput(inputOfFile(fileName), content, { colregsConstraintsContent: colregsConstraintsText });
       setControlPanelMode("animation");
       setActiveView("simulation");
       requestAutoFit();
@@ -468,6 +493,8 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
         const text = await file.text();
         const { evaluationData, scene, hasFullTrajectories } = parseScenarioFile(text);
         setVisualizedScenario({ scene, evaluationData, valid: true });
+        // A scene from a file is no entry: the page shows it until a run or a loaded entry replaces it.
+        useScenePageStore.getState().setLocalOutput({ label: file.name, ref: null, source: { file: file.name } });
         setLoadedScenarioFileContent(hasFullTrajectories ? text : null);
         setScenarioSourceName(file.name);
         setSceneGenerationError(null);
@@ -492,7 +519,7 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
   );
 
   const initializeVisualizedScenario = useCallback(async () => {
-    const visualized = usePlaybackStore.getState().latestGeneratedScene;
+    const visualized = useScenePlaybackStore.getState().latestGeneratedScene;
     if (!visualized?.valid || !visualized.evaluationData) {
       return;
     }
@@ -521,8 +548,12 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
     URL.revokeObjectURL(url);
   }, []);
 
+  // The canvas, the playback bar and the monitor panels read the shown page's frames.
+  const shownPlayback =
+    activeView === "sceneGeneration" ? useScenePlaybackStore : activeView === "trajectoryGeneration" ? useTrajectoryPlaybackStore : usePlaybackStore;
+
   return (
-    <>
+    <PlaybackStoreContext.Provider value={shownPlayback}>
       <main
         ref={mainLayoutRef}
         className={`main-layout${isResizingRightPane ? " is-resizing" : ""}`}
@@ -687,6 +718,11 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
                       {sceneGenerationResources.blocker}
                     </p>
                   )}
+                  <PageEntryStatus store={useScenePageStore} />
+                  <p className="meta">
+                    Scenario: {functionalSpecLabel ?? (functionalSpecText.trim().length > 0 ? "written in the editor" : "none yet")}. Every
+                    generation is saved as an entry of Campaign History.
+                  </p>
                   <div className="toolbar-row scene-generation-toolbar">
                     {(() => {
                       const isBatch = sceneGenerationTab === "batch";
@@ -709,7 +745,7 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
                               void runBatchGeneration({
                                 selectedPaths: selectedBatchPaths,
                                 loadPresetText: loadTextFromPreset,
-                                enqueueSceneGeneration,
+                                generateBatch,
                                 sceneGenerationTimeoutSeconds,
                                 isAborted: () =>
                                   !useBatchGenerationStore.getState().running,
@@ -978,12 +1014,16 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
             ) : (
               <SceneGenerationSidebar
                 functionalSpecText={functionalSpecText}
-                onFunctionalSpecTextChange={setFunctionalSpecText}
+                onFunctionalSpecTextChange={(text) => {
+                  setFunctionalSpecText(text);
+                  setFunctionalSpecLabel((label) => (label === null || label.endsWith(" (edited)") ? label : `${label} (edited)`));
+                }}
                 onLoadFunctionalSpecFromPreset={(path) => {
                   void (async () => {
                     try {
                       const text = await loadTextFromPreset(path);
                       setFunctionalSpecText(text);
+                      setFunctionalSpecLabel(formatFunctionalPresetLabel(path));
                       setSceneGenerationError(null);
                     } catch (error) {
                       setSceneGenerationError(
@@ -996,6 +1036,7 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
                   void (async () => {
                     const text = await readTextFile(file);
                     setFunctionalSpecText(text);
+                    setFunctionalSpecLabel(file.name);
                     setSceneGenerationError(null);
                   })();
                 }}
@@ -1004,7 +1045,17 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
                 }
                 isSceneGenerationBusy={isSceneGenerationBusy}
                 onVisualizeFromEvaluation={(evaluationData, scene) => {
+                  // A batch row's scene is a case of the batch entry: the page loads it from there, with its monitor frame.
+                  const target = useBatchGenerationStore.getState().results.find((row) => row.scene === scene)?.target;
+                  if (target) {
+                    setLoadedScenarioFileContent(null);
+                    setScenarioSourceName(null);
+                    setSceneGenerationError(null);
+                    openTarget(target);
+                    return;
+                  }
                   setVisualizedScenario({ scene, evaluationData, valid: true });
+                  useScenePageStore.getState().setLocalOutput(null);
                   setLoadedScenarioFileContent(null);
                   setScenarioSourceName(null);
                   setSceneGenerationError(null);
@@ -1032,6 +1083,6 @@ export function WorkbenchSection({ active, errorSlot }: WorkbenchSectionProps) {
           </footer>,
           errorSlot
         )}
-    </>
+    </PlaybackStoreContext.Provider>
   );
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseFrame, parseServerMessage } from "./protocol";
 import { sampleFrames } from "../../test/fixtures/sampleFrames";
+import { sampleRunRecordingMessages } from "../../test/fixtures/historyViews";
 
 describe("parseFrame", () => {
   it("accepts canonical simulation payload", () => {
@@ -240,6 +241,41 @@ describe("parseServerMessage", () => {
     if (msg.kind === "monitor_status") {
       expect(msg.status).toBe("disconnected");
     }
+  });
+
+  it("parses every status of run_recording", () => {
+    const parsed = sampleRunRecordingMessages.map((raw) => parseServerMessage(raw));
+    expect(parsed.map((msg) => msg.kind === "run_recording" && msg.status)).toEqual(["recording", "saved", "failed", "unavailable"]);
+    expect(parsed[0]).toEqual({
+      kind: "run_recording",
+      status: "recording",
+      campaignId: "wb3",
+      caseId: 1,
+      message: "Recording the run as a workbench entry",
+    });
+    expect(parsed[3]).toEqual({
+      kind: "run_recording",
+      status: "unavailable",
+      campaignId: null,
+      caseId: null,
+      message: "the gateway runs without a master",
+    });
+  });
+
+  it("parses run_recording without the optional fields and with snake_case names", () => {
+    expect(parseServerMessage({ type: "run_recording", status: "unavailable" })).toEqual({
+      kind: "run_recording",
+      status: "unavailable",
+      campaignId: null,
+      caseId: null,
+      message: null,
+    });
+    const msg = parseServerMessage({ type: "run_recording", status: "saved", campaign_id: "wb9", case_id: 4 });
+    expect(msg.kind === "run_recording" && [msg.campaignId, msg.caseId]).toEqual(["wb9", 4]);
+  });
+
+  it("rejects a run_recording status it does not know", () => {
+    expect(() => parseServerMessage({ type: "run_recording", status: "paused" })).toThrow();
   });
 
   it("parses simulation_status", () => {

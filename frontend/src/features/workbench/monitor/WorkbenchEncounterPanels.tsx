@@ -4,8 +4,9 @@ import { usePersistedState } from "../../../app/usePersistedState";
 import {
   getCurrentFrame,
   getCurrentSimulationFrame,
-  usePlaybackStore,
+  type PlaybackState,
 } from "../../../domain/playback/playbackStore";
+import { useShownPlayback } from "../../../domain/playback/playbackContext";
 import type { SimulationFrame } from "../../../domain/simulation/types";
 import { PlaybackBar } from "../../encounter/PlaybackBar";
 import { getShipColor, getSimulationStreamColor } from "../scene/shipColors";
@@ -29,13 +30,13 @@ function timelineFor(frames: SimulationFrame[]): RuleTimelineModel {
 }
 
 function streamFrames(stream: TrajectoryStream) {
-  return (s: ReturnType<typeof usePlaybackStore.getState>) => (stream === "animation" ? s.frames : s.simulationFrames);
+  return (s: PlaybackState) => (stream === "animation" ? s.frames : s.simulationFrames);
 }
 
 /** The pair cards of one playback stream (preview or simulation) of the workbench. */
 export function WorkbenchPairCards({ stream }: { stream: TrajectoryStream }) {
-  const frames = usePlaybackStore(streamFrames(stream));
-  const frame = usePlaybackStore((s) => (stream === "animation" ? getCurrentFrame(s) : getCurrentSimulationFrame(s)));
+  const frames = useShownPlayback(streamFrames(stream));
+  const frame = useShownPlayback((s) => (stream === "animation" ? getCurrentFrame(s) : getCurrentSimulationFrame(s)));
   const selectedRelationId = useEncounterSelectionStore((s) => s.selectedRelationId);
   const setSelectedRelationId = useEncounterSelectionStore((s) => s.setSelectedRelationId);
   const timeline = useMemo(() => timelineFor(frames), [frames]);
@@ -78,17 +79,17 @@ interface StripControls {
  * the simulation streams, on the global playback store.
  */
 export function WorkbenchEncounterStrip({ streamControls }: { streamControls: StripControls }) {
-  const frames = usePlaybackStore((s) => s.frames);
-  const simulationFrames = usePlaybackStore((s) => s.simulationFrames);
-  const cursor = usePlaybackStore((s) => s.playbackCursor);
-  const latestTimestamp = usePlaybackStore((s) => s.latestTimestamp);
-  const isPlaying = usePlaybackStore((s) => s.isPlaying);
-  const speed = usePlaybackStore((s) => s.speed);
-  const followLatestPush = usePlaybackStore((s) => s.followLatestPush);
-  const serverTimeStep = usePlaybackStore((s) => s.serverTimeStep);
-  const setPlaying = usePlaybackStore((s) => s.setPlaying);
-  const stepBy = usePlaybackStore((s) => s.stepBy);
-  const followSimulationLive = usePlaybackStore((s) => s.followSimulationLive);
+  const frames = useShownPlayback((s) => s.frames);
+  const simulationFrames = useShownPlayback((s) => s.simulationFrames);
+  const cursor = useShownPlayback((s) => s.playbackCursor);
+  const latestTimestamp = useShownPlayback((s) => s.latestTimestamp);
+  const isPlaying = useShownPlayback((s) => s.isPlaying);
+  const speed = useShownPlayback((s) => s.speed);
+  const followLatestPush = useShownPlayback((s) => s.followLatestPush);
+  const serverTimeStep = useShownPlayback((s) => s.serverTimeStep);
+  const setPlaying = useShownPlayback((s) => s.setPlaying);
+  const stepBy = useShownPlayback((s) => s.stepBy);
+  const followSimulationLive = useShownPlayback((s) => s.followSimulationLive);
   const selectedRelationId = useEncounterSelectionStore((s) => s.selectedRelationId);
   const setSelectedRelationId = useEncounterSelectionStore((s) => s.setSelectedRelationId);
   const [timelineOpen, setTimelineOpen] = usePersistedState("workbench-rule-timeline-open", true);

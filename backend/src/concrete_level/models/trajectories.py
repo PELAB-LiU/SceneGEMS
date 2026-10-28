@@ -19,9 +19,6 @@ class Trajectories(Serializable):
     def state_list(self, actor: ConcreteActor) -> List[ActorState]:
         return [scene[actor] for scene in self.scene_list]
 
-    def get_state_by_time(self, actor: ConcreteActor, t: int) -> ActorState:
-        return self.get_scene_by_time(t)[actor]
-
     def get_scene_by_time(self, t: int) -> ConcreteScene:
         """
         Returns the scene at the given time.
@@ -104,11 +101,5 @@ class Trajectories(Serializable):
             end_index = len(self)
         return [scene[actor] for scene in self.scene_list[start_index:end_index]]
 
-    def get_chunk_timespan(self, start_index: int, end_index: Optional[int] = None) -> float:
-        if end_index is None:
-            end_index = len(self)
-        return (end_index - start_index) * self.time_step
-    
     def get_max_speed(self, actor: ConcreteActor) -> float:
         return max(scene[actor].speed for scene in self.scene_list)
-    

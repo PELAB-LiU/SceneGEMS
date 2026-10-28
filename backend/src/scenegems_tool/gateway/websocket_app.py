@@ -11,10 +11,12 @@ import json
 import multiprocessing
 import signal
 from contextlib import asynccontextmanager
+from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from scenegems_tool.cluster.node.docker_subsystem_shutdown import shutdown_all_docker_subsystems
+from scenegems_tool.gateway.live_run_recorder import LiveRunRecorder
 from scenegems_tool.gateway.web_socket_session_manager import WebSocketSessionManager
 from utils.file_system_utils import ensure_directories
 
@@ -47,6 +49,16 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="SceneGEMS Tool Backend", lifespan=lifespan)
+app.state.run_recorder = None  # the master sets its LiveRunRecorder (set_run_recorder); on its own the gateway records nothing
+
+
+def set_run_recorder(recorder: Optional[LiveRunRecorder], gateway: FastAPI = app) -> None:
+    """Live sessions of this gateway's connections are recorded through the recorder from now on (the master's, cluster/master/server.py)."""
+    gateway.state.run_recorder = recorder
+
+
+def run_recorder(gateway: FastAPI = app) -> Optional[LiveRunRecorder]:
+    return getattr(gateway.state, "run_recorder", None)
 
 
 @app.get("/health")
@@ -58,6 +70,7 @@ def health() -> dict[str, str]:
 async def backend_service_socket(websocket: WebSocket) -> None:  # noqa: C901
     await websocket.accept()
     session, message_processor = websocket_session_manager.create_session(websocket=websocket)
+    session.run_recorder = run_recorder()
     try:
         session.send_payload(session.mqtt_broker_status_message(status="disconnected"))
     except WebSocketDisconnect:
@@ -84,17 +97,11 @@ async def backend_service_socket(websocket: WebSocket) -> None:  # noqa: C901
         return
 
 
-def create_app() -> FastAPI:
-    return app
 
 
 if __name__ == "__main__":
     multiprocessing.set_start_method("spawn")
-    # Run the WebSocket app with uvicorn when executed as a script.
-    # Example:
-    #   python -m simulation.backend_service.websocket_app
-    # or (if PYTHONPATH is configured appropriately):
-    #   python src/simulation/backend_service/websocket_app.py
+    # Run the gateway on its own (no cluster): PYTHONPATH=src python -m scenegems_tool.gateway.websocket_app
     import uvicorn
 
     uvicorn.run(

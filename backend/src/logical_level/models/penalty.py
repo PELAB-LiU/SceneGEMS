@@ -1,8 +1,6 @@
 import json
-from collections import defaultdict
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
 
 from logical_level.models.actor_variable import ActorVariable
 

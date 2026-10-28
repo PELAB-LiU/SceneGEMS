@@ -2,6 +2,7 @@ import { Fragment, useState } from "react";
 import { createOperatorClient, describeOperatorError } from "../../domain/cluster/operatorApi";
 import type { CaseJob, RunRecord, Verdict } from "../../domain/cluster/schemas";
 import { ruleOutcomeRows } from "./ruleOutcomes";
+import { VERDICT_STEP_LABEL } from "./stepViews";
 import { describeStack, formatSeconds, formatTime, runLabel, shortHash, sortedArtifacts } from "./resultsFormat";
 import { useJobDetail } from "./useResultsData";
 
@@ -131,7 +132,7 @@ export function RunRecordCard({
         <div>
           <dt>Trajectories</dt>
           <dd>
-            {record.trajectory_generator}
+            {record.trajectory_generator ?? (record.source === "live_session" ? "recorded from a live session" : "taken from an item")}
             {record.trajectories_complete ? "" : ", incomplete"}
           </dd>
         </div>
@@ -191,7 +192,8 @@ export function VerdictCard({ verdict }: { verdict: Verdict }) {
     <article className={`verdict-card verdict-card--${verdict.state}`}>
       <header>
         <StateChip state={verdict.state} />
-        <strong>{runLabel(verdict.run_index)}</strong>
+        {verdict.step !== undefined && <strong>{VERDICT_STEP_LABEL[verdict.step]}</strong>}
+        {verdict.step === undefined || verdict.step === "simulation" ? <strong>{runLabel(verdict.run_index)}</strong> : null}
         <span className="meta">{verdict.monitor} monitor</span>
         {verdict.sensitive && <span className="run-tag">sensitive</span>}
         <span className="results-spacer" />

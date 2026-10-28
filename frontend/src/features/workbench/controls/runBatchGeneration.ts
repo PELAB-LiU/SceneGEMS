@@ -8,22 +8,23 @@ import {
 export interface RunBatchGenerationParams {
   selectedPaths: string[];
   loadPresetText: (path: string) => Promise<string>;
-  /** Runs one scene as a cluster job; resolves once the job ended and its row is updated. */
-  enqueueSceneGeneration: (requestId: string, specText: string) => Promise<void>;
+  /** Runs every row as one batch entry with a case per scenario; resolves once every row ended. */
+  generateBatch: (rows: { requestId: string; label: string; specText: string }[]) => Promise<void>;
   sceneGenerationTimeoutSeconds: number;
   /** Returns true if generation has been stopped externally (e.g. shared Stop button). */
   isAborted: () => boolean;
 }
 
 /**
- * Submits every selected preset as a scene generation job at once, so the cluster runs as many
- * as it has free slots and queues the rest. Each row follows its job (queued, running, done);
- * the per-scene timeout is the generation's own, not the wait in the queue.
+ * Runs every selected preset as one workbench entry with a case per scenario (design doc 6.3),
+ * so the cluster runs as many as it has free slots and queues the rest. Each row follows its
+ * case's job (queued, running, done); the per-scene timeout is the generation's own, not the wait
+ * in the queue.
  */
 export async function runBatchGeneration({
   selectedPaths,
   loadPresetText,
-  enqueueSceneGeneration,
+  generateBatch,
   sceneGenerationTimeoutSeconds,
   isAborted,
 }: RunBatchGenerationParams): Promise<void> {
@@ -68,7 +69,7 @@ export async function runBatchGeneration({
       return;
     }
 
-    await Promise.all(jobs.map((job) => enqueueSceneGeneration(job.requestId, job.specText)));
+    await generateBatch(jobs.map((job) => ({ requestId: job.requestId, label: job.label, specText: job.specText })));
   } catch (error) {
     useBatchGenerationStore.getState().setResults((prev) =>
       prev.map((r) =>

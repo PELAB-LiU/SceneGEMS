@@ -9,7 +9,7 @@ import paho.mqtt.client as mqtt
 
 from scenegems_tool.gateway.protocol import SimulationStatus
 from scenegems_tool.messaging.mqtt_client import MqttClient, MQttConnectionInfo
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 
 SCENARIO_EXECUTION_SERVICE_NAME = "scenario_execution_service"
 SCENARIO_EXECUTION_SERVICE_TOPIC = f"waraps/service/virtual/real/{SCENARIO_EXECUTION_SERVICE_NAME}"

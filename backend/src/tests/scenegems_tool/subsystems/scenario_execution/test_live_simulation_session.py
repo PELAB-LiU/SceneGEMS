@@ -255,3 +255,91 @@ class TestTeardown:
         await settle()
         assert setup.session.status_update_worker.done()  # the loop swallows the cancellation and returns
         assert setup.session._destroyed
+
+
+class RunListener:
+    """Records what the session tells the listener of its runs, in order."""
+
+    def __init__(self, failing: bool = False):
+        self.calls: List[tuple] = []
+        self.failing = failing
+
+    def _call(self, *call):
+        self.calls.append(call)
+        if self.failing:
+            raise RuntimeError("listener broke")
+
+    def run_started(self):
+        self._call("started")
+
+    def state_simulated(self, clock, scene):
+        self._call("state", clock, len(scene.actors))
+
+    def run_ended(self):
+        self._call("ended")
+
+    def session_ended(self, reason):
+        self._call("session_ended", reason)
+
+
+class TestRunListener:
+    @pytest.fixture
+    def listener(self, setup):
+        listener = RunListener()
+        setup.session.set_run_listener(listener)
+        return listener
+
+    def run(self, setup, clocks):
+        for clock in clocks:
+            setup.session._handle_simulation_state(state_message(setup, SimulationStatus.RUNNING, clock=clock, step=int(clock)))
+
+    async def test_the_start_command_starts_a_run(self, setup, listener):
+        setup.session.start_simulation_runtime()
+        assert listener.calls == [("started",)]
+
+    async def test_a_failed_start_command_starts_no_run(self, setup, listener):
+        setup.session._client.start_error = RuntimeError("broker gone")
+        setup.session.start_simulation_runtime()
+        assert listener.calls == []
+
+    async def test_running_states_reach_the_listener_once_each_until_the_worker_leaves_running(self, setup, listener):
+        setup.session._handle_simulation_state(state_message(setup, SimulationStatus.READY_TO_START))
+        self.run(setup, (0.0, 1.0, 1.0, 2.0))
+        setup.session._handle_simulation_state(state_message(setup, SimulationStatus.READY_TO_START))
+        setup.session._handle_simulation_state(state_message(setup, SimulationStatus.READY_TO_START))
+        assert listener.calls == [("started",), ("state", 0.0, 2), ("state", 1.0, 2), ("state", 2.0, 2), ("ended",)]
+
+    async def test_a_worker_that_loses_its_agents_ends_the_run(self, setup, listener):
+        self.run(setup, (0.0,))
+        setup.session._handle_simulation_state(state_message(setup, SimulationStatus.INITIALIZING, with_scene=False))
+        assert listener.calls[-1] == ("ended",)
+
+    async def test_a_second_run_of_the_session_starts_again(self, setup, listener):
+        self.run(setup, (0.0, 1.0))
+        setup.session._handle_simulation_state(state_message(setup, SimulationStatus.READY_TO_START))
+        self.run(setup, (0.0,))
+        assert [call[0] for call in listener.calls] == ["started", "state", "state", "ended", "started", "state"]
+
+    async def test_teardown_ends_the_session_as_stopped_once(self, setup, listener):
+        setup.session.teardown()
+        setup.session.teardown()
+        assert listener.calls == [("session_ended", "stopped")]
+
+    async def test_destroy_ends_the_session_as_disconnected(self, setup, listener):
+        self.run(setup, (0.0,))
+        setup.session.destroy()
+        assert listener.calls[-1] == ("session_ended", "disconnected")
+        self.run(setup, (1.0,))
+        assert listener.calls[-1] == ("session_ended", "disconnected")  # states after it are not passed on
+
+    async def test_a_failing_listener_changes_nothing_for_the_session(self, setup):
+        setup.session.set_run_listener(RunListener(failing=True))
+        self.run(setup, (0.0, 1.0))
+        assert [timestamp for _, timestamp, _ in setup.monitor.steps] == [0, 1]
+        assert len(setup.session.live_trajectory_builder.scene_list) == 2
+
+    async def test_without_a_listener_the_session_behaves_as_before(self, setup):
+        self.run(setup, (0.0, 1.0))
+        setup.session._handle_simulation_state(state_message(setup, SimulationStatus.READY_TO_START))
+        setup.session.start_simulation_runtime()
+        assert [timestamp for _, timestamp, _ in setup.monitor.steps][:2] == [0, 1]

@@ -51,7 +51,7 @@ def test_a_reference_names_a_sha256_in_lowercase_hex():
 
 
 def test_the_kinds_are_stable_wire_values():
-    assert {kind.value for kind in ArtifactKind} == {"scene", "trajectory_data", "trajectories", "frames", "calibration"}
+    assert {kind.value for kind in ArtifactKind} == {"functional_scenario", "scene", "trajectory_data", "trajectories", "frames", "calibration"}
 
 
 def test_a_field_takes_inline_data_or_a_reference():

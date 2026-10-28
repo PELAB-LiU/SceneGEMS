@@ -9,7 +9,6 @@ from concrete_level.concrete_scene_abstractor import ConcreteSceneAbstractor
 from functional_level.metamodels.functional_scenario import FunctionalScenario
 from functional_level.models.model_parser import ModelParser
 from logical_level.constraint_satisfaction.csp_evaluation.csp_evaluator import CSPEvaluator
-from logical_level.constraint_satisfaction.evaluation_data import EvaluationData
 from logical_level.mapping.logical_scenario_builder import LogicalScenarioBuilder
 from logical_level.mapping.static_obstacle import StaticObstacleTypeMap
 from logical_level.mapping.vessel_type import VesselTypeMap

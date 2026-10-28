@@ -1,6 +1,6 @@
 """scene_generation: one concrete scene from a functional scenario, by the node's scene generation pool.
 
-The job is dispatched to the pooled scenario generation service over the pool's scoped
+The job is dispatched to the pooled scene generation service over the pool's scoped
 topics with today's generate-scene task, so the daemon only relays it. The pool runs as
 many generations at once as the node has scene_generation slots.
 
@@ -8,6 +8,10 @@ The worker streams its samples while it searches and marks its last one final; t
 result is that final scene. With a seed the scene is reproducible (unless the generation
 ran into its timeout, which depends on the machine); the seed used is recorded in
 evaluation_data.random_seed either way.
+
+functional_scenario_content is the scenario's text, or a reference to a functional_scenario
+artifact that the node resolves to its text before the job runs (a scenario given as content
+to a campaign); the text must parse either way, a reference is checked for shape only.
 """
 
 import threading
@@ -20,20 +24,21 @@ from scenegems_tool.cluster.node.jobs.job_payload import parse_payload
 from scenegems_tool.cluster.node.jobs.pool_client import wait_for_pool, wait_for_reply
 from scenegems_tool.cluster.node.node_context import NodeContext
 from scenegems_tool.cluster.node.subsystem import Subsystem
-from scenegems_tool.cluster.protocol.artifacts import ArtifactField, ArtifactKind
+from scenegems_tool.cluster.protocol.artifacts import ArtifactContent, ArtifactField, ArtifactKind, artifact_or, is_reference
 from scenegems_tool.cluster.protocol.jobs import JobSpec
 from scenegems_tool.cluster.protocol.model_base import ProtocolModel
-from scenegems_tool.subsystems.scene_generation.scenario_generation_types import SCENARIO_GENERATION_SERVICE_NAME, SCENARIO_GENERATION_SERVICE_TOPIC
+from scenegems_tool.subsystems.scene_generation.scene_generation_types import SCENE_GENERATION_SERVICE_NAME, SCENE_GENERATION_SERVICE_TOPIC
 
 REPLY_MARGIN_S = 60.0  # time beyond the generation timeout for the worker to start and the reply to arrive
 MAX_SEED = 2**31 - 1
 
-ARTIFACT_INPUT_FIELDS: Tuple[ArtifactField, ...] = ()
+# functional_scenario_content is a string (the .problem text); a reference to a functional scenario artifact resolves to its text.
+ARTIFACT_INPUT_FIELDS: Tuple[ArtifactField, ...] = (ArtifactField("functional_scenario_content", ArtifactKind.FUNCTIONAL_SCENARIO, ArtifactContent.TEXT),)
 ARTIFACT_RESULT_FIELDS: Tuple[ArtifactField, ...] = (ArtifactField("evaluation_data", ArtifactKind.SCENE),)
 
 
 class SceneGenerationPayload(ProtocolModel):
-    functional_scenario_content: str
+    functional_scenario_content: artifact_or(str)  # the .problem text, or a reference to it
     colregs_constraints_content: str  # COLREGS constants YAML
     vessel_types_content: str  # vessel types YAML
     obstacle_types_content: str  # static obstacle types YAML
@@ -43,9 +48,11 @@ class SceneGenerationPayload(ProtocolModel):
 
     @field_validator("functional_scenario_content")
     @classmethod
-    def _parses(cls, content: str) -> str:
+    def _parses(cls, content: Any) -> Any:
         from functional_level.models.model_parser import ModelParser
 
+        if is_reference(content):
+            return content  # its text is checked once the node has resolved it
         try:
             ModelParser.parse_problem(content)
         except Exception as error:
@@ -57,7 +64,7 @@ PAYLOAD_MODEL = SceneGenerationPayload
 
 
 def run(job: JobSpec, node: NodeContext, report: JobReport, cancel: Optional[threading.Event] = None) -> JobResultData:
-    from scenegems_tool.messaging.mqtt_scenario_generation_client import MqttScenarioGenerationClient
+    from scenegems_tool.messaging.mqtt_scene_generation_client import MqttSceneGenerationClient
 
     payload = parse_payload(SceneGenerationPayload, job)
     request_id = f"{job.job_id}-{job.attempt}"  # an earlier attempt's late reply is never taken for this one
@@ -77,11 +84,11 @@ def run(job: JobSpec, node: NodeContext, report: JobReport, cancel: Optional[thr
         replied.set()
 
     pool = node.pools.get(Subsystem.SCENE_GENERATION)
-    client = MqttScenarioGenerationClient(
+    client = MqttSceneGenerationClient(
         mqtt_connection=pool.mqtt_connection,
-        topic=SCENARIO_GENERATION_SERVICE_TOPIC,
+        topic=SCENE_GENERATION_SERVICE_TOPIC,
         reference_geofence=node.reference_geofence,
-        parent_service_name=SCENARIO_GENERATION_SERVICE_NAME,
+        parent_service_name=SCENE_GENERATION_SERVICE_NAME,
         send_payload=lambda message: None,
         on_generated_scene=lambda request_id, scene, evaluation_data, valid: None,
         on_scene_result=on_scene_result,

@@ -10,9 +10,11 @@ interface VerdictFilterBarProps {
   /** The CSV download of the filtered set. */
   csvUrl: string | null;
   total: number | null;
+  /** The run filter: only the simulation step has more than run 0. */
+  showRun: boolean;
 }
 
-export function VerdictFilterBar({ detail, filters, onChange, onReset, csvUrl, total }: VerdictFilterBarProps) {
+export function VerdictFilterBar({ detail, filters, onChange, onReset, csvUrl, total, showRun }: VerdictFilterBarProps) {
   const classes = (detail?.classes ?? []).map((view) => view.class_id).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   const runs = runIndexesOf(detail);
   const active = hasActiveFilters(filters);
@@ -62,6 +64,7 @@ export function VerdictFilterBar({ detail, filters, onChange, onReset, csvUrl, t
           <option value="unmonitored">Unmonitored</option>
         </select>
       </label>
+      {showRun && (
       <label className="results-field">
         <span>Run</span>
         <select value={filters.runIndex === null ? "" : String(filters.runIndex)} onChange={(event) => onChange({ runIndex: event.target.value === "" ? null : Number(event.target.value) })}>
@@ -74,6 +77,7 @@ export function VerdictFilterBar({ detail, filters, onChange, onReset, csvUrl, t
           ))}
         </select>
       </label>
+      )}
       <label className="results-field">
         <span>Sensitive</span>
         <select value={filters.sensitive} onChange={(event) => onChange({ sensitive: event.target.value as SensitiveFilter })}>

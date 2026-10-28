@@ -16,7 +16,6 @@ from concrete_level.trajectory_generation.seed_trajectory import (
     LatchedGiveWayStore,
     clone_as_root,
     detach_node,
-    domains_from_monitored,
     failure_give_way_actors,
     first_failure_index,
     latched_domains_from_nodes,
@@ -95,10 +94,6 @@ class TestLatchedDomains:
         assert store.domains() is latched
         store.update(failing_nodes[119].monitored_scene_with_results)
         assert set(store.domains()) == {OWN_SHIP}
-
-    def test_a_scene_without_an_encounter_latches_nothing(self):
-        far_apart = monitored_run((100000.0, -100000.0), 5)[4]
-        assert domains_from_monitored(far_apart) == {}
 
     def test_the_manoeuvre_is_not_finished_without_domains_or_enough_nodes(self, failing_nodes):
         assert not seed_maneuver_finished(failing_nodes, LatchedGiveWayStore())

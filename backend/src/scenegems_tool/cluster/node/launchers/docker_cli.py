@@ -36,14 +36,6 @@ def container_ids_for_compose_project_prefix(prefix: str) -> List[str]:
     return container_ids
 
 
-def container_ids_by_name(container_name: str) -> List[str]:
-    result = subprocess.run(
-        ["docker", "ps", "-aq", "--filter", f"name=^{container_name}$"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return [container_id for container_id in result.stdout.split() if container_id]
 
 
 def container_names_and_ids() -> List[tuple]:
@@ -101,9 +93,3 @@ def copy_from_container(container: str, source: str, destination: str) -> bool:
     """Copy a file out of a container; False when the container has no such file."""
     result = subprocess.run(["docker", "cp", f"{container}:{source}", destination], check=False, capture_output=True, text=True)
     return result.returncode == 0
-
-
-def container_exit_code(container: str) -> int:
-    """Block until the container stops and return its exit code."""
-    result = subprocess.run(["docker", "wait", container], check=True, capture_output=True, text=True)
-    return int(result.stdout.strip().splitlines()[-1])

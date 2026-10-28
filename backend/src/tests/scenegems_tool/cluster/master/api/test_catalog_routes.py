@@ -6,7 +6,16 @@ import pytest
 from starlette.testclient import TestClient
 
 from scenegems_tool.assurance.campaign import ClassCatalog
-from scenegems_tool.assurance.campaign.campaign_config import SEARCH_PARAM_KEYS, KinematicStackConfig, RunConfig, TrajectoriesConfig, parse_campaign_config
+from scenegems_tool.assurance.campaign.campaign_config import (
+    ARDUPILOT_LAYERS,
+    SEARCH_PARAM_KEYS,
+    ArdupilotStackConfig,
+    GeofenceSettings,
+    KinematicStackConfig,
+    RunConfig,
+    TrajectoriesConfig,
+    parse_campaign_config,
+)
 from scenegems_tool.assurance.campaign.config_validation import validate_campaign_config
 from scenegems_tool.cluster.master.api.master_apps import create_operator_app
 from scenegems_tool.cluster.node.jobs.simulation_kinematic_job import KinematicMode, UsvNavigationPayload
@@ -118,14 +127,51 @@ def by_id(entries, key="id"):
 
 def test_the_stack_options_are_the_ones_the_campaign_config_accepts(stacks):
     options = by_id(stacks["stacks"])
-    assert set(options) == {f"kinematic.{mode.value}" for mode in KinematicMode}
+    assert set(options) == {f"kinematic.{mode.value}" for mode in KinematicMode} | {f"{layer}.replay" for layer in ARDUPILOT_LAYERS}
     for mode in KinematicMode:
         option = options[f"kinematic.{mode.value}"]
         assert option["simulation_layer"] == "kinematic" and option["mode"] == mode.value
         assert option["available"] is True and option["reasons"] == []
         assert option["repeatability_tier"] == "exact"
+        assert option["supports_early_stop"] is True
         assert {parameter["key"] for parameter in option["parameters"]} == {"dt", "steps"} <= set(KinematicStackConfig.model_fields)
         assert option["environment"] == {"wind": "unsupported", "waves": "unsupported", "interactive_only": False}
+
+
+def test_the_ardupilot_stacks_are_offered_with_the_parameters_of_the_config_model(stacks):
+    options = by_id(stacks["stacks"])
+    for layer in ARDUPILOT_LAYERS:
+        option = options[f"{layer}.replay"]
+        assert option["simulation_layer"] == layer and option["mode"] == "replay" and option["available"] is True and option["reasons"] == []
+        assert option["repeatability_tier"] == "bounded"
+        assert option["supports_early_stop"] is False  # the lockstep run always finishes
+        triple = {"asv_software": "replay", "control_layer": "ardupilot", "simulation_layer": layer}
+        assert option["vessels"] == {"own_ship": triple, "target_ship": triple}
+        parameters = by_id(option["parameters"], "key")
+        assert set(parameters) == {"speedup", "dt", "steps"} <= set(ArdupilotStackConfig.model_fields)
+        assert parameters["speedup"]["default"] == ArdupilotStackConfig.model_fields["speedup"].default == 1 and parameters["speedup"]["minimum"] == 1
+        assert parameters["dt"]["default"] is None and parameters["steps"]["type"] == "integer"
+        (group,) = option["groups"]
+        assert group["key"] == "geofence" and group["optional"] is True and "workbench" in group["derived_when_absent"]
+        fields = by_id(group["parameters"], "key")
+        assert set(fields) == set(GeofenceSettings.model_fields) and {key: field["default"] for key, field in fields.items()} == {
+            key: field.default for key, field in GeofenceSettings.model_fields.items()
+        }
+        assert fields["radius_meters"]["unit"] == "m" and fields["latitude"]["maximum"] == 90.0
+        assert set(ArdupilotStackConfig.model_fields) == {"simulation_layer", "mode", *parameters, group["key"]}
+
+
+def test_the_ardupilot_stacks_report_the_environment_the_job_applies(stacks):
+    resolver = default_resolver()
+    from scenegems_tool.cluster.master.api.catalog_views import _environment_support
+    from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, SimulationLayerId
+    from scenegems_tool.vessel_stack.contracts.vessel_stack_config import VesselStackConfig
+
+    for layer in ARDUPILOT_LAYERS:
+        replay = VesselStackConfig(AsvSoftwareId.REPLAY, ControlLayerId.ARDUPILOT, SimulationLayerId(layer))
+        support = _environment_support(resolver, {"own_ship": replay})
+        assert support["waves"] == "supported", "the resolver's stack could carry waves; simulation.ardupilot runs calm water and a campaign refuses them"
+        assert by_id(stacks["stacks"])[f"{layer}.replay"]["environment"] == {"wind": "unsupported", "waves": "unsupported", "interactive_only": False}
 
 
 def test_the_vessel_triples_of_a_stack_are_the_resolvers(stacks):
@@ -153,6 +199,7 @@ def test_the_monitors_are_the_ones_a_run_names(stacks):
     assert set(monitors) == {monitor.value for monitor in MonitorImplementation}
     assert {name for name, monitor in monitors.items() if monitor["supports_early_stop"]} == {"live"}
     assert monitors["post_hoc"]["job_types"] == ["monitoring.post_hoc"] and monitors["empty"]["job_types"] == []
+    assert monitors["live"]["job_types"] == ["simulation.kinematic", "simulation.ardupilot"]  # both simulation jobs judge a run in process
     assert all(monitor["label"] and monitor["description"] for monitor in monitors.values())
 
 
@@ -186,7 +233,7 @@ def test_every_other_stack_of_the_resolver_is_listed_as_unavailable_with_its_rea
     resolver = default_resolver()
     matrix = resolver.availability_matrix()
     unavailable = stacks["unavailable_stacks"]
-    offered = {("replay", "none", "kinematic"), ("usv_navigation", "none", "kinematic")}
+    offered = {("replay", "none", "kinematic"), ("usv_navigation", "none", "kinematic"), ("replay", "ardupilot", "ardupilot_sim"), ("replay", "ardupilot", "gazebo")}
     listed = {(entry["asv_software"], entry["control_layer"], entry["simulation_layer"]) for entry in unavailable}
     assert len(unavailable) == len(listed) == len(matrix) - len(offered)
     assert not listed & offered
@@ -196,10 +243,9 @@ def test_every_other_stack_of_the_resolver_is_listed_as_unavailable_with_its_rea
 
 def test_the_reasons_tell_why_a_resolver_stack_is_not_a_campaign_stack(stacks):
     entries = {(entry["asv_software"], entry["control_layer"], entry["simulation_layer"]): entry for entry in stacks["unavailable_stacks"]}
-    gazebo = entries[("replay", "ardupilot", "gazebo")]  # the resolver has it, the campaign config does not offer it yet
-    assert gazebo["available_in_resolver"] is True and gazebo["tier"] == "bounded" and "kinematic" in gazebo["reasons"][0]
+    assert ("replay", "ardupilot", "gazebo") not in entries and ("replay", "ardupilot", "ardupilot_sim") not in entries  # offered since P6.6
     usv_navigation = entries[("usv_navigation", "ardupilot", "ardupilot_sim")]  # available since WP5b, not offered to campaigns
-    assert usv_navigation["available_in_resolver"] is True and "kinematic" in usv_navigation["reasons"][0]
+    assert usv_navigation["available_in_resolver"] is True and usv_navigation["tier"] == "bounded" and "replay on ArduPilot SITL or Gazebo" in usv_navigation["reasons"][0]
     impossible = entries[("replay", "ardupilot", "kinematic")]
     assert impossible["status"] == "unavailable" and impossible["design_status"] == "no" and "integrates control internally" in impossible["reasons"][0]
     interactive = entries[("mission_planner", "ardupilot", "gazebo")]
@@ -215,6 +261,8 @@ def test_every_offered_stack_is_a_config_the_validation_accepts(stacks):
         text = f"name: probe\nscope:\n  - classes: [2vessel_0obstacle_scenarios/functional_model0]\n    quota: 1\nexecution:\n  runs:\n    - stack: {{simulation_layer: {option['simulation_layer']}, mode: {option['mode']}}}\n"
         validated = validate_campaign_config(parse_campaign_config(text))
         assert validated.runs[0].repeatability_tier == option["repeatability_tier"]
+        (run,) = validated.config.execution.runs
+        assert (run.stack.simulation_layer, run.stack.mode.value if hasattr(run.stack.mode, "value") else run.stack.mode) == (option["simulation_layer"], option["mode"])
 
 
 # Architecture

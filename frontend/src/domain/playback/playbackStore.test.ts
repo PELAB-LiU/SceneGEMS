@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { sampleFrames } from "../../test/fixtures/sampleFrames";
-import { getCurrentFrame, usePlaybackStore } from "./playbackStore";
+import { createPlaybackStore, getCurrentFrame, usePlaybackStore, useScenePlaybackStore, useTrajectoryPlaybackStore } from "./playbackStore";
 
 describe("playbackStore", () => {
   beforeEach(() => {
@@ -236,5 +236,28 @@ describe("playbackStore", () => {
     expect(usePlaybackStore.getState().scenarioTrajectoryLength).toBe(0);
     resetForNewScene();
     expect(usePlaybackStore.getState().scenarioTrajectoryLength).toBeNull();
+  });
+});
+
+describe("a playback store per page", () => {
+  it("keeps the pages' frames apart", () => {
+    usePlaybackStore.getState().clearVisualizedScenario();
+    usePlaybackStore.getState().ingestFrames(sampleFrames.slice(0, 5));
+    useTrajectoryPlaybackStore.getState().setTrajectoryPreviewFrames(sampleFrames.slice(0, 2));
+    useScenePlaybackStore.getState().setVisualizedScenario({ scene: sampleFrames[0], valid: true });
+    // Showing a scene clears nothing of the simulation page, and planning nothing of the scene page.
+    expect(usePlaybackStore.getState().frames).toHaveLength(5);
+    expect(useTrajectoryPlaybackStore.getState().frames).toHaveLength(2);
+    expect(usePlaybackStore.getState().latestGeneratedScene).toBeNull();
+    expect(useScenePlaybackStore.getState().latestGeneratedScene?.scene.timestamp).toBe(0);
+    useTrajectoryPlaybackStore.getState().seek(1);
+    expect(usePlaybackStore.getState().currentTimestamp).toBe(0);
+    expect(useTrajectoryPlaybackStore.getState().currentTimestamp).toBe(1);
+  });
+
+  it("makes stores that start empty", () => {
+    const store = createPlaybackStore();
+    expect(store.getState().frames).toEqual([]);
+    expect(store.getState().latestGeneratedScene).toBeNull();
   });
 });

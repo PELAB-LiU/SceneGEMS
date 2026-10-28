@@ -5,9 +5,19 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from scenegems_tool.assurance.pipeline.pipeline_queries import JobFacts
-from scenegems_tool.assurance.pipeline.verdicts import ResultError, new_calibration_result, new_run_record, new_verdict, pending_from_live, pending_from_post_hoc, pending_unmonitored
+from scenegems_tool.assurance.pipeline.verdicts import (
+    RESULT_FIELD_ROLES,
+    ResultError,
+    new_calibration_result,
+    new_run_record,
+    new_verdict,
+    pending_from_live,
+    pending_from_post_hoc,
+    pending_unmonitored,
+    step_roles,
+)
 from scenegems_tool.cluster.protocol.jobs import JobState
-from scenegems_tool.persistence.schema import MonitorImplementation, TrajectoryGeneratorImplementation, VerdictState
+from scenegems_tool.persistence.schema import MonitorImplementation, RunSource, StepKind, TrajectoryGeneratorImplementation, VerdictState
 from scenegems_tool.persistence.stores.result_store import check_verdict
 
 FAILED_RULES = [{"relation": "OS_0 - TS_1", "rule": "Rule 14", "first_failed_at": 12}, {"relation": "OS_0 - TS_2", "rule": "Rule 8", "first_failed_at": 30}]
@@ -87,3 +97,23 @@ def test_a_calibration_result_keeps_its_envelope():
     assert calibration.envelope == {"per_vessel": {"0": {"max_m": 1.5}}, "trajectory_digests": ["a", "b", "c"]}
     with pytest.raises(ResultError, match="no exact"):
         new_calibration_result({"reference": "x", "repeats": 2}, {}, {}, {}, "campaign")
+
+
+def test_a_scene_or_trajectory_verdict_names_its_step_at_run_0():
+    pending = pending_from_post_hoc({"rules": {}, "failed_rules": FAILED_RULES[:1], "passed": False})
+    verdict = new_verdict(7, 0, pending, None, False, step=StepKind.TRAJECTORIES)
+    assert (verdict.step, verdict.run_index, verdict.run_record_id, verdict.state) == (StepKind.TRAJECTORIES, 0, None, VerdictState.FAILED)
+    check_verdict(verdict)
+    assert new_verdict(7, 1, pending, 3, False).step == StepKind.SIMULATION  # runs keep the simulation step
+
+
+def test_a_recorded_run_has_no_job_and_no_generator():
+    result = {"trajectories": LOG, "steps": 30, "state_digest": None, "run_record": {"dt": 0.1, "repeatability_tier": "bounded", "environment": {"wind": 1}}}
+    record = new_run_record(7, 0, 0, None, True, {"vessels": {"0": "ardupilot"}}, {"wind": 1}, 5, result, "ef" * 32, None, None, {}, {"running_s": 60.0}, "bounded", source=RunSource.LIVE_SESSION)
+    assert (record.source, record.job_id, record.trajectory_generator, record.dt, record.steps) == (RunSource.LIVE_SESSION, None, None, 0.1, 30)
+    assert record.artifacts == {"trajectories": "ef" * 32, "state_log": "cd" * 32}
+
+
+def test_the_generation_monitors_frames_keep_their_own_roles():
+    assert step_roles(StepKind.SCENE)["frames"] == "scene_frames" and step_roles(StepKind.TRAJECTORIES)["frames"] == "trajectory_frames"
+    assert RESULT_FIELD_ROLES["frames"] == "frames" and step_roles(StepKind.SCENE)["evaluation_data"] == "scene"

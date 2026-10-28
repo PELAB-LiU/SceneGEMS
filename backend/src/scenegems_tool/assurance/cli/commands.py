@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Callable, TextIO
 
 from scenegems_tool.assurance.cli.api_client import ApiError, OperatorApi
-from scenegems_tool.assurance.cli.render import campaign_summary, coverage_table, table
+from scenegems_tool.assurance.cli.render import OUTPUT_HEADERS, campaign_row, campaign_summary, coverage_table, findings_summary, output_row, table
 from scenegems_tool.cluster.protocol.routes import ARTIFACTS_PATH, CAMPAIGNS_PATH
 
 FINAL_STATES = ("stopped", "completed")
@@ -36,17 +36,17 @@ def create(session: Session, arguments: Namespace) -> int:
         content = path.read_bytes()
     except OSError as error:
         raise ApiError(None, [f"cannot read {path}: {error.strerror or error}"])
-    campaign = session.api.post(CAMPAIGNS_PATH, content=content, content_type="application/yaml", name=arguments.name, start=True if arguments.start else None)
+    campaign = session.api.post(CAMPAIGNS_PATH, content=content, content_type="application/yaml", name=arguments.name, start=True if arguments.start else None, kind="campaign", origin="cli")
     session.say(campaign_summary(campaign))
     return 0
 
 
 def list_campaigns(session: Session, arguments: Namespace) -> int:
-    campaigns = session.api.get(CAMPAIGNS_PATH, state=arguments.state or None, limit=arguments.limit, offset=arguments.offset)
+    campaigns = session.api.get(CAMPAIGNS_PATH, state=arguments.state or None, kind=arguments.kind, limit=arguments.limit, offset=arguments.offset)
     if not campaigns:
         session.say("no campaigns")
         return 0
-    session.say(table(["id", "name", "desired", "actual", "created"], [[c["campaign_id"], c["name"], c["desired_state"], c["actual_state"], c["created_at"]] for c in campaigns]))
+    session.say(table(["id", "name", "kind", "origin", "steps", "desired", "actual", "created"], [campaign_row(c) for c in campaigns]))
     return 0
 
 
@@ -65,6 +65,26 @@ def control(name: str) -> Callable[[Session, Namespace], int]:
         return 0
 
     return run
+
+
+def delete(session: Session, arguments: Namespace) -> int:
+    session.api.delete(campaign_path(arguments.campaign))
+    session.say(f"deleted campaign {arguments.campaign}")
+    return 0
+
+
+def outputs(session: Session, arguments: Namespace) -> int:
+    found = session.api.get(campaign_path(arguments.campaign, "/outputs"), step=arguments.step, state=arguments.state, class_id=arguments.class_id, limit=arguments.limit, offset=arguments.offset)
+    if not found:
+        session.say(f"no {arguments.step} outputs")
+        return 0
+    session.say(table(OUTPUT_HEADERS, [output_row(o) for o in found]))
+    return 0
+
+
+def findings(session: Session, arguments: Namespace) -> int:
+    session.say(findings_summary(session.api.get(campaign_path(arguments.campaign, "/findings"), step=arguments.step)))
+    return 0
 
 
 def cases(session: Session, arguments: Namespace) -> int:

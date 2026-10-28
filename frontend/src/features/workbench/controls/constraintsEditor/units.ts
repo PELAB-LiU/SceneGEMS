@@ -117,10 +117,6 @@ export function unitSymbol(unit: UnitId): string {
   return UNITS_BY_ID.get(unit)?.symbol ?? unit;
 }
 
-export function unitName(unit: UnitId): string {
-  return unit;
-}
-
 export function isMagnitudeUnit(unit: UnitId): boolean {
   return UNITS_BY_ID.get(unit)?.magnitude ?? false;
 }

@@ -192,12 +192,12 @@ function CatalogBrowser({ catalog, onPickPattern, onPickClasses, picked }: { cat
   );
 }
 
-/** Scope: the campaign's name, and the classes it covers (picked from the catalog or by pattern) with a quota and failure budget per entry. */
+/** Scope: the catalog classes a campaign that starts with scene generation covers (picked from the catalog or by pattern) with a quota and failure budget per entry. */
 export function ScopeStep({ draft, update, reasons, catalog }: StepProps & { catalog: CatalogState }) {
   const [activeId, setActiveId] = useState(draft.scope[0]?.id ?? "");
   const active = draft.scope.find((entry) => entry.id === activeId) ?? draft.scope[draft.scope.length - 1];
   const plan = useMemo(() => (catalog.classes ? planScope(draft.scope, catalog.classes) : null), [draft.scope, catalog.classes]);
-  const own = splitByField(reasonsOfEntry(reasons, null), ["name", "description", "scope"]);
+  const own = splitByField(reasonsOfEntry(reasons, null), ["scope"]);
   const picked = useMemo(() => new Set(draft.scope.flatMap((entry) => entry.classes)), [draft.scope]);
 
   const change = (id: string, edit: (entry: ScopeEntryDraft) => void) =>
@@ -212,13 +212,8 @@ export function ScopeStep({ draft, update, reasons, catalog }: StepProps & { cat
     <div className="wiz-step">
       <div className="wiz-columns">
         <div className="wiz-column">
-          <Field label="Name" htmlFor="wiz-name" hint="Shown in the campaign list." issues={own.byField.get("name")}>
-            <input id="wiz-name" type="text" value={draft.name} maxLength={256} placeholder="phase 4 exit campaign" onChange={(event) => update((next) => void (next.name = event.target.value))} />
-          </Field>
-          <Field label="Description" htmlFor="wiz-description" hint="Optional." issues={own.byField.get("description")}>
-            <textarea id="wiz-description" rows={2} value={draft.description} onChange={(event) => update((next) => void (next.description = event.target.value))} />
-          </Field>
-          <h4 className="wiz-subhead">Scope entries</h4>
+          <h4 className="wiz-subhead">Catalog classes</h4>
+          {draft.input.scenarios.length > 0 && <p className="meta">Scope entries without classes are left out while scenario files give the campaign something to run.</p>}
           <FieldIssues reasons={[...(own.byField.get("scope") ?? []), ...own.rest]} showField />
           {draft.scope.map((entry, index) => (
             <EntryCard

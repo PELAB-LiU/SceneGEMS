@@ -3,7 +3,7 @@ import pytest
 from scenegems_tool.cluster.node.launchers.pooled.monitor_service import MonitorService
 from scenegems_tool.cluster.node.launchers.pooled.pooled_service import PooledService
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 
 
 @pytest.fixture
@@ -12,7 +12,7 @@ def no_docker(monkeypatch):
     for launcher in (PooledService, MonitorService):
         monkeypatch.setattr(launcher, "_run_container_lifecycle_startup", lambda self, compose: None)
     monkeypatch.delenv("SCENEGEMS_DOCKER_NETWORK", raising=False)
-    for variable in ("SCENARIO_GENERATION_IMAGE", "TRAJECTORY_GENERATION_IMAGE", "MONITORING_IMAGE", "SCENARIO_EXECUTION_IMAGE"):
+    for variable in ("SCENE_GENERATION_IMAGE", "TRAJECTORY_GENERATION_IMAGE", "MONITORING_IMAGE", "SCENARIO_EXECUTION_IMAGE"):
         monkeypatch.delenv(variable, raising=False)
 
 

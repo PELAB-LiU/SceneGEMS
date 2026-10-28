@@ -11,6 +11,9 @@ export const LIVE_PROTOCOL_VERSION = 1;
 
 export const NODES_TOPIC = "nodes";
 
+/** Every entry of Campaign History (design doc 6.5): the snapshot is `{}`, updates carry a changed list row or a deleted id. */
+export const CAMPAIGNS_TOPIC = "campaigns";
+
 export function campaignTopic(campaignId: string): string {
   return `campaign:${campaignId}`;
 }

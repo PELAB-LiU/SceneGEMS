@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compassCourse, describeStack, formatBytes, formatSeconds, metersPerSecondToKnots, runLabel, shortClassId, shortHash, sortedArtifacts } from "./resultsFormat";
+import { describeStack, formatBytes, formatSeconds, runLabel, shortClassId, shortHash, sortedArtifacts } from "./resultsFormat";
 
 describe("results formatting", () => {
   it("formats seconds", () => {
@@ -29,14 +29,6 @@ describe("results formatting", () => {
     expect(runLabel(null)).toBe("-");
     expect(describeStack({ simulation_layer: "kinematic", mode: "usv_navigation", dt: 0.1 })).toBe("kinematic usv_navigation");
     expect(describeStack({ other: 1 })).toBe('{"other":1}');
-  });
-
-  it("converts a heading (radians counterclockwise from east) to a compass course", () => {
-    expect(compassCourse(0)).toBeCloseTo(90);
-    expect(compassCourse(Math.PI / 2)).toBeCloseTo(0);
-    expect(compassCourse(-Math.PI / 2)).toBeCloseTo(180);
-    expect(compassCourse(Math.PI)).toBeCloseTo(270);
-    expect(metersPerSecondToKnots(1)).toBeCloseTo(1.9438, 3);
   });
 
   it("lists the state log and frames of a run first", () => {

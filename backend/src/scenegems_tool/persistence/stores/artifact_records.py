@@ -5,6 +5,11 @@ needs each file. Retention removes references; the sweep deletes the files of ar
 without references that have not been used for a while (stored again, referenced or
 unreferenced), so a fresh upload survives until the engine references it.
 
+An operator upload holds its artifact with an upload reference (holder upload, holder id the
+artifact's hash) until it expires; uploading the same content again keeps the later expiry.
+The sweep drops expired upload references first (remove_expired_uploads). A campaign created
+from the upload takes its own reference, so the file outlives the upload's expiry.
+
 Every method takes an optional session (see store_session).
 """
 
@@ -12,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Collection, List, Optional
 
-from sqlalchemy import delete, exists, select, update
+from sqlalchemy import delete, exists, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -20,6 +25,8 @@ from scenegems_tool.persistence.clock import Clock, utc_now
 from scenegems_tool.persistence.schema import ArtifactHolderKind, ArtifactReferenceRow, ArtifactRow
 from scenegems_tool.persistence.schema.artifact_tables import require_sha256_hex
 from scenegems_tool.persistence.stores.store_session import session_scope
+
+UPLOAD_ROLE = "upload"
 
 
 class UnknownArtifact(LookupError):
@@ -67,10 +74,31 @@ class ArtifactReference:
     role: str
     campaign_id: Optional[str]
     created_at: datetime
+    expires_at: Optional[datetime] = None  # upload references only
 
     @classmethod
     def from_row(cls, row: ArtifactReferenceRow) -> "ArtifactReference":
-        return cls(artifact_hash=row.artifact_hash, holder_kind=row.holder_kind, holder_id=row.holder_id, role=row.role, campaign_id=row.campaign_id, created_at=row.created_at)
+        return cls(
+            artifact_hash=row.artifact_hash,
+            holder_kind=row.holder_kind,
+            holder_id=row.holder_id,
+            role=row.role,
+            campaign_id=row.campaign_id,
+            created_at=row.created_at,
+            expires_at=row.expires_at,
+        )
+
+
+def drop_references(session: Session, conditions, now: datetime) -> List[str]:
+    """Deletes the references matching conditions; returns the hashes they referenced, sorted, and marks those artifacts used now.
+
+    Marking them used gives a freed artifact the sweep's grace period before its file goes.
+    """
+    statement = delete(ArtifactReferenceRow).where(*conditions).returning(ArtifactReferenceRow.artifact_hash).execution_options(synchronize_session=False)
+    hashes = sorted(set(session.execute(statement).scalars()))
+    if hashes:
+        session.execute(update(ArtifactRow).where(ArtifactRow.hash.in_(hashes)).values(last_used_at=now).execution_options(synchronize_session=False))
+    return hashes
 
 
 class ArtifactRecordStore:
@@ -143,14 +171,16 @@ class ArtifactRecordStore:
     # References
 
     def add_reference(self, artifact_hash: str, holder_kind: ArtifactHolderKind, holder_id: str, role: str, campaign_id: Optional[str] = None, *, session: Optional[Session] = None) -> bool:
-        """Records that the holder needs the artifact in this role; False when it did already. Raises UnknownArtifact."""
+        """Records that the holder needs the artifact in this role; False when it did already. Raises UnknownArtifact.
+
+        Upload references expire, so they are added with add_upload_reference.
+        """
         require_sha256_hex(artifact_hash)
+        if holder_kind == ArtifactHolderKind.UPLOAD:
+            raise ValueError("an upload reference expires; add it with add_upload_reference")
         now = self._clock()
         with session_scope(self._sessions, session) as scope:
-            # FOR NO KEY UPDATE: a concurrent delete of the record waits for this reference
-            row = scope.execute(select(ArtifactRow).where(ArtifactRow.hash == artifact_hash).with_for_update(key_share=True).execution_options(populate_existing=True)).scalar_one_or_none()
-            if row is None:
-                raise UnknownArtifact(artifact_hash)
+            row = self._lock_artifact(scope, artifact_hash)
             statement = (
                 insert(ArtifactReferenceRow)
                 .values(artifact_hash=artifact_hash, holder_kind=holder_kind, holder_id=str(holder_id), role=role, campaign_id=campaign_id, created_at=now)
@@ -161,6 +191,32 @@ class ArtifactRecordStore:
             row.last_used_at = now
             scope.flush()
             return created
+
+    def add_upload_reference(self, artifact_hash: str, expires_at: datetime, *, session: Optional[Session] = None) -> ArtifactReference:
+        """Holds an uploaded artifact until expires_at; uploading the same content again keeps the later expiry. Raises UnknownArtifact."""
+        require_sha256_hex(artifact_hash)
+        now = self._clock()
+        with session_scope(self._sessions, session) as scope:
+            row = self._lock_artifact(scope, artifact_hash)
+            statement = (
+                insert(ArtifactReferenceRow)
+                .values(artifact_hash=artifact_hash, holder_kind=ArtifactHolderKind.UPLOAD, holder_id=artifact_hash, role=UPLOAD_ROLE, created_at=now, expires_at=expires_at)
+                .on_conflict_do_update(
+                    index_elements=[ArtifactReferenceRow.artifact_hash, ArtifactReferenceRow.holder_kind, ArtifactReferenceRow.holder_id, ArtifactReferenceRow.role],
+                    set_={"expires_at": func.greatest(ArtifactReferenceRow.expires_at, expires_at)},
+                )
+                .returning(ArtifactReferenceRow)
+            )
+            reference = scope.execute(statement, execution_options={"populate_existing": True}).scalar_one()
+            row.last_used_at = now
+            scope.flush()
+            return ArtifactReference.from_row(reference)
+
+    def remove_expired_uploads(self, *, session: Optional[Session] = None) -> List[str]:
+        """Drops the upload references that expired by now; returns the hashes they held, sorted. The sweep calls it before it lists unreferenced artifacts."""
+        now = self._clock()
+        with session_scope(self._sessions, session) as scope:
+            return drop_references(scope, [ArtifactReferenceRow.holder_kind == ArtifactHolderKind.UPLOAD, ArtifactReferenceRow.expires_at <= now], now)
 
     def remove_reference(self, artifact_hash: str, holder_kind: ArtifactHolderKind, holder_id: str, role: str, *, session: Optional[Session] = None) -> bool:
         """Removes one reference; False when there was none."""
@@ -176,6 +232,12 @@ class ArtifactRecordStore:
         if roles is not None:
             conditions.append(ArtifactReferenceRow.role.in_(list(roles)))
         return self._remove(conditions, session)
+
+    def remove_references_of_holders(self, holder_kind: ArtifactHolderKind, holder_ids: Collection[str], *, session: Optional[Session] = None) -> List[str]:
+        """Removes every reference of the holders (deleted cases or runs, say); returns the hashes they referenced, sorted."""
+        if not holder_ids:
+            return []
+        return self._remove([ArtifactReferenceRow.holder_kind == holder_kind, ArtifactReferenceRow.holder_id.in_(sorted({str(holder_id) for holder_id in holder_ids}))], session)
 
     def references(self, artifact_hash: str, *, session: Optional[Session] = None) -> List[ArtifactReference]:
         with session_scope(self._sessions, session) as scope:
@@ -193,11 +255,15 @@ class ArtifactRecordStore:
     def _unreferenced():
         return ~exists().where(ArtifactReferenceRow.artifact_hash == ArtifactRow.hash)
 
+    @staticmethod
+    def _lock_artifact(session: Session, artifact_hash: str) -> ArtifactRow:
+        # FOR NO KEY UPDATE: a concurrent delete of the record waits for the new reference
+        row = session.execute(select(ArtifactRow).where(ArtifactRow.hash == artifact_hash).with_for_update(key_share=True).execution_options(populate_existing=True)).scalar_one_or_none()
+        if row is None:
+            raise UnknownArtifact(artifact_hash)
+        return row
+
     def _remove(self, conditions, session: Optional[Session]) -> List[str]:
         now = self._clock()
         with session_scope(self._sessions, session) as scope:
-            statement = delete(ArtifactReferenceRow).where(*conditions).returning(ArtifactReferenceRow.artifact_hash).execution_options(synchronize_session=False)
-            hashes = sorted(set(scope.execute(statement).scalars()))
-            if hashes:
-                scope.execute(update(ArtifactRow).where(ArtifactRow.hash.in_(hashes)).values(last_used_at=now).execution_options(synchronize_session=False))
-            return hashes
+            return drop_references(scope, conditions, now)

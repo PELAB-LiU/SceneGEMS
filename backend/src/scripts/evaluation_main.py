@@ -4,7 +4,7 @@ from typing import List, Tuple
 from logical_level.constraint_satisfaction.csp_evaluation.csp_evaluator import CSPEvaluatorImpl
 from logical_level.constraint_satisfaction.csp_evaluation.csp_scheduler import CSPScheduler, CSPSchedulerFactory
 from logical_level.constraint_satisfaction.csp_evaluation.csp_solver_factory import CPSSolverFactory
-from utils.evaluation_config import DC_RS, DC_SB_II, DC_SB_III, MSR_CDRS_PS, MSR_CDRS, DC_RS_PS, MSR_SB_III, BaseSBMeasurementConfig, MeasurementConfig, create_config, RSMeasurementConfig, MSRMeasurementConfig, get_scenarios
+from utils.evaluation_config import MSR_CDRS_PS, BaseSBMeasurementConfig, MeasurementConfig, create_config, RSMeasurementConfig, MSRMeasurementConfig, get_scenarios
 
 class SceneGenerationProcess(Process):
     def __init__(self, scheduler: CSPScheduler, core_id: int, measurement_name) -> None:

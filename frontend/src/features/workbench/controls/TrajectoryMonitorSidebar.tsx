@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import "./simulationPanel.css";
 import { useUiStore, type TrajectoryStream } from "../../../app/uiStore";
 import { usePersistedState } from "../../../app/usePersistedState";
-import { usePlaybackStore } from "../../../domain/playback/playbackStore";
+import { useShownPlayback } from "../../../domain/playback/playbackContext";
 import { framesAtOrBeforeCursor } from "../../../domain/playback/playbackFrameResolve";
 import type { SimulationFrame } from "../../../domain/simulation/types";
 import { MetricsView } from "../metrics/MetricsView";
@@ -42,10 +42,10 @@ export function TrajectoryMonitorSidebar({ previewOnly = false }: { previewOnly?
   const selectedMetricsRelationId = useUiStore((s) => s.selectedMetricsRelationId);
   const setSelectedMetricsRelationId = useUiStore((s) => s.setSelectedMetricsRelationId);
   const setRightPaneVisible = useUiStore((s) => s.setRightPaneVisible);
-  const activeScenarioId = usePlaybackStore((s) => s.activeScenarioId);
-  const previewFrames = usePlaybackStore((s) => s.frames);
-  const simulationFrames = usePlaybackStore((s) => s.simulationFrames);
-  const playbackCursor = usePlaybackStore((s) => s.playbackCursor);
+  const activeScenarioId = useShownPlayback((s) => s.activeScenarioId);
+  const previewFrames = useShownPlayback((s) => s.frames);
+  const simulationFrames = useShownPlayback((s) => s.simulationFrames);
+  const playbackCursor = useShownPlayback((s) => s.playbackCursor);
   const [chosenStream, setChosenStream] = usePersistedState<TrajectoryStream>("monitor-panel-stream", "animation");
 
   const hasSimulation = !previewOnly && simulationFrames.length > 0;

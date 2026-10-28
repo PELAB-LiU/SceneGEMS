@@ -1,12 +1,23 @@
-"""The stage graph: steps, keys, priorities, and a case's stage and readiness from its progress."""
+"""The stage graph: steps, keys, priorities, and a case's stage and readiness from its progress, for the full chain and partial campaigns."""
 
 import pytest
 
 from scenegems_tool.assurance.campaign import campaign_config_from_dict
-from scenegems_tool.assurance.pipeline.stage_graph import SCENE_STEP, TRAJECTORIES_STEP, CaseProgress, StageGraph, Step
+from scenegems_tool.assurance.campaign.campaign_config import CHAIN, CampaignStep
+from scenegems_tool.assurance.pipeline.stage_graph import (
+    SCENE_MONITOR_STEP,
+    SCENE_STEP,
+    STAGE_PRIORITY_OFFSET,
+    TRAJECTORIES_MONITOR_STEP,
+    TRAJECTORIES_STEP,
+    CaseProgress,
+    StageGraph,
+    Step,
+    stage_priority_offsets,
+)
 from scenegems_tool.cluster.protocol.jobs import JobType
-from scenegems_tool.persistence.schema import PipelineStage
-from tests.scenegems_tool.assurance.pipeline.conftest import config_dict
+from scenegems_tool.persistence.schema import PipelineStage, StepKind
+from tests.scenegems_tool.assurance.pipeline.conftest import config_dict, format2_dict
 
 SIMULATE, MONITOR, CALIBRATE = PipelineStage.SIMULATE, PipelineStage.MONITOR, PipelineStage.CALIBRATE
 
@@ -89,3 +100,92 @@ def test_progress_round_trips_through_json():
     again = CaseProgress(progress.to_json())
     assert again.handled(SCENE_STEP) and again.run_record_id(0, 1) == 17 and sorted(again.run_record_ids()) == [16, 17]
     assert again.pending_verdict(0) is None
+
+
+# Partial campaigns
+
+STRAIGHT_MONITORED = {"generator": "straight", "timespan_s": 10, "monitor": "post_hoc"}
+SCENE_POST_HOC = {"monitor": "post_hoc"}
+
+
+def _format2(steps, **sections) -> StageGraph:
+    return StageGraph(campaign_config_from_dict(format2_dict(steps, **sections)))
+
+
+def test_a_format_1_graph_runs_the_full_chain_without_generation_monitors():
+    graph = _graph({"monitor": "post_hoc"})
+    assert graph.steps == CHAIN and graph.first_stage() == PipelineStage.GENERATE_SCENE and graph.monitored_steps() == []
+    assert graph.priority_offsets == STAGE_PRIORITY_OFFSET and len(graph.runs) == 1
+    progress = CaseProgress()
+    progress.mark(SCENE_STEP, "succeeded")
+    assert graph.stage_of(progress) == PipelineStage.GENERATE_TRAJECTORIES
+    assert set(progress.to_json()) == {"steps", "runs"}  # no verdicts key: a format 1 case's progress keeps its shape
+
+
+def test_the_generation_monitors_get_priorities_between_their_neighbours():
+    graph = _format2(["scene_generation", "trajectory_generation", "simulation"], scene_generation=SCENE_POST_HOC, trajectories=STRAIGHT_MONITORED)
+    chain = [PipelineStage.GENERATE_SCENE, PipelineStage.MONITOR_SCENE, PipelineStage.GENERATE_TRAJECTORIES, PipelineStage.MONITOR_TRAJECTORIES, SIMULATE, MONITOR, CALIBRATE]
+    assert [graph.priority_offsets[stage] for stage in chain] == list(range(len(chain)))
+    assert SCENE_MONITOR_STEP.priority(10, graph.priority_offsets) == 11 and TRAJECTORIES_MONITOR_STEP.priority(10, graph.priority_offsets) == 13
+    assert stage_priority_offsets(scene_monitored=True)[PipelineStage.GENERATE_TRAJECTORIES] == 2
+    assert stage_priority_offsets(trajectories_monitored=True)[PipelineStage.MONITOR_TRAJECTORIES] == 2
+    with pytest.raises(KeyError):
+        SCENE_MONITOR_STEP.priority(10)  # only with its graph's offsets
+    assert SCENE_MONITOR_STEP.name == "monitor_scene" and SCENE_MONITOR_STEP.job_type == JobType.MONITORING_POST_HOC
+    assert TRAJECTORIES_MONITOR_STEP.idempotency_key("c1", 4) == "campaign:c1:case:4:monitor_trajectories"
+
+
+def test_a_monitored_scene_step_is_ready_with_its_scene_and_its_verdict():
+    graph = _format2(["scene_generation"], scene_generation=SCENE_POST_HOC)
+    assert graph.runs == () and graph.monitored_steps() == [StepKind.SCENE] and graph.is_last(CampaignStep.SCENE_GENERATION)
+    progress = CaseProgress()
+    assert graph.stage_of(progress) == PipelineStage.GENERATE_SCENE and not graph.ready(progress)
+    progress.mark(SCENE_STEP, "succeeded")
+    assert graph.stage_of(progress) == PipelineStage.MONITOR_SCENE and not graph.ready(progress)
+    progress.mark(SCENE_MONITOR_STEP, "succeeded")
+    progress.set_step_verdict(StepKind.SCENE, {"state": "passed"})
+    assert graph.stage_of(progress) == PipelineStage.VERDICT and graph.ready(progress)
+    again = CaseProgress(progress.to_json())
+    assert again.step_verdict(StepKind.SCENE) == {"state": "passed"} and again.step_verdict(StepKind.TRAJECTORIES) is None
+
+
+def test_an_unmonitored_last_step_is_ready_with_its_output():
+    graph = _format2(["scene_generation"])
+    progress = CaseProgress()
+    progress.mark(SCENE_STEP, "succeeded")
+    assert graph.monitored_steps() == [] and graph.stage_of(progress) == PipelineStage.VERDICT and graph.ready(progress)
+    graph = _format2(["scene_generation", "trajectory_generation"])
+    assert graph.stage_of(progress) == PipelineStage.GENERATE_TRAJECTORIES and not graph.ready(progress)
+    progress.mark(TRAJECTORIES_STEP, "succeeded")
+    assert graph.ready(progress) and graph.is_last(CampaignStep.TRAJECTORY_GENERATION)
+
+
+def test_each_generation_step_waits_for_its_monitor():
+    graph = _format2(["scene_generation", "trajectory_generation"], scene_generation=SCENE_POST_HOC, trajectories=STRAIGHT_MONITORED)
+    assert graph.monitored_steps() == [StepKind.SCENE, StepKind.TRAJECTORIES]
+    progress = CaseProgress()
+    progress.mark(SCENE_STEP, "succeeded")
+    progress.mark(TRAJECTORIES_STEP, "succeeded")  # the trajectories ran beside the scene's monitor
+    assert graph.stage_of(progress) == PipelineStage.MONITOR_SCENE and not graph.ready(progress)
+    progress.mark(SCENE_MONITOR_STEP, "succeeded")
+    progress.set_step_verdict(StepKind.SCENE, {"state": "failed"})
+    assert graph.stage_of(progress) == PipelineStage.MONITOR_TRAJECTORIES and not graph.ready(progress)
+    progress.mark(TRAJECTORIES_MONITOR_STEP, "succeeded")
+    progress.set_step_verdict(StepKind.TRAJECTORIES, {"state": "passed"})
+    assert graph.stage_of(progress) == PipelineStage.VERDICT and graph.ready(progress)
+
+
+def test_a_monitor_of_a_step_the_campaign_does_not_run_is_ignored():
+    graph = _format2(["trajectory_generation", "simulation"], scene_generation=SCENE_POST_HOC)
+    assert not graph.scene_monitored and graph.monitored_steps() == []
+
+
+def test_later_starts_begin_at_their_first_step():
+    graph = _format2(["trajectory_generation"], trajectories=STRAIGHT_MONITORED)
+    assert graph.first_stage() == PipelineStage.GENERATE_TRAJECTORIES and graph.runs == ()
+    assert graph.stage_of(CaseProgress()) == PipelineStage.GENERATE_TRAJECTORIES
+    graph = _format2(["simulation"], runs=[{"monitor": "post_hoc"}])
+    progress = CaseProgress()
+    assert graph.first_stage() == SIMULATE and graph.stage_of(progress) == SIMULATE
+    progress.mark(Step(SIMULATE, 0, 0), "recorded")
+    assert graph.stage_of(progress) == MONITOR and not graph.ready(progress)

@@ -1,9 +1,10 @@
 import { useEffect, useRef } from "react";
-import { usePlaybackStore } from "./playbackStore";
+import { useStore } from "zustand";
+import { usePlaybackStore, type PlaybackStore } from "./playbackStore";
 
-/** Smooth playback via requestAnimationFrame (real-time speed multiplier). */
-export function usePlaybackTicker() {
-  const isPlaying = usePlaybackStore((s) => s.isPlaying);
+/** Smooth playback of one page's store via requestAnimationFrame (real-time speed multiplier). */
+export function usePlaybackTicker(store: PlaybackStore = usePlaybackStore) {
+  const isPlaying = useStore(store, (s) => s.isPlaying);
   const rafRef = useRef<number | null>(null);
   const lastTickRef = useRef<number | null>(null);
 
@@ -18,7 +19,7 @@ export function usePlaybackTicker() {
     }
 
     const loop = (now: number) => {
-      const state = usePlaybackStore.getState();
+      const state = store.getState();
       if (!state.isPlaying || state.frames.length === 0) {
         lastTickRef.current = now;
         rafRef.current = requestAnimationFrame(loop);
@@ -48,5 +49,5 @@ export function usePlaybackTicker() {
         cancelAnimationFrame(rafRef.current);
       }
     };
-  }, [isPlaying]);
+  }, [isPlaying, store]);
 }

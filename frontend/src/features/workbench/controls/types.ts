@@ -1,7 +1,10 @@
+import type { OperatorClient } from "../../../domain/cluster/operatorApi";
 import type { LoadScenarioOptions } from "../../../domain/simulation/useSimulationWorkflow";
-import type { ClientToServerMessage, TrajectoryGenerationParamsWire } from "../../../domain/simulation/wireTypes";
+import type { ClientToServerMessage } from "../../../domain/simulation/wireTypes";
+import type { TrajectoryEntryRequest } from "../cluster/workbenchJobDriver";
 import type { JobTypeResources } from "../cluster/workbenchResources";
 import type { ClusterRunPlan } from "../cluster/simulationJobs";
+import type { PageInput } from "../pages/pageStore";
 
 export interface SimulationStreamControls {
   loadScenarioFromFile: (file: File | null, options?: LoadScenarioOptions) => Promise<void>;
@@ -14,8 +17,12 @@ export interface SimulationStreamControls {
   sendMessage: (message: ClientToServerMessage) => void;
   /** What the active cluster offers for a job type, and why the workbench cannot run it when it cannot. */
   clusterResources: (jobType: string) => JobTypeResources;
-  generateTrajectories: (requestId: string, scenarioContent: string, colregsConstraintsContent: string, params: TrajectoryGenerationParamsWire) => void;
+  /** The active cluster's operator client, null without one. */
+  operatorClient: OperatorClient | null;
+  generateTrajectories: (requestId: string, request: TrajectoryEntryRequest) => void;
   stopTrajectoryGeneration: () => void;
+  /** Sets the simulation page's input and loads its trajectories. */
+  setSimulationInput: (input: PageInput, content: string, options?: LoadScenarioOptions) => Promise<void>;
   runSimulationOnCluster: (plan: ClusterRunPlan, colregsConstraintsContent: string) => void;
   stopSimulationOnCluster: () => void;
   setClusterRunSpeed: (speed: number) => void;

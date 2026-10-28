@@ -10,7 +10,7 @@ from concrete_level.models.concrete_scene import ConcreteScene
 from concrete_level.trajectory_generation.trajectory_builder import TrajectoryBuilder
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.vessel_stack.contracts.roles import SimulationLayerId
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 from scenegems_tool.vessel_stack.control_layers.ardupilot.mavlink_lockstep_runner import mavlink_replay_instance
 from scenegems_tool.vessel_stack.simulation_docker_stack import build_simulation_docker_stack_artifacts
 from utils.file_system_utils import GAZEBO_GEN_MOUNT, RUNTIME_ASSETS_FOLDER, SIMULATION_GEN_FOLDER, docker_volume_path

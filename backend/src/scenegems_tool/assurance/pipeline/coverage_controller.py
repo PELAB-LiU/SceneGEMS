@@ -17,15 +17,19 @@ function of its seed, so the selection below is too:
   case starts that could not be needed, and the case set stays a prefix of the indexes.
   Both rules keep the outcome independent of timing: a class is abandoned exactly when, in
   index order, more cases than its budget drop before quota cases complete.
+- An item class (item/<n>, an output of an earlier step or an uploaded file) runs its one case
+  and no spare: the same item gives the same outcome again.
 
 Backpressure: a new case starts only while every stage has fewer queued jobs (and intents)
-of the campaign than its cap.
+of the campaign than its cap; how many start is bounded by the cap of the first configured
+step's stage.
 """
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 from scenegems_tool.assurance.campaign.campaign_config import QueueDepthCaps
+from scenegems_tool.assurance.campaign.campaign_inputs import ITEM_CLASS_PREFIX
 from scenegems_tool.assurance.pipeline.stage_graph import JOB_STAGES
 from scenegems_tool.persistence.schema import CampaignClassState, CaseState, PipelineStage
 from scenegems_tool.persistence.stores import CaseRecord, ClassRecord
@@ -75,7 +79,9 @@ def decide_class(cases: Sequence[CaseRecord], quota: int, failure_budget: int, d
 
 
 def spare_cases(record: ClassRecord) -> int:
-    """Cases a class runs beyond its quota: one more than it dropped so far, within the failure budget left."""
+    """Cases a class runs beyond its quota: one more than it dropped so far, within the failure budget left; none for an item class."""
+    if record.class_id.startswith(ITEM_CLASS_PREFIX):
+        return 0
     return max(0, min(record.failure_budget_left, record.dropped_count + 1))
 
 
@@ -92,15 +98,16 @@ class Backpressure:
 
     caps: QueueDepthCaps
     queued: Dict[PipelineStage, int] = field(default_factory=dict)
+    first_stage: PipelineStage = PipelineStage.GENERATE_SCENE  # the stage new cases start at
 
     def full_stages(self) -> List[PipelineStage]:
         return [stage for stage in JOB_STAGES if self.queued.get(stage, 0) >= self.caps.cap(stage)]
 
     def room_for_new_cases(self) -> int:
-        """New cases that fit: each adds a scene generation job, and no stage may be at its cap."""
+        """New cases that fit: each adds a job of the first stage, and no stage may be at its cap."""
         if self.full_stages():
             return 0
-        return self.caps.cap(PipelineStage.GENERATE_SCENE) - self.queued.get(PipelineStage.GENERATE_SCENE, 0)
+        return self.caps.cap(self.first_stage) - self.queued.get(self.first_stage, 0)
 
 
 def plan_new_cases(classes: Sequence[ClassRecord], next_indexes: Mapping[str, int], room: int) -> List[Tuple[str, int]]:

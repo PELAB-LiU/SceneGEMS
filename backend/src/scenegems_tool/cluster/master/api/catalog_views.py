@@ -1,6 +1,7 @@
 """JSON views of what a campaign may run: the class catalog and the stacks, monitors and trajectory generators.
 
-stacks_view describes every option so a form can be generated from it. A parameter is
+stacks_view describes every option so a form can be generated from it; a stack says whether a live monitor
+can stop its run early (supports_early_stop). A parameter is
 {"key", "type", "default", "required", "description"} plus "unit", "minimum", "exclusive_minimum",
 "maximum" or "choices" where they apply; type is number, integer, boolean, number_pair, number_triple,
 number_map or string. A default of null means the parameter is left out and the system derives it
@@ -11,7 +12,7 @@ the job type modules, which the master keeps out of its startup.
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 
-CAMPAIGN_STACKS_NOTE = "Campaign configs offer the kinematic layer today; the other stacks of the resolver follow with their adapters."
+CAMPAIGN_STACKS_NOTE = "Campaign configs offer the kinematic layer and replay on ArduPilot SITL or Gazebo (simulation.ardupilot); the other stacks of the resolver follow with their adapters."
 
 
 def class_view(scenario_class: Any) -> Dict[str, Any]:
@@ -89,8 +90,92 @@ def _environment_support(resolver: Any, stacks: Dict[str, Any]) -> Dict[str, Any
     return {"wind": capabilities.wind.value, "waves": capabilities.waves.value, "interactive_only": capabilities.interactive_only}
 
 
+def _geofence_parameters() -> List[Dict[str, Any]]:
+    from scenegems_tool.assurance.campaign.campaign_config import GeofenceSettings
+
+    fields = GeofenceSettings.model_fields
+    return [
+        parameter("latitude", "number", "latitude of the reference area's center", fields["latitude"].default, unit="deg", minimum=-90.0, maximum=90.0),
+        parameter("longitude", "number", "longitude of the reference area's center", fields["longitude"].default, unit="deg", minimum=-180.0, maximum=180.0),
+        parameter("radius_meters", "number", "radius of the reference area", fields["radius_meters"].default, unit="m", exclusive_minimum=0.0),
+    ]
+
+
+def _ardupilot_parameters() -> List[Dict[str, Any]]:
+    from scenegems_tool.assurance.campaign.campaign_config import ArdupilotStackConfig
+
+    return [
+        parameter(
+            "speedup", "integer", "SITL's requested pace as a multiple of real time; the resolver refuses a pace the stack cannot hold", ArdupilotStackConfig.model_fields["speedup"].default, minimum=1
+        ),
+        parameter("dt", "number", "time step of the run in whole seconds; the trajectories' time step when absent", unit="s", exclusive_minimum=0.0),
+        parameter("steps", "integer", "number of steps; the trajectories' timespan when absent", minimum=1),
+    ]
+
+
+def _ardupilot_environment(resolver: Any, vessels: Dict[str, Any]) -> Dict[str, Any]:
+    """What a run on the stack can apply: the resolver's support, cut to what simulation.ardupilot does (it runs calm water, so a configured wind or wave is refused)."""
+    support = _environment_support(resolver, vessels)
+    return {"wind": "unsupported", "waves": "unsupported", "interactive_only": support["interactive_only"]}
+
+
 def offered_stacks(resolver: Any) -> List[Dict[str, Any]]:
     """The stack options a campaign config accepts (campaign_config.StackConfig), each as the resolver judges it for an unattended run."""
+    return _kinematic_stacks(resolver) + _ardupilot_stacks(resolver)
+
+
+def _ardupilot_stacks(resolver: Any) -> List[Dict[str, Any]]:
+    from scenegems_tool.assurance.campaign.campaign_config import ARDUPILOT_LAYERS, ArdupilotStackConfig, RunConfig
+    from scenegems_tool.assurance.campaign.config_validation import resolve_run, vessel_stacks
+
+    labels = {
+        "ardupilot_sim": (
+            "Replay on ArduPilot SITL",
+            "Every vessel replays its generated trajectory through its own ArduPilot SITL (SITL's physics), stepped in lockstep over MAVLink. Repeats differ within a measured bound.",
+        ),
+        "gazebo": (
+            "Replay on SITL with Gazebo",
+            "Every vessel replays its generated trajectory through its own ArduPilot SITL against a Gazebo world, stepped in lockstep over MAVLink. Repeats differ within a measured bound.",
+        ),
+    }
+    stacks = []
+    for layer in ARDUPILOT_LAYERS:
+        config = ArdupilotStackConfig(simulation_layer=layer)
+        resolved, reasons = resolve_run(RunConfig(stack=config), 0, resolver)
+        vessels = vessel_stacks(config)
+        label, description = labels[layer]
+        stacks.append(
+            {
+                "id": f"{layer}.replay",
+                "label": label,
+                "description": description + " The run has no wind or waves, and no early stop.",
+                "simulation_layer": layer,
+                "mode": "replay",
+                "available": resolved is not None,
+                "reasons": reasons,
+                "repeatability_tier": None if resolved is None else resolved.repeatability_tier,
+                "supports_early_stop": False,
+                "vessels": {agent_id: _triple(stack) for agent_id, stack in vessels.items()},
+                "environment": _ardupilot_environment(resolver, vessels),
+                "parameters": _ardupilot_parameters(),
+                "groups": [{"key": "geofence", "label": "Reference area", "optional": True, "derived_when_absent": _derived_geofence(), "parameters": _geofence_parameters()}],
+            }
+        )
+    return stacks
+
+
+def _derived_geofence() -> str:
+    from scenegems_tool.assurance.campaign.campaign_config import GeofenceSettings
+
+    fields = GeofenceSettings.model_fields
+    return (
+        "Left out, the workbench's reference area is used: "
+        f"latitude {fields['latitude'].default}, longitude {fields['longitude'].default}, radius {fields['radius_meters'].default:g} m. "
+        "It maps the scenes' local frame to SITL's home positions."
+    )
+
+
+def _kinematic_stacks(resolver: Any) -> List[Dict[str, Any]]:
     from scenegems_tool.assurance.campaign.campaign_config import KinematicStackConfig, RunConfig
     from scenegems_tool.assurance.campaign.config_validation import resolve_run, vessel_stacks
     from scenegems_tool.cluster.node.jobs.simulation_kinematic_job import KinematicMode
@@ -113,6 +198,7 @@ def offered_stacks(resolver: Any) -> List[Dict[str, Any]]:
             "available": resolved is not None,
             "reasons": reasons,
             "repeatability_tier": None if resolved is None else resolved.repeatability_tier,
+            "supports_early_stop": True,
             "vessels": {agent_id: _triple(stack) for agent_id, stack in vessels.items()},
             "environment": _environment_support(resolver, vessels),
             "parameters": _run_stack_parameters(),
@@ -128,11 +214,12 @@ def offered_stacks(resolver: Any) -> List[Dict[str, Any]]:
 
 def unavailable_stacks(resolver: Any, offered: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Every other triple of the resolver's matrix with the reasons a campaign cannot use it."""
-    from scenegems_tool.assurance.campaign.campaign_config import KinematicStackConfig
+    from scenegems_tool.assurance.campaign.campaign_config import ARDUPILOT_LAYERS, ArdupilotStackConfig, KinematicStackConfig
     from scenegems_tool.assurance.campaign.config_validation import vessel_stacks
     from scenegems_tool.cluster.node.jobs.simulation_kinematic_job import KinematicMode
 
-    taken = {_key(stack) for mode in KinematicMode for stack in vessel_stacks(KinematicStackConfig(mode=mode)).values()}
+    configs = [KinematicStackConfig(mode=mode) for mode in KinematicMode] + [ArdupilotStackConfig(simulation_layer=layer) for layer in ARDUPILOT_LAYERS]
+    taken = {_key(stack) for config in configs for stack in vessel_stacks(config).values()}
     others = []
     for chain in resolver.availability_matrix():
         if _key(chain.stack) in taken:
@@ -142,7 +229,7 @@ def unavailable_stacks(resolver: Any, offered: List[Dict[str, Any]]) -> List[Dic
         if chain.available and interactive:
             reasons = ["workbench only: an operator or a physical vessel is in the loop, so a campaign never runs it"]
         elif chain.available:
-            reasons = ["the campaign config does not offer this stack yet: its runs use the kinematic layer"]
+            reasons = ["the campaign config does not offer this stack yet: its runs use the kinematic layer or replay on ArduPilot SITL or Gazebo"]
         else:
             reasons = list(chain.reasons)
         others.append(
@@ -163,7 +250,12 @@ def monitors_view() -> List[Dict[str, Any]]:
 
     described = {
         MonitorImplementation.POST_HOC: ("Post hoc", "A monitoring job judges the recorded run after the simulation; the verdict is passed or failed.", ["monitoring.post_hoc"], False),
-        MonitorImplementation.LIVE: ("Live", "The COLREGS monitor runs inside the simulation step by step; it can stop the run early once every rule is decided.", ["simulation.kinematic"], True),
+        MonitorImplementation.LIVE: (
+            "Live",
+            "The COLREGS monitor runs inside the simulation step by step; on the kinematic layer it can stop the run early once every rule is decided.",
+            ["simulation.kinematic", "simulation.ardupilot"],
+            True,
+        ),
         MonitorImplementation.EMPTY: ("None", "Nothing is judged; every verdict is unmonitored.", [], False),
     }
     return [
@@ -228,7 +320,7 @@ def run_parameters_view() -> List[Dict[str, Any]]:
         parameter("name", "string", "label of the run in the campaign and its results"),
         parameter("seed", "integer", "one seed for the run in every case; derived per case from the case seed and the run index when absent", minimum=0, maximum=MAX_SEED),
         parameter("repeats", "integer", "runs with the same seed, for the calibration of a bounded stack", RunConfig.model_fields["repeats"].default, minimum=1),
-        parameter("early_stop", "boolean", "stop the run once every rule is decided; the live monitor only", RunConfig.model_fields["early_stop"].default),
+        parameter("early_stop", "boolean", "stop the run once every rule is decided; the live monitor on a kinematic stack only", RunConfig.model_fields["early_stop"].default),
         parameter("environment.wind_vector", "number_triple", "wind [east, north, up]", [0.0, 0.0, 0.0], unit="m/s"),
         parameter("environment.waves", "object", "waves: amplitude, period, steepness and direction [east, north] (its norm is the wave speed); none when absent"),
     ]

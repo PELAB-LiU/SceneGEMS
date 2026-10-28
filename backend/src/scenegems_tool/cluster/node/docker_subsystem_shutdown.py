@@ -9,43 +9,12 @@ from __future__ import annotations
 import logging
 import threading
 
-from scenegems_tool.cluster.node.launchers.docker_cli import (
-    container_ids_by_name,
-    container_ids_for_compose_project,
-    container_ids_for_compose_project_prefix,
-    force_remove_compose_project,
-    force_remove_containers,
-)
+from scenegems_tool.cluster.node.launchers.docker_cli import container_ids_for_compose_project_prefix, force_remove_containers
 
 _logger = logging.getLogger(__name__)
 
-_MQTT_BROKER_COMPOSE_PROJECT = "mqtt_broker"
-_MQTT_BROKER_CONTAINER_NAME = "scenegems_local_mqtt_broker"
-
 _shutdown_lock = threading.Lock()
 _shutdown_done = False
-
-
-def force_destroy_mqtt_broker() -> None:
-    """Stop the local MQTT broker container started via mqtt_broker/docker-compose.yml."""
-    container_ids = container_ids_for_compose_project(_MQTT_BROKER_COMPOSE_PROJECT)
-    if not container_ids:
-        container_ids = container_ids_by_name(_MQTT_BROKER_CONTAINER_NAME)
-    force_remove_containers(container_ids)
-
-
-def force_destroy_scenario_generation_stack() -> None:
-    """Fast teardown: force-remove scenario-generation subsystem containers."""
-    from scenegems_tool.cluster.node.launchers.pooled.scene_generation_pool import WORKBENCH_NAMES
-
-    force_remove_compose_project(WORKBENCH_NAMES.compose_project)
-
-
-def force_destroy_trajectory_generation_stack() -> None:
-    """Fast teardown: force-remove trajectory-generation subsystem containers."""
-    from scenegems_tool.cluster.node.launchers.pooled.trajectory_generation_pool import WORKBENCH_NAMES
-
-    force_remove_compose_project(WORKBENCH_NAMES.compose_project)
 
 
 def force_destroy_monitor_subsystem_stack() -> None:
@@ -67,8 +36,6 @@ def shutdown_all_docker_subsystems() -> None:
         from scenegems_tool.cluster.node.launchers.per_job.simulation_session_stack import force_destroy_scenario_execution_stack
 
         force_destroy_scenario_execution_stack()
-        force_destroy_scenario_generation_stack()
-        force_destroy_trajectory_generation_stack()
         force_destroy_monitor_subsystem_stack()
     except BaseException:
         _logger.exception("Docker subsystem shutdown failed")

@@ -20,6 +20,7 @@ import {
   type JobState,
   type PipelineStage,
   type VerdictState,
+  type VerdictStep,
 } from "./schemas";
 
 /** A request to run one job (`JobSubmission` of `cluster/protocol/jobs.py`); the master checks the payload against its job type. */
@@ -78,6 +79,9 @@ export interface RequestOptions {
   query?: Query;
   /** Sent as JSON. */
   body?: unknown;
+  /** Sent as it is with `contentType` (a file upload); instead of `body`. */
+  rawBody?: Blob | ArrayBuffer | string;
+  contentType?: string;
   signal?: AbortSignal;
 }
 
@@ -102,6 +106,8 @@ export interface VerdictFilters {
   state?: VerdictState;
   run_index?: number;
   sensitive?: boolean;
+  /** Phase 6: the verdicts of one monitored step; without it, every step. */
+  step?: VerdictStep;
   limit?: number;
   offset?: number;
 }
@@ -207,7 +213,9 @@ export class OperatorClient {
     const onAbort = () => controller.abort();
     options.signal?.addEventListener("abort", onAbort, { once: true });
     const headers: Record<string, string> = { Accept: "application/json" };
-    if (options.body !== undefined) {
+    if (options.rawBody !== undefined) {
+      headers["Content-Type"] = options.contentType ?? "application/octet-stream";
+    } else if (options.body !== undefined) {
       headers["Content-Type"] = "application/json";
     }
     let response: Response;
@@ -215,7 +223,7 @@ export class OperatorClient {
       response = await this.fetchImpl(this.url(path, options.query), {
         method,
         headers,
-        body: options.body === undefined ? undefined : JSON.stringify(options.body),
+        body: options.rawBody !== undefined ? options.rawBody : options.body === undefined ? undefined : JSON.stringify(options.body),
         signal: controller.signal,
       });
     } catch (error) {

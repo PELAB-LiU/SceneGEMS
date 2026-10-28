@@ -124,10 +124,6 @@ class ManeuveringDomain:
         """True once the ship has both passed A's along and reached the outer offset."""
         return along >= self.along_b - EPSILON and self.near_outer(across)
 
-    def reached_c(self, along: float, across: float) -> bool:
-        """True once B is done and the ship is at least as far along as C."""
-        return self.reached_b(along, across) and along >= self.along_c - EPSILON
-
     def reached_d(self, along: float, across: float) -> bool:
         """True once the inbound has put the ship back on the original track."""
         return along >= self.along_c - EPSILON and self.near_track(across)
@@ -155,24 +151,6 @@ class ManeuveringDomain:
             return None
         t0, along_b, along_c, along_d, inner_across, outer_across = geometry
         return ManeuveringDomain(origin, forward, across, t0, along_b, along_c, along_d, inner_across, outer_across)
-
-    @staticmethod
-    def from_potential_collision_domain(
-        origin: np.ndarray,
-        forward: np.ndarray,
-        across: np.ndarray,
-        pcd: DomainCollection,
-        safety_radius: float,
-        slant_angle: float,
-    ) -> Optional["ManeuveringDomain"]:
-        if pcd.empty:
-            return None
-        alongs, acrosses = _project_pcd_corners(origin, forward, across, pcd)
-        return ManeuveringDomain.from_projected_corners(origin, forward, across, alongs, acrosses, safety_radius, slant_angle)
-
-    @staticmethod
-    def for_give_way_actor(actor: ConcreteActor, situation_context: SituationContext) -> Optional["ManeuveringDomain"]:
-        return ManeuveringDomain.for_give_way_ship(actor, [situation_context])
 
     @staticmethod
     def for_give_way_ship(actor: ConcreteActor, situation_contexts: Sequence[SituationContext]) -> Optional["ManeuveringDomain"]:
@@ -297,10 +275,6 @@ def _latest_ra_turn_along(alongs: List[float], acrosses: List[float], gap: float
     if not limits:
         return None
     return min(limits)
-
-
-def _clearance_tangent(alongs: List[float], acrosses: List[float], gap: float) -> float:
-    return _clearance_tangent_from(alongs, acrosses, gap, 0.0)
 
 
 def _clearance_tangent_from(alongs: List[float], acrosses: List[float], gap: float, t0: float) -> float:

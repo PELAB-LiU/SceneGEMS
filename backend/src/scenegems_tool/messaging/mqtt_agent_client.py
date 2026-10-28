@@ -10,7 +10,22 @@ from haversine import Unit
 from concrete_level.models.actor_state import ActorState
 from concrete_level.models.concrete_actors import ConcreteVessel
 from scenegems_tool.messaging.mqtt_client import MqttClient, MQttConnectionInfo
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence, from_true_north, normalized_to_pwm
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence, from_true_north
+
+
+def normalized_to_pwm(norm_value):
+    """
+    Converts a float between -1.0 and 1.0 to a standard PWM integer.
+    E.g., -0.5 becomes 1250.
+    """
+    # 1. Clamp the value to ensure it never exceeds the -1.0 to 1.0 range
+    clamped_value = max(-1.0, min(1.0, norm_value))
+
+    # 2. Calculate the PWM
+    pwm = 1500 + (clamped_value * 500)
+
+    # 3. Return as an integer (MAVLink requires ints for RC overrides)
+    return int(pwm)
 
 
 class ExecutionState(Enum):
@@ -49,10 +64,6 @@ class MqttAgentClient(MqttClient):
     @property
     def external_control_mode(self) -> bool:
         return self.control_mode == "external"
-
-    @property
-    def autonomous_control_mode(self) -> bool:
-        return self.control_mode == "autonomous"
 
     @property
     def on_board_control_mode(self) -> bool:
@@ -133,22 +144,6 @@ class MqttAgentClient(MqttClient):
         self.current_task_name = command["task"]["name"]
         self.client.publish(self.exec_command_topic, str_command, qos=1)
 
-    def publish_abort_all(self):
-        for task in self.running_tasks:
-            command = {
-                "com-uuid": str(uuid.uuid4()),
-                "command": "signal-task",
-                "sender": self.parent_service_name,
-                "signal": "$abort",
-                "task-uuid": task,
-            }
-            str_command = json.dumps(command)
-            self.current_task_uuid = command["task-uuid"]
-            self.current_task_name = "abort"
-            self.client.publish(self.exec_command_topic, str_command, qos=1)
-
-    def publish_loiter_all(self):
-        pass
         # command = {
         #     'com-uuid': str(uuid.uuid4()),
         #     'command': 'signal-task',

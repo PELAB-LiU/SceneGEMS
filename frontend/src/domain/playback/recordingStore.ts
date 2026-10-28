@@ -2,13 +2,6 @@ import { create } from "zustand";
 import type { SimulationFrame } from "../simulation/types";
 import { usePlaybackStore } from "./playbackStore";
 
-export interface RecordedStream {
-  stream: "preview" | "simulation";
-  scenarioId: string | null;
-  recordedAt: string;
-  frames: SimulationFrame[];
-}
-
 interface RecordingState {
   isRecording: boolean;
   /** Scenario id captured when recording started; used to detect scenario switches. */

@@ -5,7 +5,7 @@ import time
 from types import SimpleNamespace
 
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 
 CONNECTION = MQttConnectionInfo("", "", "broker", "broker", 1883, False, False)
 GEOFENCE = Geofence(57.7, 11.9, 2000.0)

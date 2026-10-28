@@ -13,13 +13,13 @@ KINEMATIC = JobType.SIMULATION_KINEMATIC
 
 
 def test_register_creates_an_online_node(node_store):
-    hello = make_hello("node-a", slots={SCENE: 2, KINEMATIC: 4}, labels={"site": "lab"}, fingerprints={"scenegems-scenario-generation": "f1"})
+    hello = make_hello("node-a", slots={SCENE: 2, KINEMATIC: 4}, labels={"site": "lab"}, fingerprints={"scenegems-scene-generation": "f1"})
     node = node_store.register(hello)
     assert node.status == NodeStatus.ONLINE
     assert node.name == "node-a-host"
     assert node.labels == {"site": "lab"}
     assert node.capabilities == {SCENE: CapabilityUsage(slots=2, slots_in_use=0), KINEMATIC: CapabilityUsage(slots=4, slots_in_use=0)}
-    assert node.fingerprints == {"scenegems-scenario-generation": "f1"}
+    assert node.fingerprints == {"scenegems-scene-generation": "f1"}
     assert node.registered_at == node.last_seen_at == START
     assert node_store.get("node-a") == node
 

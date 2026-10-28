@@ -6,7 +6,7 @@ import paho.mqtt.client as mqtt
 import pytest
 
 from scenegems_tool.messaging.mqtt_client import MqttClient, MQttConnectionInfo, mqtt_container_environment
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 
 PREFIX = "scenegems/m1/n1/scene_generation-0/"
 

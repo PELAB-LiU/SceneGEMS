@@ -10,6 +10,7 @@ import type { MasterStatus, NodeView } from "../../domain/cluster/schemas";
 import { useLiveChannelStatus } from "../../domain/cluster/useLiveTopic";
 import { ClusterListPanel, SSH_TUNNEL_COMMAND } from "./ClusterListPanel";
 import { shortHash, summarizeNodes } from "./clusterFormat";
+import { NodeInstances } from "./instances/NodeInstances";
 import { NodeCard } from "./NodeCard";
 import { useMasterStatus } from "./useMasterStatus";
 
@@ -160,6 +161,7 @@ export function ClusterSection() {
   const liveStatus = useLiveChannelStatus(operatorUrl);
   const statusQuery = useMasterStatus(operatorUrl);
   const now = useNow(5_000);
+  const [instancesNodeId, setInstancesNodeId] = useState<string | null>(null);
 
   const nodesOfCluster = nodesState.operatorUrl === operatorUrl;
   const nodes = nodesOfCluster ? nodesState.nodes : [];
@@ -170,6 +172,7 @@ export function ClusterSection() {
     ((statusError instanceof OperatorApiError && statusError.unreachable) || (nodesOfCluster && nodesState.unreachable));
   const summary = summarizeNodes(nodes);
   const offlineNodes = nodes.filter((node) => node.status === "offline");
+  const instancesNode = nodes.find((node) => node.node_id === instancesNodeId) ?? null;
 
   const apiBadge = cluster && (
     <div className="section-badges">
@@ -265,8 +268,25 @@ export function ClusterSection() {
         ) : (
           <div className="node-grid">
             {nodes.map((node) => (
-              <NodeCard key={node.node_id} node={node} operatorUrl={cluster.operatorUrl} nowMs={now} />
+              <NodeCard
+                key={node.node_id}
+                node={node}
+                operatorUrl={cluster.operatorUrl}
+                nowMs={now}
+                instancesOpen={node.node_id === instancesNode?.node_id}
+                onToggleInstances={() => setInstancesNodeId((current) => (current === node.node_id ? null : node.node_id))}
+              />
             ))}
+          </div>
+        )}
+        {instancesNode && (
+          <div id="cluster-node-instances">
+            <NodeInstances
+              key={`${cluster.operatorUrl}/${instancesNode.node_id}`}
+              node={instancesNode}
+              operatorUrl={cluster.operatorUrl}
+              onClose={() => setInstancesNodeId(null)}
+            />
           </div>
         )}
         <Disclosure
@@ -294,7 +314,7 @@ export function ClusterSection() {
   }
 
   return (
-    <SectionFrame title="Cluster" subtitle="The machines that run your simulations, and whether they are healthy." actions={apiBadge}>
+    <SectionFrame title="Cluster" subtitle="The machines that run your simulations, whether they are healthy, and what each one runs now." actions={apiBadge}>
       <div className="cluster-main">{content}</div>
     </SectionFrame>
   );

@@ -20,7 +20,7 @@ from scenegems_tool.cluster.node.launchers.docker_cli import container_names_and
 from scenegems_tool.cluster.node.launchers.pooled.pooled_service import SERVICE_CPUS, PooledService, PoolNames
 from scenegems_tool.cluster.node.subsystem import Subsystem, subsystem_image
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 from utils.docker_compose_network import attach_broker_network_to_compose
 from utils.file_system_utils import MONITORING_GEN_FOLDER
 

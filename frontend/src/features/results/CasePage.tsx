@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { Disclosure } from "../../components/Disclosure";
 import { describeOperatorError } from "../../domain/cluster/operatorApi";
-import type { CaseDetail, RunRecord } from "../../domain/cluster/schemas";
+import type { CampaignStep, CaseDetail, RunRecord } from "../../domain/cluster/schemas";
 import { CaseJobsTable, RunRecordCard, StateChip, VerdictCard } from "./CaseParts";
+import { caseStepRows, describeStepVerdict } from "./stepViews";
 import { RecordedRun } from "./RecordedRun";
 import { formatTime, shortClassId } from "./resultsFormat";
 import { useCaseDetail } from "./useResultsData";
@@ -11,7 +12,49 @@ interface CasePageProps {
   operatorUrl: string;
   campaignId: string;
   caseId: number;
+  /** The steps the entry executed. */
+  steps: readonly CampaignStep[];
   onBack: () => void;
+}
+
+/** Every step of the chain for this case: whether the entry ran it, what the case has of its output, and the verdict. */
+function CaseSteps({ detail, steps }: { detail: CaseDetail; steps: readonly CampaignStep[] }) {
+  const rows = caseStepRows(detail, steps);
+  return (
+    <section className="results-panel" aria-label="Steps of the case">
+      <header className="results-panel-head">
+        <h3>Steps</h3>
+        <span className="meta">{steps.length} of 3 executed</span>
+      </header>
+      <div className="results-table-wrap">
+        <table className="results-table results-table--plain" aria-label="Verdict of each step">
+          <thead>
+            <tr>
+              <th>Step</th>
+              <th>Output</th>
+              <th>Verdict</th>
+              <th>Failed rules</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.step} className={row.executed ? undefined : "results-row--skipped"}>
+                <td>{row.label}</td>
+                <td>{row.executed ? row.output : <span className="meta">-</span>}</td>
+                <td>
+                  {row.monitored && <StateChip state={row.verdicts.failed > 0 ? "failed" : "passed"} />}
+                  {(!row.monitored || row.verdicts.passed + row.verdicts.failed > 1) && (
+                    <span className={row.monitored ? undefined : "meta"}> {describeStepVerdict(row)}</span>
+                  )}
+                </td>
+                <td>{row.failedRules.length === 0 ? <span className="meta">-</span> : row.failedRules.join(", ")}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
 }
 
 function CaseSummary({ detail }: { detail: CaseDetail }) {
@@ -65,7 +108,7 @@ function CaseSummary({ detail }: { detail: CaseDetail }) {
 }
 
 /** One case: its state, jobs, run records and verdicts, and a recorded run on demand. */
-export function CasePage({ operatorUrl, campaignId, caseId, onBack }: CasePageProps) {
+export function CasePage({ operatorUrl, campaignId, caseId, steps, onBack }: CasePageProps) {
   const query = useCaseDetail(operatorUrl, campaignId, caseId);
   const [shownId, setShownId] = useState<number | null>(null);
   const detail = query.data;
@@ -106,10 +149,11 @@ export function CasePage({ operatorUrl, campaignId, caseId, onBack }: CasePagePr
     <div className="results-stack">
       {back}
       <CaseSummary detail={detail} />
+      <CaseSteps detail={detail} steps={steps} />
 
       <section className="results-panel" aria-label="Verdicts of the case">
         <header className="results-panel-head">
-          <h3>Verdicts</h3>
+          <h3>Verdicts of the steps</h3>
           <span className="meta">{detail.verdicts.length}</span>
         </header>
         {detail.verdicts.length === 0 ? (

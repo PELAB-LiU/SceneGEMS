@@ -60,16 +60,6 @@ export interface VesselDescriptor {
   isOwnShip: boolean;
 }
 
-interface RawActorCandidate {
-  id?: unknown;
-  name?: unknown;
-  isVessel?: unknown;
-  isOwnShip?: unknown;
-  type?: unknown;
-  kind?: unknown;
-  category?: unknown;
-}
-
 export interface VesselInitConnectionDraft {
   vesselId: string;
   context: SimulationContext;
@@ -139,50 +129,6 @@ export function buildInitialVesselConnectionDrafts(
       port: 14570 + portOffset,
     };
   });
-}
-
-function looksLikeVessel(actor: RawActorCandidate): boolean {
-  if (typeof actor.isVessel === "boolean") {
-    return actor.isVessel;
-  }
-  const probe = [actor.type, actor.kind, actor.category, actor.name]
-    .filter((value): value is string => typeof value === "string")
-    .join(" ")
-    .toLowerCase();
-  return probe.includes("vessel") || probe.includes("ship") || probe.includes("usv") || probe.includes("asv");
-}
-
-function inferOwnShip(actor: RawActorCandidate, fallbackId: string): boolean {
-  if (typeof actor.isOwnShip === "boolean") {
-    return actor.isOwnShip;
-  }
-  const idProbe = String(actor.id ?? fallbackId).toLowerCase();
-  return idProbe.startsWith("os") || idProbe.includes("own");
-}
-
-export function extractVesselDescriptorsFromSceneRaw(raw: unknown): VesselDescriptor[] {
-  if (typeof raw !== "object" || raw === null) {
-    return [];
-  }
-  const actors = (raw as { actors?: unknown }).actors;
-  if (!Array.isArray(actors)) {
-    return [];
-  }
-  return actors
-    .map((actor, index) => {
-      const candidate = (typeof actor === "object" && actor !== null
-        ? actor
-        : {}) as RawActorCandidate;
-      const fallbackId = `vessel_${index}`;
-      const actorId = typeof candidate.id === "string" && candidate.id.length > 0 ? candidate.id : fallbackId;
-      return {
-        actorId,
-        isVessel: looksLikeVessel(candidate),
-        isOwnShip: inferOwnShip(candidate, fallbackId),
-      };
-    })
-    .filter((item) => item.isVessel)
-    .map((item) => ({ id: item.actorId, isOwnShip: item.isOwnShip }));
 }
 
 function draftToWire(draft: VesselInitConnectionDraft): SimulationConnectionWire {

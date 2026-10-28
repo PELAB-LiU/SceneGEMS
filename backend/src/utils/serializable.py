@@ -1,5 +1,5 @@
-from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Type, Union, get_args, get_origin
+from abc import ABC
+from typing import Any, Dict, Type, Union, get_args, get_origin
 
 
 def is_optional_type(attribute_type: Type):
@@ -24,23 +24,6 @@ class Serializable(ABC):
             else:  # Handle primitive types
                 result[key] = value
         return result
-
-    # @classmethod
-    # def from_dict(cls, data):
-    #     """Create an object from a dictionary."""
-    #     obj = cls.__new__(cls)  # Create an instance without calling __init__
-    #     for key, value in data.items():
-    #         attr = getattr(cls, key, None)
-    #         if isinstance(attr, type) and issubclass(attr, Serializable):  # Handle nested objects
-    #             setattr(obj, key, attr.from_dict(value))
-    #         elif isinstance(value, list):  # Handle lists of Serializable objects
-    #             if isinstance(attr, dict):
-
-    #             else:
-    #                 setattr(obj, key, value)
-    #         else:
-    #             setattr(obj, key, value)
-    #     return obj
 
     @classmethod
     def from_dict(cls: Type["Serializable"], data: Dict[str, Any]) -> "Serializable":

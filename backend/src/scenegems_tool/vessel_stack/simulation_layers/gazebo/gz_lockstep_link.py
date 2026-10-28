@@ -66,10 +66,6 @@ class GzStepResult:
     late: Tuple[str, ...]  # "<model>/<side>" thrusters whose command was not in effect from the step's first iteration
 
 
-def gz_actuator_endpoint(host: str = "gazebo", port: int = DEFAULT_PORT) -> Tuple[str, int]:
-    return host, port
-
-
 class GzLockstepLink:
     def __init__(self, host: str, port: int = DEFAULT_PORT, *, world: str = WORLD_NAME):
         self.host = host

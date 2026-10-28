@@ -59,13 +59,12 @@ class EvaluationData(Serializable):
             return json.load(file)
 
     @classmethod
-    def load_from_json_bytes(cls, content: bytes) -> 'EvaluationData':
+    def load_from_json_bytes(cls, content: bytes) -> "EvaluationData":
         return cls.from_dict(json.loads(content))
-        
+
     @classmethod
-    def load_from_json(cls, file_path: str) -> 'EvaluationData':
+    def load_from_json(cls, file_path: str) -> "EvaluationData":
         return cls.from_dict(EvaluationData.load_dict_from_json_file(file_path))
-    
 
     def __str__(self) -> str:
         return pprint.pformat(dict(sorted(self.to_dict().items())))
@@ -77,16 +76,9 @@ class EvaluationData(Serializable):
         asset_folder = f"{GEN_DATA_FOLDER}/{self.measurement_name}/{self.config_group.upper()}/{self.algorithm_desc}_{self.aggregate_strat}/{self.random_seed}"
         if not os.path.exists(asset_folder):
             os.makedirs(asset_folder)
-        file_path = f"{asset_folder}/{self.scenario_name}_{self.timestamp.replace(':','-')}.json"
+        file_path = f"{asset_folder}/{self.scenario_name}_{self.timestamp.replace(':', '-')}.json"
         self.path = file_path
         self.save_to_json()
-
-    def delete_from_disk(self):
-        if self.path is not None and os.path.exists(self.path):
-            os.remove(self.path)
-            self.path = None
-        else:
-            print(f"File {self.path} does not exist or path is None.")
 
     @property
     def is_valid(self) -> bool:

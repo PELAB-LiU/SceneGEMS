@@ -5,16 +5,22 @@ title: Control panel
 
 # Control panel
 
-The bottom panel of the Simulation view runs the loaded scenario. Playback (play, step, scrub, speed, follow live) is the bar under the canvas, for the preview and the simulation alike. See also [Recording & replay](./recording).
+The bottom panel of the Simulation view runs the page's input trajectories. Playback (play, step, scrub, speed, follow live) is the bar under the canvas, for the preview and the simulation alike. See also [Recording & replay](./recording) and [Workbench pages and entries](./workbench-pages).
+
+## Input trajectories
+
+The panel starts with the page's input: the trajectories of the Trajectory Generation page, an output of Campaign History, or a file. The input is loaded into the gateway's session for a live session and is what a run on the cluster replays. A run opened from Campaign History fills the input and the setup, so it runs again with one click.
 
 ## Where a simulation runs
 
 The setup decides it, and the panel says which:
 
-- **On the cluster**, as one kinematic job: every vessel replays its trajectory, or USV Navigation steers the own ship while the others replay. The COLREGS monitor judges every step in the job. **Run on the cluster** submits it, **Stop** cancels it, and **Watch at** sets the pace the run is shown (and run) at.
+- **On the cluster**, as one kinematic job saved as a workbench entry: every vessel replays its trajectory, or USV Navigation steers the own ship while the others replay. The COLREGS monitor judges every step in the job. **Run on the cluster** creates the entry, **Stop** stops it, and **Watch at** sets the pace the run is shown (and run) at. A replay on ArduPilot SITL or Gazebo runs as one job and is saved as an entry too; SITL runs free at the setup's real-time factor, so **Watch at** only paces the kinematic runs.
 - **As a live session** on the master over the MQTT broker of the [Connections](./connections) page: real vessels, Mission Planner, ArduPilot SITL, Gazebo and the custom controller. **Initialize** builds the session, **Start** starts it once the agents are ready, **Reset** ends it.
 
-When something is missing (no scenario loaded, no machine on the cluster that runs simulations, no broker connection), the panel lists it instead of enabling the action.
+When something is missing (no input trajectories, no machine on the cluster that runs simulations, no broker connection), the panel lists it instead of enabling the action.
+
+A live session is recorded as a workbench entry; the panel shows whether it is recording, saved (with **Open the recorded run**), failed, or not recorded on this gateway.
 
 ## Setup
 

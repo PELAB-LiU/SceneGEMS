@@ -41,11 +41,6 @@ def node_topic_scope(master_id: str, node_id: str) -> str:
     return f"{SCOPE_ROOT}/{_require_id('master id', master_id)}/{_require_id('node id', node_id)}/"
 
 
-def master_topic_scope(master_id: str) -> str:
-    """The topic subtree of a whole cluster, used by the master's own account."""
-    return f"{SCOPE_ROOT}/{_require_id('master id', master_id)}/"
-
-
 @dataclass(frozen=True)
 class InstanceScope:
     master_id: str

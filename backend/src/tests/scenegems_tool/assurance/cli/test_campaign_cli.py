@@ -98,16 +98,16 @@ def test_create_sends_the_yaml_with_its_content_type(tmp_path):
     assert code == 0 and err == ""
     (request,) = server.requests
     assert request.headers["content-type"] == "application/yaml" and request.content == config.read_bytes()
-    assert dict(request.url.params) == {"name": "my name", "start": "true"}
+    assert dict(request.url.params) == {"name": "my name", "start": "true", "kind": "campaign", "origin": "cli"}
     assert f"campaign smoke ({CAMPAIGN})" in out and "classes 2: open 1, complete 1, abandoned 0" in out
 
 
-def test_create_without_options_sends_no_query(tmp_path):
+def test_create_without_options_sends_only_kind_and_origin(tmp_path):
     config = tmp_path / "campaign.yaml"
     config.write_text("x: 1\n", encoding="utf-8")
     server = Server({("POST", "/cluster/campaigns"): json_response(detail_json(), 201)})
     assert run(server, "create", str(config))[0] == 0
-    assert dict(server.requests[0].url.params) == {}
+    assert dict(server.requests[0].url.params) == {"kind": "campaign", "origin": "cli"}
 
 
 def test_create_prints_the_servers_reasons_and_fails_on_422(tmp_path):
@@ -129,11 +129,12 @@ def test_create_with_a_missing_file_fails_without_a_request(tmp_path):
 def test_list_prints_a_table_and_sends_the_filters():
     other = campaign_json(campaign_id="2c8b0c4f-0000-4000-8000-000000000002", name="second", actual_state="running", desired_state="running")
     server = Server({("GET", "/cluster/campaigns"): json_response([campaign_json(), other])})
-    code, out, _ = run(server, "list", "--state", "running", "--state", "paused", "--limit", "5", "--offset", "10")
+    code, out, _ = run(server, "list", "--state", "running", "--state", "paused", "--kind", "workbench", "--limit", "5", "--offset", "10")
     assert code == 0
-    assert server.requests[0].url.params.get_list("state") == ["running", "paused"] and server.requests[0].url.params["limit"] == "5"
+    params = server.requests[0].url.params
+    assert params.get_list("state") == ["running", "paused"] and params["limit"] == "5" and params["kind"] == "workbench"
     lines = out.splitlines()
-    assert lines[0].split() == ["id", "name", "desired", "actual", "created"] and len(lines) == 3
+    assert lines[0].split() == ["id", "name", "kind", "origin", "steps", "desired", "actual", "created"] and len(lines) == 3
     assert "second" in lines[2] and "running" in lines[2]
 
 
@@ -338,3 +339,111 @@ def test_a_non_json_error_body_is_shown():
     server = Server({("GET", "/cluster/campaigns"): httpx.Response(502, text="bad gateway")})
     code, _, err = run(server, "list")
     assert code == 1 and err == "error: HTTP 502: bad gateway\n"
+
+
+def test_list_shows_kind_origin_and_steps_of_a_phase_six_master():
+    row = campaign_json(kind="workbench", origin="simulation", steps=["simulation"])
+    server = Server({("GET", "/cluster/campaigns"): json_response([row, campaign_json()])})
+    code, out, _ = run(server, "list")
+    first, second = out.splitlines()[1:]
+    assert code == 0 and "workbench" in first and "simulation" in first and first.split()[4] == "simulation"
+    assert "workbench" not in second and "kind" not in server.requests[0].url.params
+
+
+def test_list_rejects_an_unknown_kind():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["list", "--kind", "batch"])
+
+
+def test_delete_sends_a_delete_and_confirms():
+    server = Server({("DELETE", f"/cluster/campaigns/{CAMPAIGN}"): httpx.Response(204)})
+    code, out, err = run(server, "delete", CAMPAIGN)
+    assert code == 0 and err == "" and out == f"deleted campaign {CAMPAIGN}\n"
+
+
+def test_delete_shows_the_masters_refusal():
+    server = Server({("DELETE", f"/cluster/campaigns/{CAMPAIGN}"): json_response({"detail": "campaign x is running; only a stopped or completed campaign can be deleted"}, 409)})
+    code, out, err = run(server, "delete", CAMPAIGN)
+    assert code == 1 and out == "" and err.startswith("error: HTTP 409: campaign x is running")
+
+
+def output_json(**changes) -> dict:
+    output = {
+        "case_id": 5,
+        "case_index": 2,
+        "class_id": CLASS_A,
+        "state": "complete",
+        "reason": None,
+        "artifact": {"sha256": "ab" * 32, "size_bytes": 10, "kind": "scene", "media_type": "application/json", "pointer": None},
+        "valid": True,
+        "complete": None,
+        "run_index": None,
+        "repeat_index": None,
+        "run_record_id": None,
+        "verdict": {"state": "failed", "failed_rules": ["rule_15", "rule_8"]},
+        "input_source": {"campaign_id": "c1", "case_id": 3, "step": "scene_generation"},
+    }
+    output.update(changes)
+    return output
+
+
+def test_outputs_print_a_table_and_send_the_filters():
+    rows = [output_json(), output_json(case_id=6, artifact=None, valid=False, verdict=None, input_source={"file": "head_on.json"}), output_json(case_id=7, input_source={})]
+    server = Server({("GET", f"/cluster/campaigns/{CAMPAIGN}/outputs"): json_response(rows)})
+    code, out, _ = run(server, "outputs", CAMPAIGN, "--step", "scene_generation", "--class", CLASS_A, "--state", "complete", "--limit", "3", "--offset", "1")
+    assert code == 0
+    params = server.requests[0].url.params
+    assert (params["step"], params["class_id"], params["state"], params["limit"], params["offset"]) == ("scene_generation", CLASS_A, "complete", "3", "1")
+    lines = out.splitlines()
+    assert lines[0].split() == ["class", "index", "case", "state", "valid", "complete", "run", "repeat", "verdict", "artifact", "from"] and len(lines) == 4
+    assert "failed (rule_15;rule_8)" in lines[1] and "abababababab" in lines[1] and "c1#3" in lines[1]
+    assert "head_on.json" in lines[2] and "False" in lines[2]
+    assert lines[3].rstrip().endswith("deleted")
+
+
+def test_outputs_of_nothing():
+    server = Server({("GET", f"/cluster/campaigns/{CAMPAIGN}/outputs"): json_response([])})
+    assert run(server, "outputs", CAMPAIGN, "--step", "simulation")[1] == "no simulation outputs\n"
+
+
+def test_outputs_and_findings_need_a_known_step():
+    for argv in (["outputs", CAMPAIGN], ["outputs", CAMPAIGN, "--step", "scene"], ["findings", CAMPAIGN]):
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(argv)
+
+
+def findings_json(**changes) -> dict:
+    findings = {
+        "step": "trajectory_generation",
+        "monitored": True,
+        "cases": {"complete": 5, "dropped": 1},
+        "outputs": {"count": 5, "valid": 5, "complete": 3},
+        "verdicts": {"passed": 3, "failed": 2, "unmonitored": 0},
+        "failed_rules": [{"rule": "rule_15", "count": 2, "first_failure_time_s": {"min": 12.5, "median": 20.1}}],
+        "classes": [{"class_id": CLASS_A, "cases": 5, "passed": 3, "failed": 2}],
+        "durations_s": {"median": 4.2, "p90": 9.8},
+    }
+    findings.update(changes)
+    return findings
+
+
+def test_findings_print_the_summary_of_a_monitored_step():
+    server = Server({("GET", f"/cluster/campaigns/{CAMPAIGN}/findings"): json_response(findings_json())})
+    code, out, _ = run(server, "findings", CAMPAIGN, "--step", "trajectory_generation")
+    assert code == 0 and server.requests[0].url.params["step"] == "trajectory_generation"
+    assert "trajectory_generation: monitored" in out and "cases: complete 5, dropped 1" in out and "outputs: 5, valid 5, complete 3" in out
+    assert "verdicts: passed 3, failed 2, unmonitored 0" in out and "job duration s: median 4.2, p90 9.8" in out
+    assert "rule_15" in out and "12.5" in out and "20.1" in out and CLASS_A in out
+
+
+def test_findings_of_an_unmonitored_step_are_statistics_only():
+    unmonitored = findings_json(monitored=False, verdicts={"passed": 0, "failed": 0, "unmonitored": 0}, failed_rules=[], durations_s={"median": None, "p90": None})
+    server = Server({("GET", f"/cluster/campaigns/{CAMPAIGN}/findings"): json_response(unmonitored)})
+    out = run(server, "findings", CAMPAIGN, "--step", "scene_generation")[1]
+    assert "not monitored (statistics only)" in out and "verdicts:" not in out and "job duration" not in out and "failed rule" not in out
+
+
+def test_findings_of_a_step_the_campaign_does_not_run_fail_with_the_reason():
+    server = Server({("GET", f"/cluster/campaigns/{CAMPAIGN}/findings"): json_response({"detail": f"campaign {CAMPAIGN} does not run simulation"}, 422)})
+    code, _, err = run(server, "findings", CAMPAIGN, "--step", "simulation")
+    assert code == 1 and "does not run simulation" in err

@@ -13,6 +13,7 @@ from scenegems_tool.gateway.protocol import (
     make_monitor_status_message,
     make_mqtt_broker_status_message,
     make_preview_chunk_message,
+    make_run_recording_message,
     make_simulation_chunk_message,
     make_simulation_models_body,
     make_simulation_models_message,
@@ -99,6 +100,11 @@ class TestMessageBuilders:
         assert partial == {"type": "trajectory_generation_result", "requestId": "r1", "trajectoryData": {"t": 1}, "valid": True, "complete": False, "errorMessage": None}
         assert make_trajectory_generation_result_message("r1", {"t": 1}, True, None, complete=True)["complete"] is True
         assert "complete" not in make_trajectory_generation_result_message("r1", {"t": 1}, True, None)
+
+    def test_run_recording_messages_have_the_fields_the_browser_parses(self):
+        # frontend/src/domain/simulation/protocol.ts runRecordingSchema: every field present, ids and message nullable
+        assert make_run_recording_message("saved", "entry-1", 4, "judged") == {"type": "run_recording", "status": "saved", "campaignId": "entry-1", "caseId": 4, "message": "judged"}
+        assert make_run_recording_message("unavailable") == {"type": "run_recording", "status": "unavailable", "campaignId": None, "caseId": None, "message": None}
 
     def test_chunk_messages(self):
         assert make_preview_chunk_message("s", 0, 9, [{"f": 1}]) == {"type": "preview_trajectory_chunk", "scenarioId": "s", "fromTimestamp": 0, "toTimestamp": 9, "frames": [{"f": 1}]}

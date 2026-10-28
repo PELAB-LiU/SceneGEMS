@@ -1,13 +1,27 @@
 from dataclasses import replace
+from datetime import timedelta
 
 import pytest
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 
+from scenegems_tool.cluster.protocol.jobs import JobState, JobType
 from scenegems_tool.persistence.database import transaction
-from scenegems_tool.persistence.schema import CampaignClassState, CaseState, MonitorImplementation, PipelineStage, TrajectoryGeneratorImplementation, VerdictRow, VerdictState
-from scenegems_tool.persistence.stores import NewCase, NewRunRecord, NewVerdict, UnknownCase
-from tests.scenegems_tool.persistence.stores.builders import sha256_of
+from scenegems_tool.persistence.schema import (
+    CampaignClassState,
+    CaseState,
+    JobRow,
+    MonitorImplementation,
+    PipelineStage,
+    RunSource,
+    StepKind,
+    TrajectoryGeneratorImplementation,
+    VerdictRow,
+    VerdictState,
+)
+from scenegems_tool.persistence.stores import ClassFindings, NewCase, NewRunRecord, NewVerdict, RuleFindings, UnknownCase
+from scenegems_tool.persistence.stores.result_store import rule_findings
+from tests.scenegems_tool.persistence.stores.builders import START, sha256_of
 from tests.scenegems_tool.persistence.stores.conftest import CLASS_A, CLASS_B
 
 pytestmark = pytest.mark.postgres
@@ -234,3 +248,137 @@ def test_coverage_per_class(stores, campaign):
     assert coverage_a.verdict_count(run_index=0) == 2 and coverage_a.verdict_count(VerdictState.FAILED) == 1
     assert (coverage_b.state, coverage_b.in_flight, coverage_b.verdicts, coverage_b.verdict_count()) == (CampaignClassState.ABANDONED, 1, {}, 0)
     assert b0.class_id == CLASS_B
+
+
+# Step verdicts, run sources and findings (Phase 6)
+
+
+def test_a_case_has_a_verdict_per_step(stores, campaign):
+    (case,) = _cases(stores, campaign, CLASS_A, 1)
+    scene = stores.results.add_verdict(_verdict(case, step=StepKind.SCENE))
+    trajectories = stores.results.add_verdict(_verdict(case, VerdictState.FAILED, step=StepKind.TRAJECTORIES))
+    simulation = stores.results.add_verdict(_verdict(case, VerdictState.UNMONITORED))
+    assert (scene.step, trajectories.step, simulation.step) == (StepKind.SCENE, StepKind.TRAJECTORIES, StepKind.SIMULATION)
+    # written once per case, step and run
+    assert stores.results.add_verdict(_verdict(case, VerdictState.FAILED, step=StepKind.SCENE)) == scene
+    assert [verdict.step for verdict in stores.results.list_verdicts(campaign.campaign_id)] == [StepKind.SCENE, StepKind.TRAJECTORIES, StepKind.SIMULATION]
+    for step in StepKind:
+        assert [verdict.step for verdict in stores.results.list_verdicts(campaign.campaign_id, step=step)] == [step]
+        assert stores.results.count_verdicts(campaign.campaign_id, step=step) == 1
+    assert stores.results.count_verdicts(campaign.campaign_id, VerdictState.FAILED, step=StepKind.SIMULATION) == 0
+
+
+@pytest.mark.parametrize(
+    "fields, message",
+    [
+        ({"step": StepKind.SCENE, "run_index": 1}, "the scene step has one verdict per case, at run index 0"),
+        ({"step": StepKind.TRAJECTORIES, "monitor": MonitorImplementation.LIVE}, "the live monitor judges simulated runs only"),
+    ],
+)
+def test_a_generation_step_verdict_is_one_per_case_and_not_live(stores, campaign, fields, message):
+    (case,) = _cases(stores, campaign, CLASS_A, 1)
+    with pytest.raises(ValueError, match=message):
+        stores.results.add_verdict(_verdict(case, **fields))
+
+
+def test_a_run_record_from_a_live_session_without_a_generator(stores, campaign):
+    (case,) = _cases(stores, campaign, CLASS_A, 1)
+    stored = stores.results.add_run_record(replace(_run(case), trajectory_generator=None, source=RunSource.LIVE_SESSION, job_id=None))
+    assert (stored.trajectory_generator, stored.source) == (None, RunSource.LIVE_SESSION)
+    assert stores.results.get_run_record(stored.run_record_id) == stored
+    assert stores.results.add_run_record(_run(case, run_index=1)).source == RunSource.JOB
+
+
+def test_coverage_counts_the_simulation_verdicts_unless_told_otherwise(stores, campaign):
+    (case,) = _cases(stores, campaign, CLASS_A, 1)
+    stores.results.add_verdict(_verdict(case, VerdictState.FAILED, step=StepKind.SCENE))
+    stores.results.add_verdict(_verdict(case))
+    coverage_a = stores.results.coverage(campaign.campaign_id)[0]
+    assert coverage_a.verdicts == {0: {VerdictState.PASSED: 1}}
+    assert stores.results.coverage(campaign.campaign_id, StepKind.SCENE)[0].verdicts == {0: {VerdictState.FAILED: 1}}
+    assert stores.results.coverage(campaign.campaign_id, None)[0].verdicts == {0: {VerdictState.PASSED: 1, VerdictState.FAILED: 1}}
+
+
+def _job_of(stores, session_factory, case, stage, running_s, index):
+    """A finished job of the case's stage that ran for running_s, linked to the case through a pipeline job."""
+    job_id, key = f"job-{stage.value}-{index}", f"key-{stage.value}-{index}"
+    submitted = START
+    with transaction(session_factory) as session:
+        session.add(
+            JobRow(
+                id=job_id,
+                job_type=JobType.SCENE_GENERATION,
+                payload={},
+                required_labels={},
+                required_fingerprints={},
+                min_memory_mb=0,
+                min_cpus=0,
+                priority=0,
+                max_attempts=1,
+                idempotency_key=key,
+                state=JobState.SUCCEEDED,
+                attempt=1,
+                failed_attempts=0,
+                submitted_at=submitted,
+                available_at=submitted,
+                updated_at=submitted,
+                started_at=submitted + timedelta(seconds=5),
+                finished_at=submitted + timedelta(seconds=5 + running_s),
+            )
+        )
+    stores.pipeline.add_intent(case.campaign_id, case.case_id, stage, key)
+    stores.pipeline.link_job(key, job_id)
+
+
+def test_findings_of_a_monitored_scene_step(stores, step_outputs, session_factory):
+    _job_of(stores, session_factory, step_outputs.a0, PipelineStage.GENERATE_SCENE, 10.0, 0)
+    _job_of(stores, session_factory, step_outputs.a1, PipelineStage.GENERATE_SCENE, 30.0, 1)
+    _job_of(stores, session_factory, step_outputs.a0, PipelineStage.GENERATE_TRAJECTORIES, 99.0, 2)  # another step's
+    findings = stores.results.findings(step_outputs.campaign_id, StepKind.SCENE)
+    assert (findings.step, findings.monitored) == (StepKind.SCENE, True)  # it has a post_hoc verdict
+    assert findings.cases == {CaseState.COMPLETE: 1, CaseState.DROPPED: 2, CaseState.ACTIVE: 1}
+    assert (findings.outputs_count, findings.outputs_valid, findings.outputs_complete) == (3, 2, 2)  # a valid scene counts as complete
+    assert (findings.verdicts, findings.failed_rules) == ({VerdictState.PASSED: 1}, ())
+    assert findings.classes == (ClassFindings(CLASS_A, cases=3, passed=1, failed=0), ClassFindings(CLASS_B, cases=1, passed=0, failed=0))
+    assert (findings.duration_median_s, findings.duration_p90_s) == (pytest.approx(20.0), pytest.approx(28.0))
+
+
+def test_findings_of_the_trajectory_step_name_the_failed_rules(stores, step_outputs):
+    findings = stores.results.findings(step_outputs.campaign_id, StepKind.TRAJECTORIES)
+    assert findings.cases == {CaseState.COMPLETE: 1, CaseState.DROPPED: 1}
+    assert (findings.outputs_count, findings.outputs_valid, findings.outputs_complete) == (2, 1, 1)
+    assert findings.verdicts == {VerdictState.FAILED: 1}
+    # rule_13 failed for two relations of the one verdict: counted once, at its earliest failure
+    assert findings.failed_rules == (RuleFindings("rule_13", 1, 30.0, 30.0), RuleFindings("rule_16", 1, 12.0, 12.0))
+    assert findings.classes == (ClassFindings(CLASS_A, 1, 0, 1), ClassFindings(CLASS_B, 1, 0, 0))
+    assert (findings.duration_median_s, findings.duration_p90_s) == (None, None)
+
+
+def test_findings_of_an_unmonitored_step_are_statistics_only(stores, step_outputs):
+    findings = stores.results.findings(step_outputs.campaign_id, StepKind.SIMULATION, monitored=False)
+    assert (findings.monitored, findings.verdicts, findings.failed_rules) == (False, {}, ())
+    assert findings.cases == {CaseState.COMPLETE: 1}
+    assert (findings.outputs_count, findings.outputs_valid, findings.outputs_complete) == (2, 2, 1)
+    assert findings.classes == (ClassFindings(CLASS_A, 1, 0, 0), ClassFindings(CLASS_B, 0, 0, 0))
+    monitored = stores.results.findings(step_outputs.campaign_id, StepKind.SIMULATION)
+    assert monitored.verdicts == {VerdictState.FAILED: 1, VerdictState.PASSED: 1} and monitored.failed_rules == (RuleFindings("rule_8", 1, None, None),)
+
+
+def test_a_step_only_judged_by_the_empty_monitor_counts_as_unmonitored(stores, campaign):
+    (case,) = _cases(stores, campaign, CLASS_A, 1)
+    stores.results.add_verdict(_verdict(case, VerdictState.UNMONITORED, step=StepKind.SCENE))
+    findings = stores.results.findings(campaign.campaign_id, StepKind.SCENE)
+    assert (findings.monitored, findings.verdicts) == (False, {})
+
+
+def test_rule_findings_count_rules_over_verdicts():
+    outcomes = {"A - B": {"rule_13": {"failed": 10.0}}, "A - C": {"rule_13": {"failed": 4.0}, "rule_14": {"failed": 7.0}}}
+    findings = rule_findings(
+        [
+            (["A - B: rule_13", "A - C: rule_13", "A - C: rule_14"], outcomes),
+            (["A - B: rule_13"], {"A - B": {"rule_13": {"failed": 20.0}}}),
+            (["rule_15"], {}),  # no relation, no time
+            (["A - B: rule_13"], {}),
+        ]
+    )
+    assert findings == (RuleFindings("rule_13", 3, 4.0, 12.0), RuleFindings("rule_14", 1, 7.0, 7.0), RuleFindings("rule_15", 1, None, None))

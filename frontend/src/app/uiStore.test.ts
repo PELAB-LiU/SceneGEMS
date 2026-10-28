@@ -63,6 +63,25 @@ describe("uiStore sections", () => {
     expect(migrate({}, 3).workbenchView).toBe("connections");
   });
 
+  it("renames the Observe section to history in v6", () => {
+    expect(migrate({ section: "observe", workbenchView: "simulation" }, 5)).toEqual({ section: "history", workbenchView: "simulation" });
+    expect(migrate({ section: "observe" }, 4).section).toBe("history");
+  });
+
+  it("leaves other sections alone when migrating to v6", () => {
+    expect(migrate({ section: "results", workbenchView: "domainConfig" }, 5)).toEqual({ section: "results", workbenchView: "domainConfig" });
+    expect(migrate({ section: "history" }, 5).section).toBe("history");
+  });
+
+  it("does not rename a v6 state", () => {
+    expect(migrate({ section: "observe" }, 6).section).toBe("observe");
+  });
+
+  it("lists history among the sections and not observe", () => {
+    expect(ui.APP_SECTIONS).toContain("history");
+    expect(ui.APP_SECTIONS as readonly string[]).not.toContain("observe");
+  });
+
   it("takes the workbench view from the old key when there is no stored ui state", async () => {
     vi.resetModules();
     storage.setItem(ui.LEGACY_ACTIVE_VIEW_KEY, JSON.stringify("domainConfig"));
@@ -76,11 +95,11 @@ describe("uiStore sections", () => {
     if (!partialize) {
       throw new Error("uiStore has no partialize");
     }
-    ui.useUiStore.getState().setSection("observe");
+    ui.useUiStore.getState().setSection("history");
     ui.useUiStore.getState().setWorkbenchView("trajectoryGeneration");
     const persisted = partialize(ui.useUiStore.getState()) as Record<string, unknown>;
-    expect(persisted.section).toBe("observe");
+    expect(persisted.section).toBe("history");
     expect(persisted.workbenchView).toBe("trajectoryGeneration");
-    expect(ui.useUiStore.persist.getOptions().version).toBe(5);
+    expect(ui.useUiStore.persist.getOptions().version).toBe(6);
   });
 });

@@ -564,17 +564,8 @@ class TrajectoryTreeBuilder:
         return children
 
     @property
-    def lastly_added_node(self) -> SceneNode:
-        return self.node(self._next_node_id - 1)
-
-    @property
     def random_node(self) -> SceneNode:
         return random.choice(self.nodes)
-
-    def random_nodes(self, k: int) -> List[SceneNode]:
-        if len(self.nodes) < k:
-            return self.nodes
-        return random.sample(self.nodes, k)
 
     def random_node_on_path(self, node: SceneNode) -> SceneNode:
         path = self.get_path(node)
@@ -583,11 +574,6 @@ class TrajectoryTreeBuilder:
     @property
     def random_leaf(self) -> SceneNode:
         return random.choice(self.leaves)
-
-    def random_leafs(self, k: int) -> List[SceneNode]:
-        if len(self.leaves) < k:
-            return self.leaves
-        return random.sample(self.leaves, k)
 
     def remove_branch_until_parent_with_multiple_children(self, node: SceneNode) -> None:
         iter_node = node
@@ -601,23 +587,6 @@ class TrajectoryTreeBuilder:
 
         if branch_to_remove is not None:
             self.remove_branch(branch_to_remove)
-
-    def prune_branches(self) -> None:
-        preferred_leaves: List[int] = [key for key, node in self.node_list.items() if len(node.children) == 0 and node.parent is not None and len(self.node_list[node.parent].children) > 1]
-        candidate_leaves: List[int]
-        if len(preferred_leaves) > 0:
-            candidate_leaves = preferred_leaves
-        else:
-            candidate_leaves = [key for key, node in self.node_list.items() if len(node.children) == 0]
-
-        if not candidate_leaves:
-            return
-
-        ind = random.choice(candidate_leaves)
-        parent = self.node_list[ind].parent
-        if parent is not None and parent in self.node_list:
-            self.node_list[parent].children.discard(ind)
-        self.node_list.pop(ind, None)
 
     def steer_actors(self, nearest_node: SceneNode, trajectory_objective_set: TrajectoryObjectiveSet) -> List[SceneNode]:
         suggested_headings = trajectory_objective_set.get_suggested_headings(nearest_node)
@@ -664,11 +633,6 @@ class TrajectoryTreeBuilder:
         next_state = actor.simulate(actor_state, (heading, actor_state.speed), self.time_step)
         return heading_diff(heading, actor_state.heading), next_state
 
-    def get_best_leafs(self, trajectory_objective: TrajectoryObjective, k: int) -> List[SceneNode]:
-        nodes = self.leaves
-        nodes.sort(key=lambda node: trajectory_objective.calculate_cost(node))
-        return nodes[:k]
-
     def get_best_nodes(self, trajectory_objective: TrajectoryObjective, k: int) -> List[SceneNode]:
         nodes = self.nodes
         nodes.sort(key=lambda node: trajectory_objective.calculate_cost(node))
@@ -680,10 +644,6 @@ class TrajectoryTreeBuilder:
     def get_best_random_node(self, trajectory_objective: TrajectoryObjective, k: int) -> SceneNode:
         nodes = self.get_best_nodes(trajectory_objective, k)
         return random.choice(nodes)
-
-    def prune_worst_leaves(self, trajectory_objective: TrajectoryObjective, k: int) -> None:
-        for node in self.get_worst_leafs(trajectory_objective, k):
-            self.remove_branch(node)
 
     def prune_worst_leaves_global(self, trajectory_objective_set: TrajectoryObjectiveSet, k: int) -> None:
         for node in self.get_worst_leafs_global(trajectory_objective_set, k):
@@ -707,17 +667,9 @@ class TrajectoryTreeBuilder:
         nodes.sort(key=lambda node: trajectory_objective_set.calculate_cost(node), reverse=True)
         return nodes[:k]
 
-    def get_best_node_global(self, trajectory_objective_set: TrajectoryObjectiveSet) -> SceneNode:
-        return self.get_best_nodes_global(trajectory_objective_set, 1)[0]
-
     def get_best_nodes_global(self, trajectory_objective_set: TrajectoryObjectiveSet, k: int) -> List[SceneNode]:
         nodes = self.nodes
         nodes.sort(key=lambda node: trajectory_objective_set.calculate_cost(node))
-        return nodes[:k]
-
-    def get_worst_nodes_global(self, trajectory_objective_set: TrajectoryObjectiveSet, k: int) -> List[SceneNode]:
-        nodes = self.nodes
-        nodes.sort(key=lambda node: trajectory_objective_set.calculate_cost(node), reverse=True)
         return nodes[:k]
 
     def get_best_expandable_leafs_global(self, trajectory_objective_set: TrajectoryObjectiveSet, k: int) -> List[SceneNode]:

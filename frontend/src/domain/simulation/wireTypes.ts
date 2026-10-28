@@ -1,5 +1,3 @@
-import type { GeneratedSceneData, SimulationFrame } from "./types";
-
 /** ASV software of a vessel stack (backend `AsvSoftwareId`). */
 /** on_board: the vessel's own software steers it (a real vessel); SceneGEMS runs none. */
 export type AsvSoftwareWire = "replay" | "usv_navigation" | "mission_planner" | "on_board";
@@ -171,79 +169,4 @@ export type ClientToServerMessage =
     }
   | { type: "disconnect_from_mqtt_broker" };
 
-export type ServerToClientMessage =
-  | {
-      type: "initial_state";
-      /**
-       * Reset/start signal; may include trajectory horizon for playback UI.
-       * Always present: the authoritative scenario id for this session (echoes the
-       * client-proposed id from `load_scenario_file`). The trajectory chunks that
-       * follow are routed against it.
-       */
-      scenarioId: string;
-      timeStep?: number;
-      totalTrajectoryLength?: number;
-    }
-  | {
-      type: "preview_trajectory_chunk";
-      scenarioId: string;
-      /** Inclusive range of timestamps covered by `frames` (for UI/debug). */
-      fromTimestamp: number;
-      toTimestamp: number;
-      frames: SimulationFrame[];
-    }
-  | {
-      type: "simulation_trajectory_chunk";
-      scenarioId: string;
-      fromTimestamp: number;
-      toTimestamp: number;
-      frames: SimulationFrame[];
-    }
-  /** Optional live push stream (same shape as before). */
-  | ({ type: "frame" } & SimulationFrame)
-  | { type: "error"; message: string }
-  | { type: "ack"; action: string }
-  | ({
-      type: "generated_scene";
-      requestId?: string | null;
-      valid: boolean;
-    } & GeneratedSceneData)
-  | {
-      type: "trajectory_generation_preview";
-      requestId: string;
-      /** Serialized `TrajectoryData` with a full `trajectories.scene_list`. */
-      trajectoryData: Record<string, unknown>;
-    }
-  | {
-      type: "trajectory_generation_result";
-      requestId: string;
-      trajectoryData: Record<string, unknown> | null;
-      valid: boolean;
-      errorMessage?: string | null;
-    }
-  | {
-      type: "simulation_status";
-      status:
-        | "running"
-        | "starting"
-        | "ready to start"
-        | "agents are preparing"
-        | "initializing"
-        | "not initialized"
-        | "offline";
-      /** Host port (TCP on localhost) of each Mission Planner vessel's ground control station, by agent id. */
-      groundControlPortsByAgentId?: Record<string, number>;
-    }
-  | ({ type: "stack_options" } & StackOptionsPayload)
-  | {
-      type: "mqtt_broker_status";
-      status: "connected" | "disconnected";
-      /** The master's own broker as the server dials it ("host:port"), null when it has none. */
-      masterBroker?: string | null;
-    }
-  | { type: "monitor_status"; status: "connected" | "disconnected" }
-  /**
-   * Response to `generate_simulation_models`. Same fields as the request, but with
-   * per-vessel `gazeboVesselModel` attributes filled in.
-   */
-  | ({ type: "simulation_models" } & SimulationModelsPayload);
+export type RunRecordingStatus = "recording" | "saved" | "failed" | "unavailable";

@@ -142,23 +142,6 @@ function orderColumns(columns: Column[], links: readonly LayoutEdge[]): Map<stri
   return centers;
 }
 
-/** One column per lane, the cards stacked in the order given. */
-export function stackedLayout(lanes: readonly string[], nodes: readonly LayoutNode[]): GraphLayout {
-  const positions = new Map<string, { x: number; y: number }>();
-  let x = 0;
-  for (const lane of lanes) {
-    let y = 0;
-    let width = 0;
-    for (const node of nodes.filter((item) => item.lane === lane)) {
-      positions.set(node.id, { x, y });
-      y += node.height + NODE_GAP;
-      width = Math.max(width, node.width);
-    }
-    x += width + LANE_GAP;
-  }
-  return { positions, bands: laneBands(lanes, nodes, positions) };
-}
-
 /** The column of each lane around its cards as they are placed now, all as tall as the whole graph. A lane without cards has none. */
 export function laneBands(lanes: readonly string[], nodes: readonly LayoutNode[], positions: ReadonlyMap<string, { x: number; y: number }>): LaneBand[] {
   const boxes = nodes.map((node) => ({ node, ...(positions.get(node.id) as { x: number; y: number }) }));

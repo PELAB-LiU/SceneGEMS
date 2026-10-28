@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { sampleCampaignSummary, sampleMasterStatus, sampleNode } from "../../test/fixtures/clusterViews";
 import { buildQueryString, createOperatorClient, describeErrorBody, describeOperatorError, OperatorApiError } from "./operatorApi";
@@ -141,5 +142,21 @@ describe("operator API client", () => {
   it("builds artifact links", () => {
     const client = createOperatorClient(BASE);
     expect(client.artifactUrl("abc")).toBe(`${BASE}/cluster/artifacts/abc`);
+  });
+
+  it("sends the step filter of the verdicts", async () => {
+    const { client, spy } = clientWith(async () => jsonResponse([]));
+    await client.listVerdicts("c1", { step: "trajectories", state: "failed" });
+    expect(spy.mock.calls[0][0]).toBe(`${BASE}/cluster/campaigns/c1/verdicts?step=trajectories&state=failed`);
+  });
+
+  it("sends a raw body with its content type instead of JSON", async () => {
+    const { client, spy } = clientWith(async () => jsonResponse({ ok: true }));
+    await client.request("POST", "/x", z.object({ ok: z.boolean() }), { rawBody: "a,b", contentType: "text/csv" });
+    const init = spy.mock.calls[0][1];
+    expect(init?.body).toBe("a,b");
+    expect((init?.headers as Record<string, string>)["Content-Type"]).toBe("text/csv");
+    await client.request("POST", "/x", z.object({ ok: z.boolean() }), { body: { a: 1 } });
+    expect(spy.mock.calls[1][1]?.body).toBe('{"a":1}');
   });
 });

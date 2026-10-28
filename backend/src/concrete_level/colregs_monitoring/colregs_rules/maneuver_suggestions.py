@@ -1,5 +1,4 @@
-import random
-from typing import Dict, Set, Tuple
+from typing import Dict, Set
 
 from concrete_level.colregs_monitoring.maneuver import MANEUVER_TYPE_HEADING_CHANGE_MAP, ManeuverType
 from concrete_level.models.concrete_actors import ConcreteActor
@@ -38,13 +37,6 @@ class ManeuverSuggestions(Dict[ConcreteActor, Set[ManeuverType]]):
 
     def __repr__(self) -> str:
         return str(self)
-
-    def get_random_maneuver(self, actor: ConcreteActor) -> ManeuverType:
-        maneuver_list = list(self[actor].difference({ManeuverType.UNDETECTED}))
-        if len(maneuver_list) == 0:
-            print(f"WARNING:No maneuvers available for {actor.name}")
-            return random.choice(list(ManeuverType.all_detected_maneuver_types()))
-        return random.choice(maneuver_list)
 
     def get_all_maneuvers(self, actor: ConcreteActor) -> Set[ManeuverType]:
         if actor not in self:

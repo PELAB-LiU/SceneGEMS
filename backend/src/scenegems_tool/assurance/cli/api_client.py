@@ -60,6 +60,9 @@ class OperatorApi:
         headers = {"Content-Type": content_type} if content_type else None
         return self._json("POST", path, params=_query(params), content=content, headers=headers)
 
+    def delete(self, path: str) -> None:
+        self._json("DELETE", path)
+
     def download(self, path: str, target: Path, **params: Any) -> int:
         """Streams a GET response body into target; returns its size in bytes. A failed request leaves no file."""
         try:

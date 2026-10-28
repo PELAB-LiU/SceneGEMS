@@ -86,8 +86,6 @@ def compute_start_point(position, velocity, speed, acceleration):
     return (start_x, start_y)
 
 
-def abs_heading_diff(angle1: float, angle2: float):  # [-pi, pi]
-    return np.abs(heading_diff(angle1, angle2))
 
 
 def heading_diff(angle1: float, angle2: float) -> float:
@@ -127,7 +125,3 @@ def rotate_heading(heading: float, angle: float) -> float:
     y_new = x * sin_a + y * cos_a
     # Compute the new heading from the rotated vector
     return np.arctan2(y_new, x_new)
-
-
-def imply(a: bool, b: bool) -> bool:
-    return (not a) or b

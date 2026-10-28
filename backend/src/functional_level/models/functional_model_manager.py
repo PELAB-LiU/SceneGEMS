@@ -26,13 +26,6 @@ class FunctionalModelManager:
     }
 
     @classmethod
-    def get_x_vessel_y_obstacle_ambiguous_scenarios(cls, vessel_number: int, obstacle_number: int) -> List[FunctionalScenario]:
-        actor_number_by_type = (vessel_number, obstacle_number)
-        if cls.__ambiguous_scenario_cache_map[actor_number_by_type] is None:
-            cls.__ambiguous_scenario_cache_map[actor_number_by_type] = ModelParser.load_ambiguous_functional_scenarios(vessel_number, obstacle_number)
-        return cls.__ambiguous_scenario_cache_map[actor_number_by_type]
-
-    @classmethod
     def get_x_vessel_y_obstacle_scenarios(cls, vessel_number: int, obstacle_number: int) -> List[FunctionalScenario]:
         actor_number_by_type = (vessel_number, obstacle_number)
         if cls.__scenario_cache_map[actor_number_by_type] is None:

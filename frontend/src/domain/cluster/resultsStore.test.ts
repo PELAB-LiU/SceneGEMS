@@ -27,6 +27,36 @@ describe("results store", () => {
     expect(useResultsStore.getState()).toMatchObject({ campaignId: "c2", caseId: null, filters: DEFAULT_VERDICT_FILTERS, page: 0 });
   });
 
+  it("shows the last executed step of an entry until a step is picked", () => {
+    const store = useResultsStore.getState();
+    store.openCampaign("c1");
+    expect(useResultsStore.getState().step).toBeNull();
+    store.setFilters({ state: "failed" });
+    store.setStep("scene_generation");
+    expect(useResultsStore.getState()).toMatchObject({ step: "scene_generation", caseId: null, filters: DEFAULT_VERDICT_FILTERS, page: 0 });
+  });
+
+  it("keeps the picked step for the same entry and drops it for another", () => {
+    const store = useResultsStore.getState();
+    store.openCampaign("c1", "trajectory_generation");
+    store.openCase("c1", 5);
+    expect(useResultsStore.getState()).toMatchObject({ step: "trajectory_generation", caseId: 5 });
+    store.openCampaign("c1");
+    expect(useResultsStore.getState()).toMatchObject({ step: "trajectory_generation", caseId: null });
+    store.openCampaign("c2");
+    expect(useResultsStore.getState().step).toBeNull();
+    store.openCase("c3", 1, "simulation");
+    expect(useResultsStore.getState()).toMatchObject({ campaignId: "c3", step: "simulation", caseId: 1 });
+  });
+
+  it("opens the same entry on another step", () => {
+    const store = useResultsStore.getState();
+    store.openCampaign("c1", "scene_generation");
+    store.setFilters({ runIndex: 1 });
+    store.openCampaign("c1", "simulation");
+    expect(useResultsStore.getState()).toMatchObject({ step: "simulation", filters: DEFAULT_VERDICT_FILTERS });
+  });
+
   it("keeps the filters when the same campaign is opened again from its table", () => {
     const store = useResultsStore.getState();
     store.openCampaign("c1");

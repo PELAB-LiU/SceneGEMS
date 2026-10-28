@@ -1,7 +1,8 @@
 import { parseDocument } from "yaml";
-import { findGenerator, findStack, isSet, supportsEnvironment, type BuilderCatalog } from "./configBuilder";
-import type { Reason } from "./reasons";
-import type { WizardDraft, WizardStepId } from "./wizardState";
+import { findGenerator, findStack, isEmptyScopeEntry, isSet, supportsEnvironment, type BuilderCatalog } from "./configBuilder";
+import type { EntryList, Reason } from "./reasons";
+import { firstStep, inputKindOf, itemKindsFor, normalizeSteps, runsStep } from "./stepPlan";
+import { UPLOAD_LIFETIME_MS, type WizardDraft, type WizardStepId } from "./wizardState";
 
 /**
  * Problems of a draft the browser can see without the master: a missing name, an empty scope entry, a
@@ -10,9 +11,9 @@ import type { WizardDraft, WizardStepId } from "./wizardState";
  * validates everything (the catalog, the resolver, every range).
  */
 
-function local(step: WizardStepId, entry: number | null, field: string | null, message: string): Reason {
+function local(step: WizardStepId, entry: number | null, field: string | null, message: string, list?: EntryList): Reason {
   const path = entry === null ? field : field ? `${entry}.${field}` : String(entry);
-  return { raw: message, step, entry, field, path, message, source: "local" };
+  return { raw: message, step, entry, ...(list ? { list } : {}), field, path, message, source: "local" };
 }
 
 function yamlProblem(text: string): string | null {
@@ -27,23 +28,80 @@ function yamlProblem(text: string): string | null {
   return null;
 }
 
-/** The problems found in the draft; `catalog` is null while the master's stack catalog is not loaded. */
-export function checkDraft(draft: WizardDraft, catalog: BuilderCatalog | null): Reason[] {
-  const reasons: Reason[] = [];
-  if (draft.name.trim().length === 0) {
-    reasons.push(local("scope", null, "name", "Give the campaign a name."));
+/** Whether an upload made at `uploadedAt` is gone from the master by `now` (it holds the file for 24 hours). */
+export function uploadExpired(uploadedAt: number | null, now: number): boolean {
+  return uploadedAt !== null && now - uploadedAt >= UPLOAD_LIFETIME_MS;
+}
+
+const EXPIRED_UPLOAD = "The upload has expired on the master; upload the file again.";
+
+function checkInput(draft: WizardDraft, reasons: Reason[], now: number): void {
+  const steps = normalizeSteps(draft.steps);
+  if (inputKindOf(steps) === "catalog_or_scenarios") {
+    const scenarios = draft.input.scenarios;
+    const names = scenarios.map((scenario) => scenario.name.trim());
+    scenarios.forEach((scenario, index) => {
+      const name = scenario.name.trim();
+      if (name.length === 0) {
+        reasons.push(local("input", index, "name", "Give the scenario a name.", "scenario"));
+      } else if (name.includes("/")) {
+        reasons.push(local("input", index, "name", "The name has no slash.", "scenario"));
+      } else if (names.indexOf(name) !== index) {
+        reasons.push(local("input", index, "name", "Another scenario file has this name.", "scenario"));
+      }
+      if (scenario.quota === null || scenario.quota < 1) {
+        reasons.push(local("input", index, "quota", "The quota is at least 1.", "scenario"));
+      }
+      if (scenario.failureBudget !== null && scenario.failureBudget < 0) {
+        reasons.push(local("input", index, "failure_budget", "The failure budget is 0 or more.", "scenario"));
+      }
+      if (uploadExpired(scenario.uploadedAt, now)) {
+        reasons.push(local("input", index, "ref", EXPIRED_UPLOAD, "scenario"));
+      }
+    });
+    // Entries nothing was picked into are ignored while scenario files give the campaign something to run
+    draft.scope.forEach((entry, index) => {
+      if (isEmptyScopeEntry(entry)) {
+        if (scenarios.length === 0) {
+          reasons.push(local("input", index, null, "Choose classes or a folder pattern, or add a functional scenario file."));
+        }
+        return;
+      }
+      if (entry.quota === null || entry.quota < 1) {
+        reasons.push(local("input", index, "quota", "The quota is at least 1."));
+      }
+      if (entry.failureBudget !== null && entry.failureBudget < 0) {
+        reasons.push(local("input", index, "failure_budget", "The failure budget is 0 or more."));
+      }
+    });
+    return;
   }
-  draft.scope.forEach((entry, index) => {
-    if (entry.classes.length === 0 && entry.patterns.length === 0) {
-      reasons.push(local("scope", index, null, "Choose classes or a folder pattern."));
+  const kinds = itemKindsFor(steps);
+  const label = inputKindOf(steps) === "scenes" ? "scenes" : "trajectories";
+  if (draft.input.items.length === 0) {
+    reasons.push(local("input", null, "items", `Add at least one of the ${label} the campaign starts from.`));
+  }
+  draft.input.items.forEach((item, index) => {
+    if (item.name.trim().length === 0) {
+      reasons.push(local("input", index, "name", "Give the item a name.", "item"));
     }
-    if (entry.quota === null || entry.quota < 1) {
-      reasons.push(local("scope", index, "quota", "The quota is at least 1."));
+    if (!kinds.includes(item.ref.kind)) {
+      reasons.push(local("input", index, "ref", `${firstStep(steps) === "trajectory_generation" ? "Trajectory generation" : "Simulation"} takes ${label}, not ${item.ref.kind.replace(/_/g, " ")}.`, "item"));
     }
-    if (entry.failureBudget !== null && entry.failureBudget < 0) {
-      reasons.push(local("scope", index, "failure_budget", "The failure budget is 0 or more."));
+    if (uploadExpired(item.uploadedAt, now)) {
+      reasons.push(local("input", index, "ref", EXPIRED_UPLOAD, "item"));
     }
   });
+}
+
+/** The problems found in the draft; `catalog` is null while the master's stack catalog is not loaded; `now` dates the uploads. */
+export function checkDraft(draft: WizardDraft, catalog: BuilderCatalog | null, now: number = Date.now()): Reason[] {
+  const reasons: Reason[] = [];
+  const steps = normalizeSteps(draft.steps);
+  if (draft.name.trim().length === 0) {
+    reasons.push(local("steps", null, "name", "Give the campaign a name."));
+  }
+  checkInput(draft, reasons, now);
   if (draft.domain.custom) {
     const texts: [string, string][] = [
       ["colregs_constants", draft.domain.colregsConstants],
@@ -57,10 +115,10 @@ export function checkDraft(draft: WizardDraft, catalog: BuilderCatalog | null): 
       }
     }
   }
-  if (!isSet(draft.domain.sceneGenerationTimeoutS) || (draft.domain.sceneGenerationTimeoutS ?? 0) <= 0) {
+  if (runsStep(steps, "scene_generation") && (!isSet(draft.domain.sceneGenerationTimeoutS) || (draft.domain.sceneGenerationTimeoutS ?? 0) <= 0)) {
     reasons.push(local("domain", null, "scene_generation_timeout_s", "The timeout is above 0 seconds."));
   }
-  if (catalog) {
+  if (catalog && runsStep(steps, "trajectory_generation")) {
     const generator = findGenerator(catalog, draft.trajectories.generator);
     if (!generator) {
       reasons.push(local("trajectories", null, "generator", `The master offers no generator ${draft.trajectories.generator}.`));
@@ -72,10 +130,10 @@ export function checkDraft(draft: WizardDraft, catalog: BuilderCatalog | null): 
       }
     }
   }
-  if (!isSet(draft.trajectories.timeoutS) || (draft.trajectories.timeoutS ?? 0) <= 0) {
+  if (runsStep(steps, "trajectory_generation") && (!isSet(draft.trajectories.timeoutS) || (draft.trajectories.timeoutS ?? 0) <= 0)) {
     reasons.push(local("trajectories", null, "timeout_s", "The timeout is above 0 seconds."));
   }
-  draft.runs.forEach((run, index) => {
+  (runsStep(steps, "simulation") ? draft.runs : []).forEach((run, index) => {
     const stack = catalog ? findStack(catalog, run.stackId) : undefined;
     if (catalog && !run.stackId) {
       reasons.push(local("runs", index, "stack", "Choose a stack."));
@@ -86,6 +144,8 @@ export function checkDraft(draft: WizardDraft, catalog: BuilderCatalog | null): 
     }
     if (run.earlyStop && run.monitor !== "live") {
       reasons.push(local("runs", index, "early_stop", "Early stop needs the live monitor."));
+    } else if (run.earlyStop && stack?.supports_early_stop === false) {
+      reasons.push(local("runs", index, "early_stop", `${stack.label} runs to the end: a run on it does not stop early.`));
     }
     if (run.repeats === null || run.repeats < 1) {
       reasons.push(local("runs", index, "repeats", "Repeats is at least 1."));
@@ -109,7 +169,7 @@ export function checkDraft(draft: WizardDraft, catalog: BuilderCatalog | null): 
       }
     }
   });
-  if (draft.runs.length === 0) {
+  if (runsStep(steps, "simulation") && draft.runs.length === 0) {
     reasons.push(local("runs", null, "runs", "Add at least one run."));
   }
   if (!draft.resources.fullUsage && draft.resources.nodes.length === 0) {

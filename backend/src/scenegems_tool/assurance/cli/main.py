@@ -19,6 +19,8 @@ OPERATOR_URL_VARIABLE = "SCENEGEMS_OPERATOR_URL"
 DEFAULT_OPERATOR_URL = "http://127.0.0.1:5174"
 SHA256_PATTERN = "[0-9a-f]{64}"
 CAMPAIGN_STATES = ("created", "running", "paused", "draining", "stalled", "stopped", "completed")
+CAMPAIGN_KINDS = ("campaign", "workbench")
+CAMPAIGN_STEPS = ("scene_generation", "trajectory_generation", "simulation")
 CASE_STATES = ("active", "complete", "dropped", "failed", "cancelled")
 CASE_STAGES = ("generate_scene", "generate_trajectories", "simulate", "monitor", "calibrate", "verdict")
 VERDICT_STATES = ("passed", "failed", "unmonitored")
@@ -51,6 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     listing = sub.add_parser("list", help="list campaigns, newest first")
     listing.add_argument("--state", action="append", choices=CAMPAIGN_STATES, help="only campaigns in this actual state (repeatable)")
+    listing.add_argument("--kind", choices=CAMPAIGN_KINDS, help="only campaigns or only workbench entries")
     _paging(listing)
 
     show = sub.add_parser("show", help="a campaign with its coverage per class")
@@ -59,6 +62,20 @@ def build_parser() -> argparse.ArgumentParser:
     for name, help_text in CONTROL_HELP.items():
         control = sub.add_parser(name, help=help_text, description=help_text)
         control.add_argument("campaign")
+
+    delete = sub.add_parser("delete", help="delete a stopped or completed campaign with its rows and references")
+    delete.add_argument("campaign")
+
+    outputs = sub.add_parser("outputs", help="the outputs of one step of a campaign")
+    outputs.add_argument("campaign")
+    outputs.add_argument("--step", required=True, choices=CAMPAIGN_STEPS)
+    outputs.add_argument("--class", dest="class_id", help="only this class id")
+    outputs.add_argument("--state", choices=CASE_STATES)
+    _paging(outputs)
+
+    findings = sub.add_parser("findings", help="the monitor findings (or statistics) of one step of a campaign")
+    findings.add_argument("campaign")
+    findings.add_argument("--step", required=True, choices=CAMPAIGN_STEPS)
 
     cases = sub.add_parser("cases", help="the cases of a campaign")
     cases.add_argument("campaign")
@@ -99,6 +116,9 @@ def _handlers() -> Dict[str, Callable]:
         "create": commands.create,
         "list": commands.list_campaigns,
         "show": commands.show,
+        "delete": commands.delete,
+        "outputs": commands.outputs,
+        "findings": commands.findings,
         "cases": commands.cases,
         "verdicts": commands.verdicts,
         "events": commands.events,

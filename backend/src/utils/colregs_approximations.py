@@ -96,10 +96,6 @@ class COLREGSConstraints:
         return COLREGSConstraints.from_yaml(os.path.join(COLREGS_CONSTANTS_FOLDER, "general_maritime_constants.yaml"))
 
     @staticmethod
-    def default_wara_ps() -> "COLREGSConstraints":
-        return COLREGSConstraints.from_yaml(os.path.join(COLREGS_CONSTANTS_FOLDER, "wara_ps_constants.yaml"))
-
-    @staticmethod
     def from_file_content(content: str) -> "COLREGSConstraints":
         return COLREGSConstraints(**yaml.safe_load(content) or {})
 

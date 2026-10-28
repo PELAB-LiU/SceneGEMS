@@ -1,3 +1,5 @@
+import re
+
 """A master on a test client: control plane, node API and operator routes, with scripted nodes.
 
 The `stores` fixture runs each test that uses it twice: on the in-memory stores (default
@@ -17,7 +19,6 @@ from scenegems_tool.cluster.master.api.operator_routes import operator_router
 from scenegems_tool.cluster.master.control_plane import ControlPlane
 from scenegems_tool.cluster.master.scheduling.fingerprint_policy import ExpectedFingerprints
 from scenegems_tool.cluster.protocol.jobs import JobType
-from scenegems_tool.cluster.scope_names import slug_from_name
 from scenegems_tool.persistence.stores import JobStore, NodeStore
 from tests.scenegems_tool.cluster.master.fake_node import FakeNode
 from tests.scenegems_tool.cluster.master.fake_stores import InMemoryJobStore, InMemoryNodeStore
@@ -41,6 +42,11 @@ KINEMATIC = JobType.SIMULATION_KINEMATIC
 class Stores:
     nodes: object
     jobs: object
+
+
+def _slug(name: str) -> str:
+    """A node id part from a display name: lowercase letters, digits and hyphens."""
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40].strip("-") or "node"
 
 
 @pytest.fixture
@@ -91,7 +97,7 @@ def make_node(client) -> Iterator[Callable[..., FakeNode]]:
     nodes = []
 
     def make(name: str, slots: Optional[Dict[JobType, int]] = None, labels=None, fingerprints: Optional[Dict[str, str]] = None, resources=None, machine: Optional[str] = None) -> FakeNode:
-        node_id = f"{slug_from_name(name)}-{len(nodes) + 1}"
+        node_id = f"{_slug(name)}-{len(nodes) + 1}"
         hello = make_hello(node_id, slots=slots or {SCENE: 2}, labels=labels, fingerprints=dict(EXPECTED) if fingerprints is None else fingerprints, resources=resources, name=name, machine=machine)
         nodes.append(FakeNode(client, hello))
         return nodes[-1]

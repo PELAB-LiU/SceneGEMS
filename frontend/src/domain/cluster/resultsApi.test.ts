@@ -55,6 +55,11 @@ describe("filter state", () => {
     expect(toApiFilters({ ...filters, runIndex: null, sensitive: "no" })).toEqual({ class_id: "a/1", state: "failed", sensitive: false });
   });
 
+  it("narrows the query to one step when given", () => {
+    expect(toApiFilters(DEFAULT_VERDICT_FILTERS, "trajectories")).toEqual({ step: "trajectories" });
+    expect(toApiFilters({ ...DEFAULT_VERDICT_FILTERS, state: "failed" }, "scene")).toEqual({ step: "scene", state: "failed" });
+  });
+
   it("keeps run 0 as a filter", () => {
     expect(toApiFilters({ ...DEFAULT_VERDICT_FILTERS, runIndex: 0 })).toEqual({ run_index: 0 });
   });

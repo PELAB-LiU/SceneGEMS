@@ -14,7 +14,7 @@ from scenegems_tool.cluster.node.launchers.per_job.simulation_session_stack impo
 )
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, SimulationLayerId
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import EnvironmentConfig, SimulationInstanceConfig, VesselStackConfig
 from tests.scenegems_tool.vessel_stack.scenarios import stack_instance
 from utils.file_system_utils import docker_volume_path

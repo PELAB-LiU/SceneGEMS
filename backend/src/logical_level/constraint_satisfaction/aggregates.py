@@ -37,9 +37,6 @@ class Aggregate(ABC):
     def _signed_penalty(self, penalty) -> float:
         return self.sign * abs(penalty)
 
-    def do_pass(self, individual: np.ndarray) -> bool:
-        return sum(self.evaluate(individual)) == 0.0
-
     @staticmethod
     def factory(logical_scenario: LogicalScenario, name: str, minimize) -> "Aggregate":
         if name == ActorAggregate.name:

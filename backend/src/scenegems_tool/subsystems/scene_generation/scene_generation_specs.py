@@ -149,7 +149,7 @@ def _metamodel() -> Tuple[Tuple[MetamodelNode, ...], Tuple[MetamodelEdge, ...]]:
             KIND_ROLE,
             ("functional scenario text", "vessel type, obstacle type and COLREGS tables", "timeout, seed, enforce_low_tcpa", "reply: EvaluationData with best_scene and valid"),
             "Add a delivery path that builds an MqttSceneGenerationTask.",
-            f"{_PACKAGE}/scenario_generation_types.py",
+            f"{_PACKAGE}/scene_generation_types.py",
         ),
         MetamodelNode(
             META_PARSER,
@@ -243,8 +243,8 @@ def scene_generation_document(measurements: Optional[Mapping[str, MeasuredFacts]
         (
             "workbench_service",
             "Workbench service",
-            "The MQTT scenario generation service of the workbench: a pool of worker processes streaming samples while they search.",
-            f"{_PACKAGE}/scenario_generation_service_main.py",
+            "The MQTT scene generation service of the workbench: a pool of worker processes streaming samples while they search.",
+            f"{_PACKAGE}/scene_generation_service_main.py",
             "workbench",
         ),
     )

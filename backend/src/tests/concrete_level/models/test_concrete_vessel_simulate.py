@@ -5,7 +5,12 @@ import numpy as np
 from concrete_level.models.actor_state import ActorState
 from concrete_level.models.concrete_actors import ConcreteVessel
 from utils.colregs_approximations import vessel_radius
-from utils.math_utils import abs_heading_diff
+from utils.math_utils import heading_diff
+
+
+def abs_heading_diff(angle1: float, angle2: float) -> float:
+    """The absolute heading difference in [0, pi]."""
+    return float(np.abs(heading_diff(angle1, angle2)))
 
 
 class TestConcreteVesselSimulate(unittest.TestCase):

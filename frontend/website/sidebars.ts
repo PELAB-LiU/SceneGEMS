@@ -11,9 +11,21 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         'domain-configuration',
+        'workbench-pages',
         'scene-generation',
         'simulation',
         'connections',
+        'campaign-wizard',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Cluster sections',
+      collapsed: false,
+      items: [
+        'cluster',
+        'campaigns',
+        'campaign-history',
       ],
     },
     {
@@ -26,6 +38,14 @@ const sidebars: SidebarsConfig = {
         'monitoring',
         'metrics',
         'recording',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Cluster pages',
+      collapsed: false,
+      items: [
+        'results',
       ],
     },
     {

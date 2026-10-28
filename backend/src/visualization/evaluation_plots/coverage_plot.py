@@ -9,7 +9,7 @@ from pyparsing import ABC
 from evaluation.mann_whitney_u_cliff_delta import MannWhitneyUCliffDelta
 from functional_level.models.model_parser import ModelParser
 from logical_level.constraint_satisfaction.evaluation_data import EvaluationData
-from utils.evaluation_config import DC_RS, DC_SB_III, MSR_CDRS, DC_SB_II, MSR_SB_II, MSR_SB_III, MSR_CDRS_PS, DC_RS_PS
+from utils.evaluation_config import DC_RS, DC_SB_III, DC_SB_II, MSR_SB_III, MSR_CDRS_PS
 from utils.global_constants import FOUR_MINUTES_IN_SEC
 from visualization.plotting_utils import EvalPlot
 

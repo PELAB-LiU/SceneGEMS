@@ -1,21 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { StackOptionsPayload, StackOptionWire } from "../../../domain/simulation/wireTypes";
-import {
-  asvSoftwareChoice,
-  buildInitializeSimulationConnectionsByAgentIdMap,
-  buildInitialVesselConnectionDrafts,
-  controlLayerChoice,
-  extractVesselDescriptorsFromSceneRaw,
-  groundControlEndpointLabels,
-  mergePersistedVesselSettings,
-  normalizeDraftStack,
-  realVesselSoftwareChoice,
-  toPersistedVesselDrafts,
-  toTopicSegment,
-  type PersistedVesselConnectionDraft,
-  type VesselDescriptor,
-  type VesselInitConnectionDraft,
-} from "./simulationInitConfig";
+import { asvSoftwareChoice, buildInitializeSimulationConnectionsByAgentIdMap, buildInitialVesselConnectionDrafts, controlLayerChoice, groundControlEndpointLabels, mergePersistedVesselSettings, normalizeDraftStack, realVesselSoftwareChoice, toPersistedVesselDrafts, toTopicSegment, type PersistedVesselConnectionDraft, type VesselDescriptor, type VesselInitConnectionDraft } from "./simulationInitConfig";
 
 const vessels: VesselDescriptor[] = [
   { id: "os", isOwnShip: true },
@@ -150,20 +135,6 @@ describe("simulationInitConfig", () => {
     const restored = mergePersistedVesselSettings(persisted, generated);
     expect(restored[0]?.agentName).toBe("custom_agent");
     expect(restored[0]?.gazeboVesselModel).toBeUndefined();
-  });
-
-  it("extracts vessels from non-canonical scenario actor shapes", () => {
-    const descriptors = extractVesselDescriptorsFromSceneRaw({
-      actors: [
-        { id: "os_main", type: "MiniUSV", isOwnShip: true },
-        { id: "ts_alpha", kind: "vessel" },
-        { id: "buoy_1", type: "buoy" },
-      ],
-    });
-    expect(descriptors).toEqual([
-      { id: "os_main", isOwnShip: true },
-      { id: "ts_alpha", isOwnShip: false },
-    ]);
   });
 
   it("sends no ArduAgent control mode for USV Navigation", () => {

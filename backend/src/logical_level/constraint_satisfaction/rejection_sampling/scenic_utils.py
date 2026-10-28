@@ -8,7 +8,7 @@ from scenic.core.errors import optionallyDebugRejection
 from scenic.core.scenarios import Scenario as ScenicScenario
 
 from logical_level.constraint_satisfaction.aggregates import Aggregate
-from utils.file_system_utils import SCENARIO_GENERATION_GEN_FOLDER, SCENIC_FOLDER
+from utils.file_system_utils import SCENE_GENERATION_GEN_FOLDER, SCENIC_FOLDER
 from utils.global_constants import EPSILON, MAX_COORD, MAX_DISTANCE, SIX_NAUTICAL_MILES
 from utils.math_utils import calculate_heading, magnitude
 
@@ -90,7 +90,7 @@ def scenic_scenario(
         drift_threshold_map,
     )
     if verbose:
-        with open(f"{SCENARIO_GENERATION_GEN_FOLDER}/test_gen.scenic", "w") as file:
+        with open(f"{SCENE_GENERATION_GEN_FOLDER}/test_gen.scenic", "w") as file:
             file.write(scenic_code)
     return scenic.scenarioFromString(scenic_code)
 

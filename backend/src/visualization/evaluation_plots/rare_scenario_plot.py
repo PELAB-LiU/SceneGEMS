@@ -2,7 +2,7 @@ import os
 from typing import List, Set, Tuple
 from logical_level.constraint_satisfaction.evaluation_data import EvaluationData
 from visualization.plotting_utils import EvalPlot
-from utils.evaluation_config import DC_SB_II, DC_SB_III, DC_RS, MSR_SB_III, MSR_CDRS, MSR_CDRS_PS, DC_RS_PS
+from utils.evaluation_config import DC_SB_II, DC_SB_III, DC_RS, MSR_CDRS_PS, DC_RS_PS
 from utils.file_system_utils import GEN_DATA_FOLDER
 
 import matplotlib.pyplot as plt

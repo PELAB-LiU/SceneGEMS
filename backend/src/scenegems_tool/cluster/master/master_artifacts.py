@@ -3,7 +3,9 @@
 The sweep runs on the master's event loop next to the control plane's timers, started and
 stopped by the node API's lifespan (api/master_apps.py). Each round deletes the artifacts
 that nothing references and nobody used for the grace period (recorded_artifacts.py); the
-store calls run in a worker thread.
+store calls run in a worker thread. A round first drops the operator uploads whose 24 hours
+passed (ArtifactRecordStore.remove_expired_uploads), which makes an upload that no campaign
+took over unreferenced, and so deleted once the grace period passes.
 """
 
 import asyncio
@@ -30,6 +32,9 @@ class MasterArtifacts:
         self._task: Optional[asyncio.Task] = None
 
     async def sweep_once(self) -> List[str]:
+        expired = await anyio.to_thread.run_sync(self.artifacts.records.remove_expired_uploads)
+        if expired:
+            logger.info("Artifact sweep dropped the expired upload holds of %d artifacts", len(expired))
         return await anyio.to_thread.run_sync(self.artifacts.sweep, self.sweep_grace_s)
 
     async def _sweep_loop(self) -> None:

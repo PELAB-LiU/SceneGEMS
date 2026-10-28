@@ -7,8 +7,10 @@ master's artifact route does. The executor resolves the references of every payl
 runs, so a payload that names an artifact nobody stored fails the test.
 
 What a job returns is scripted per case (class id, case index) with a CaseScript: an invalid
-scene, a partial or missing trajectory, a failed verdict, a failure of some stage (retryable
-or not). Unscripted cases pass every stage.
+scene, a partial or missing trajectory, a failed verdict (of every monitor, or of the scene,
+trajectory or run monitor alone), a failure of some stage (retryable or not). Unscripted
+cases pass every stage. A case of an input class gets its input from the artifact store: the
+scenario's text, an item's scene or trajectories, as the node resolves them.
 """
 
 import hashlib
@@ -44,10 +46,12 @@ EVERY_STAGE = tuple(stage for stage in PipelineStage if stage != PipelineStage.V
 class CaseScript:
     scene_valid: bool = True
     trajectories: str = "complete"  # complete, partial (valid, not complete) or none
-    passed: bool = True  # the monitor's verdict on every run
+    passed: bool = True  # every monitor's verdict (the runs', and the scene's and trajectories' when monitored)
+    monitor_passed: Dict[PipelineStage, bool] = field(default_factory=dict)  # a monitor stage's own verdict, over passed
     fail: Optional[PipelineStage] = None  # this stage's job fails for good (not retryable)
     retryable_failures: Dict[PipelineStage, int] = field(default_factory=dict)  # this many retryable failures first
     tier: str = "exact"  # the repeatability tier the simulation reports
+    omit_tier: bool = False  # the simulation reports none
     stopped_early_at: Optional[int] = None  # the live monitor's early stop
 
 
@@ -165,29 +169,41 @@ class FakeExecutor:
 # Results per stage, in the shapes of P4.2
 
 
+def _input_text(executor: FakeExecutor, case) -> str:
+    return executor.artifacts.documents[case.input_artifact].decode("utf-8")
+
+
 def _scene(executor: FakeExecutor, script: CaseScript, case, payload) -> Dict[str, Any]:
     assert payload["seed"] == case.seed, "scene generation runs with the case seed"
+    if case.class_id.startswith("scenario/"):
+        assert payload["functional_scenario_content"] == _input_text(executor, case), "scene generation gets the scenario given as content"
     evaluation_data = {"best_scene": {"case": f"{case.class_id}#{case.case_index}"}, "random_seed": payload["seed"]}
     return {"request_id": "fake", "valid": script.scene_valid, "evaluation_data": evaluation_data}
 
 
 def _trajectories(executor: FakeExecutor, script: CaseScript, case, payload) -> Dict[str, Any]:
-    assert f"{case.class_id}#{case.case_index}" in payload["scenario_content"], "trajectory generation gets the case's scene"
+    if case.class_id.startswith("item/"):
+        assert payload["scenario_content"] == _input_text(executor, case), "trajectory generation gets the item's scene"
+    else:
+        assert f"{case.class_id}#{case.case_index}" in payload["scenario_content"], "trajectory generation gets the case's scene"
     if script.trajectories == "none":
         return {"request_id": "fake", "valid": False, "complete": False, "trajectory_data": None, "error_message": "no path"}
     trajectory_data = {"trajectories": trajectories_data(), "algorithm_desc": payload["params"].get("generator"), "random_seed": payload["seed"]}
     return {"request_id": "fake", "valid": True, "complete": script.trajectories == "complete", "trajectory_data": trajectory_data, "error_message": None}
 
 
-def _outcomes(script: CaseScript) -> Dict[str, Any]:
-    rules = {"OS_0 - TS_1": {"Rule 14": {"passed": 0} if script.passed else {"failed": FAILED_RULE["first_failed_at"]}}}
-    failed = [] if script.passed else [dict(FAILED_RULE)]
-    return {"rules": rules, "failed_rules": failed, "passed": script.passed}
+def _outcomes(script: CaseScript, stage: PipelineStage = PipelineStage.MONITOR) -> Dict[str, Any]:
+    passed = script.monitor_passed.get(stage, script.passed)
+    rules = {"OS_0 - TS_1": {"Rule 14": {"passed": 0} if passed else {"failed": FAILED_RULE["first_failed_at"]}}}
+    failed = [] if passed else [dict(FAILED_RULE)]
+    return {"rules": rules, "failed_rules": failed, "passed": passed}
 
 
 def _simulation(executor: FakeExecutor, script: CaseScript, case, payload) -> Dict[str, Any]:
     assert payload["trajectories"]["scene_list"], "the simulation gets the generated trajectories"
     digest = hashlib.sha256(f"{case.seed}:{payload['seed']}".encode("utf-8")).hexdigest()
+    if "simulation_layer" in payload:
+        return _ardupilot_simulation(script, payload, digest)
     run_record = {
         "stack": payload["mode"],
         "dt": 1.0,
@@ -197,15 +213,42 @@ def _simulation(executor: FakeExecutor, script: CaseScript, case, payload) -> Di
         "environment": {"wind_vector": [0.0, 0.0, 0.0]},
         "state_digest": digest,
     }
+    if script.omit_tier:
+        del run_record["repeatability_tier"]
     result: Dict[str, Any] = {"run_record": run_record, "steps": 10, "state_digest": digest, "trajectories": trajectories_data()}
     if payload.get("monitor") == "live":
-        result["monitor"] = {"scenes": 11, "monitored_scenes": 11, "time_step": 1, **_outcomes(script), "stopped_early_at": script.stopped_early_at}
+        result["monitor"] = {"scenes": 11, "monitored_scenes": 11, "time_step": 1, **_outcomes(script, PipelineStage.SIMULATE), "stopped_early_at": script.stopped_early_at}
     return result
 
 
-def _monitoring(executor: FakeExecutor, script: CaseScript, case, payload) -> Dict[str, Any]:
-    assert payload["trajectories"]["scene_list"], "the monitor gets the simulation's state log"
-    result = {"scenes": 11, "monitored_scenes": 11, "time_step": 1, **_outcomes(script)}
+def _ardupilot_simulation(script: CaseScript, payload, digest: str) -> Dict[str, Any]:
+    """A simulation.ardupilot result as the job reports it: a bounded run record, the state digest, the observed run as trajectories and no state rows."""
+    assert payload["include_trajectories"] is True and payload["include_states"] is False and payload["geofence"]["radius_meters"] > 0
+    run_record = {
+        "stack": ["replay on ardupilot"],
+        "dt": 1.0,
+        "steps": 10,
+        "speedup": payload["speedup"],
+        "run_seed": payload["seed"],
+        "repeatability_tier": "bounded",
+        "environment": {"wind_vector": None, "waves": None},
+        "state_digest": digest,
+    }
+    if script.omit_tier:
+        del run_record["repeatability_tier"]
+    result: Dict[str, Any] = {"run_record": run_record, "steps": 10, "achieved_speedup": 1.5, "state_digest": digest, "trajectories": trajectories_data()}
+    if payload.get("monitor") == "live":
+        assert payload["colregs_constraints_content"] and "early_stop" not in payload, "the live monitor of an ArduPilot run has the COLREGS constants and no early stop"
+        result["monitor"] = {"scenes": 11, "monitored_scenes": 11, "time_step": 1, **_outcomes(script, PipelineStage.SIMULATE), "stopped_early_at": None}
+    return result
+
+
+def _monitoring(executor: FakeExecutor, script: CaseScript, case, payload, stage: PipelineStage = PipelineStage.MONITOR) -> Dict[str, Any]:
+    if stage == PipelineStage.MONITOR_SCENE:
+        assert payload["scene"]["best_scene"]["case"] == f"{case.class_id}#{case.case_index}" and "trajectories" not in payload, "the scene monitor gets the case's scene"
+    else:
+        assert payload["trajectories"]["scene_list"], "the monitor gets a state log or the planned trajectories"
+    result = {"scenes": 11, "monitored_scenes": 11, "time_step": 1, **_outcomes(script, stage)}
     if payload.get("include_frames"):
         result["frames"] = [{"frame": index} for index in range(3)]
     return result
@@ -214,14 +257,15 @@ def _monitoring(executor: FakeExecutor, script: CaseScript, case, payload) -> Di
 def _calibration(executor: FakeExecutor, script: CaseScript, case, payload) -> Dict[str, Any]:
     repeats = payload["trajectories"]
     assert all(repeat["scene_list"] for repeat in repeats)
+    exact = payload["stack"].get("simulation_layer") == "kinematic"  # an ArduPilot stack is bounded: its repeats differ
     return {
         "reference": payload["reference"],
         "stack": payload["stack"],
         "repeats": len(repeats),
-        "exact": True,
+        "exact": exact,
         "trajectory_digests": ["d" * 64] * len(repeats),
         "alignment": "scenario_time",
-        "deviation_bound_m": 0.0,
+        "deviation_bound_m": 0.0 if exact else 0.8,
         "per_vessel": {"0": {"max_m": 0.0, "rms_m": 0.0, "compared_duration_s": 10.0, "compared_samples": 11}},
         "samples_per_repeat": [11] * len(repeats),
     }
@@ -229,7 +273,9 @@ def _calibration(executor: FakeExecutor, script: CaseScript, case, payload) -> D
 
 RESULTS: Dict[PipelineStage, Callable[..., Dict[str, Any]]] = {
     PipelineStage.GENERATE_SCENE: _scene,
+    PipelineStage.MONITOR_SCENE: lambda *arguments: _monitoring(*arguments, stage=PipelineStage.MONITOR_SCENE),
     PipelineStage.GENERATE_TRAJECTORIES: _trajectories,
+    PipelineStage.MONITOR_TRAJECTORIES: lambda *arguments: _monitoring(*arguments, stage=PipelineStage.MONITOR_TRAJECTORIES),
     PipelineStage.SIMULATE: _simulation,
     PipelineStage.MONITOR: _monitoring,
     PipelineStage.CALIBRATE: _calibration,

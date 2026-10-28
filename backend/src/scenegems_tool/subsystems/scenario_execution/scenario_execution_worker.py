@@ -17,7 +17,7 @@ from scenegems_tool.gateway.protocol import SimulationStatus, simulation_config_
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.messaging.mqtt_scenario_execution_service import MqttScenarioExecutionService, MqttStartSimulationTask
 from scenegems_tool.subsystems.scenario_execution.lockstep_simulation_driver import LockstepSimulationDriver, uses_lockstep_driver
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import SimulationInstanceConfig
 from scenegems_tool.vessel_stack.simulation_parser import SimulationParser
 from utils.global_constants import MAX_DISTANCE, ONE_SECOND

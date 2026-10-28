@@ -22,7 +22,7 @@ from scenegems_tool.vessel_stack.simulation_docker_stack import (
 __all__ = ["SimulationParser", "SimulationParentClient", "SIMULATION_COMPOSE_PROJECT"]
 from scenegems_tool.messaging.mqtt_agent_client import ExecutionState, MqttAgentClient
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 
 _logger = logging.getLogger(__name__)
 

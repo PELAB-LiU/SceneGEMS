@@ -12,6 +12,8 @@ Topics and what they carry:
 
     nodes                          snapshot: node views (as GET /cluster/nodes)
                                    data: NodeChanged | NodeRemoved
+    campaigns                      snapshot: {} (the list is read with GET /cluster/campaigns); data: CampaignRowChanged on a
+                                   create and on every change of a campaign (state, totals), CampaignDeleted when one is deleted
     campaign:<campaign id>         snapshot: the campaign detail view (as GET /cluster/campaigns/<id>) with
                                    last_event_id; event updates may repeat events up to that id
                                    data: CampaignEventAdded | CampaignChanged | CampaignClassesChanged
@@ -50,6 +52,7 @@ from scenegems_tool.cluster.protocol.routes import LIVE_PATH  # noqa: F401 (the 
 LIVE_VERSION = 1
 
 NODES_TOPIC = "nodes"
+CAMPAIGNS_TOPIC = "campaigns"
 CAMPAIGN_PREFIX = "campaign:"
 JOB_PREFIX = "job:"
 INSTANCE_PREFIX = "instance:"
@@ -145,6 +148,14 @@ class NodeChanged(LiveModel):
 
 class NodeRemoved(LiveModel):
     removed: str  # node id
+
+
+class CampaignRowChanged(LiveModel):
+    campaign: Dict[str, Any]  # the list row, as GET /cluster/campaigns lists it (summary, steps, input, made_from, totals)
+
+
+class CampaignDeleted(LiveModel):
+    deleted: str  # campaign id
 
 
 class CampaignEventAdded(LiveModel):
@@ -251,8 +262,6 @@ class InstanceStatus(LiveModel):
     observed_speed: Optional[float] = None  # set for a job instance; a change of speed sends a status of its own
 
 
-InstanceUpdate = Annotated[Union[SceneSample, TrajectoryPreview, SimulationFrames, InstanceStatus], Field(discriminator="kind")]
-
 # Updates that may be rate limited and coalesced: previews and frames. A final sample or result is not a preview.
 RATED_INSTANCE_KINDS = ("scene_sample", "trajectory_preview", "simulation_frames")
 
@@ -266,6 +275,7 @@ def is_rated(update: Union[SceneSample, TrajectoryPreview, SimulationFrames, Ins
 
 class TopicKind(str, Enum):
     NODES = "nodes"
+    CAMPAIGNS = "campaigns"
     CAMPAIGN = "campaign"
     JOB = "job"
     INSTANCE = "instance"
@@ -288,6 +298,8 @@ class Topic:
     def name(self) -> str:
         if self.kind == TopicKind.NODES:
             return NODES_TOPIC
+        if self.kind == TopicKind.CAMPAIGNS:
+            return CAMPAIGNS_TOPIC
         return f"{self.kind.value}:{self.key}"
 
 
@@ -304,8 +316,8 @@ class InstanceName:
         return self.job_id is not None
 
 
-def nodes_topic() -> str:
-    return NODES_TOPIC
+def campaigns_topic() -> str:
+    return CAMPAIGNS_TOPIC
 
 
 def campaign_topic(campaign_id: str) -> str:
@@ -329,6 +341,8 @@ def parse_topic(text: str) -> Topic:
     """The topic a name stands for; InvalidTopic for anything else."""
     if text == NODES_TOPIC:
         return Topic(TopicKind.NODES)
+    if text == CAMPAIGNS_TOPIC:
+        return Topic(TopicKind.CAMPAIGNS)
     for prefix, kind in ((CAMPAIGN_PREFIX, TopicKind.CAMPAIGN), (JOB_PREFIX, TopicKind.JOB)):
         if text.startswith(prefix):
             key = text[len(prefix) :]
@@ -341,7 +355,7 @@ def parse_topic(text: str) -> Topic:
             raise InvalidTopic(f"an instance topic is instance:<node id>/<instance>, got {text!r}")
         parse_instance(instance)
         return Topic(TopicKind.INSTANCE, f"{node_id}/{instance}", node_id, instance)
-    raise InvalidTopic(f"unknown topic {text!r}: use nodes, campaign:<id>, job:<id> or instance:<node id>/<instance>")
+    raise InvalidTopic(f"unknown topic {text!r}: use nodes, campaigns, campaign:<id>, job:<id> or instance:<node id>/<instance>")
 
 
 def parse_instance(instance: str) -> InstanceName:

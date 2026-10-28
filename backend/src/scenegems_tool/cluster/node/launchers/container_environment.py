@@ -8,7 +8,7 @@ import os
 from typing import Dict, Optional
 
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo, mqtt_container_environment
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 
 WORKER_COUNT_VARIABLE = "WORKER_COUNT"
 

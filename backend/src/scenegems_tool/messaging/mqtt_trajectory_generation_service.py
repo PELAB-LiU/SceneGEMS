@@ -19,7 +19,7 @@ from scenegems_tool.subsystems.trajectory_generation.trajectory_generation_types
     TrajectoryGenerationParams,
 )
 from scenegems_tool.subsystems.trajectory_generation.trajectory_generation_worker import run_trajectory_generation_worker
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 
 _logger = logging.getLogger(__name__)
 

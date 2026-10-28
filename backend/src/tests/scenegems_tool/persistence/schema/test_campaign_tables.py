@@ -5,6 +5,9 @@ from scenegems_tool.persistence.schema import (
     CalibrationResultRow,
     CampaignActualState,
     CampaignClassRow,
+    CampaignKind,
+    CampaignOrigin,
+    CampaignRow,
     CaseState,
     PipelineJobRow,
     RunRecordRow,
@@ -12,6 +15,7 @@ from scenegems_tool.persistence.schema import (
     VerdictRow,
 )
 from scenegems_tool.persistence.schema.artifact_tables import require_sha256_hex, sha256_hex_check
+from scenegems_tool.persistence.schema.campaign_tables import KIND_OF_ORIGIN_CHECK
 
 MAX_IDENTIFIER = 63  # Postgres truncates longer names
 
@@ -48,8 +52,18 @@ def test_keys_of_the_engine_and_the_api():
     assert "uq_scenario_case_campaign_id_class_id_case_index" in _names(ScenarioCaseRow.__table__)
     assert {"uq_pipeline_job_idempotency_key", "uq_pipeline_job_job_id", "ix_pipeline_job_intents"} <= _names(PipelineJobRow.__table__)
     assert "uq_run_record_case_id_run_index_repeat_index" in _names(RunRecordRow.__table__)
-    assert {"uq_verdict_case_id_run_index", "ix_verdict_campaign_id_class_id_state", "ck_verdict_unmonitored_by_the_empty_monitor"} <= _names(VerdictRow.__table__)
+    assert {"uq_verdict_case_id_step_run_index", "ix_verdict_campaign_id_class_id_state", "ck_verdict_unmonitored_by_the_empty_monitor"} <= _names(VerdictRow.__table__)
+    assert {"ix_verdict_campaign_id_step_state", "ck_verdict_one_verdict_per_generation_step"} <= _names(VerdictRow.__table__)
     assert "uq_artifact_reference_artifact_hash_holder_kind_holder_id_role" in _names(ArtifactReferenceRow.__table__)
+    assert {"ck_artifact_reference_uploads_expire", "ix_artifact_reference_expires_at"} <= _names(ArtifactReferenceRow.__table__)
+    assert {"ix_campaign_kind_created_at", "ck_campaign_origin_of_the_kind"} <= _names(CampaignRow.__table__)
+    assert "ck_scenario_case_input_artifact_is_sha256_hex" in _names(ScenarioCaseRow.__table__)
+
+
+def test_origins_belong_to_one_kind():
+    assert {origin for origin in CampaignOrigin if origin.kind == CampaignKind.CAMPAIGN} == {CampaignOrigin.WIZARD, CampaignOrigin.CLI}
+    assert {origin.kind for origin in CampaignOrigin} == set(CampaignKind)
+    assert "origin IN ('wizard', 'cli')" in KIND_OF_ORIGIN_CHECK
     assert "uq_calibration_result_key" in _names(CalibrationResultRow.__table__)
 
 

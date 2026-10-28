@@ -16,7 +16,7 @@ from typing import Any, Deque, Dict, List, Optional, Tuple
 
 from pymavlink import mavutil
 
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 from scenegems_tool.vessel_stack.control_layers.ardupilot.mavlink_link import EKF_READY_TEXT, ROVER_GUIDED_MODE, ROVER_HOLD_MODE, MavlinkLink
 
 TICK_MS = 40

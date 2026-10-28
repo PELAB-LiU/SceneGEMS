@@ -9,7 +9,7 @@ from concrete_level.models.concrete_scene import ConcreteScene
 from concrete_level.models.trajectories import Trajectories
 from concrete_level.trajectory_generation.scene_builder import SceneBuilder
 from utils.global_constants import ONE_HOUR_IN_SEC, ONE_SECOND
-from utils.math_utils import compute_start_point, distance, heading_diff, rotate_heading
+from utils.math_utils import compute_start_point, heading_diff, rotate_heading
 
 
 class TrajectoryBuilder:
@@ -240,26 +240,6 @@ class TrajectoryBuilder:
     def convert_to_max_scene_number(self, scene_number: int) -> "TrajectoryBuilder":
         time_step = max(ONE_SECOND, np.ceil(self.timespan / scene_number))
         return self.convert_to_time_step(int(time_step))
-
-    def simulate_to_alignment(self) -> "TrajectoryBuilder":
-        if len(self.scene_list) == 0:
-            return self
-        first_scene = self.scene_list[0]
-        last_scene = self.scene_list[-1]
-        scenes: list[SceneBuilder] = []
-        for actor in last_scene:
-            if actor not in first_scene:
-                continue
-            dist_from_first = distance(first_scene[actor].p, last_scene[actor].p)
-            pseudo_target_state = actor.simulate_distance(first_scene[actor], dist_from_first + 2 * actor.safety_radius)
-            trajectory = actor.simulate_to_state(last_scene[actor], pseudo_target_state, self.time_step)
-            for i, state in enumerate(trajectory):
-                if i >= len(scenes):
-                    scenes.append(SceneBuilder(last_scene))
-                scenes[i].set_state(actor, state)
-
-        self.scene_list += [scene.build() for scene in scenes]
-        return self
 
     def simulate_acceleration_from_zero(self) -> "TrajectoryBuilder":
         if not self.scene_list:

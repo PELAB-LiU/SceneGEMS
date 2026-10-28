@@ -3,7 +3,7 @@ import type { OperatorClient } from "./operatorApi";
 import type { JobView, NodeView } from "./schemas";
 
 /**
- * The subsystem instances of a node that the Observe section can follow (design doc 5.2 and
+ * The subsystem instances of a node that the Cluster page can show (its instance browser) and follow (design doc 5.2 and
  * 5.3, topic `instance:<node>/<instance>`): the pool instances its capabilities and slots
  * give (`scene_generation-<n>`, `trajectory_generation-<n>`) and the instances of the jobs
  * it has leased or runs (`job-<job id>-<attempt>`).

@@ -31,7 +31,7 @@ export const sampleMasterStatus = {
   expected_fingerprints: {
     state: "ready",
     error: null,
-    images: { "scenegems-node": "sha256:aaaa", "scenegems-scenario-generation": "sha256:bbbb" },
+    images: { "scenegems-node": "sha256:aaaa", "scenegems-scene-generation": "sha256:bbbb" },
   },
   connected_nodes: ["node-a1"],
 };

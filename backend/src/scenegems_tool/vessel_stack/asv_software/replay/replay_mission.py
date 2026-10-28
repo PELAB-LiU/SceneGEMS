@@ -6,7 +6,7 @@ from concrete_level.models.concrete_actors import ConcreteVessel
 from concrete_level.models.trajectories import Trajectories
 from concrete_level.trajectory_generation.trajectory_builder import TrajectoryBuilder
 from scenegems_tool.vessel_stack.asv_software.replay.path_simplification import simplify_state_path
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence, waypoint_from_state
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence, waypoint_from_state
 
 REPLAY_MISSION_MAX_SCENES = 400
 

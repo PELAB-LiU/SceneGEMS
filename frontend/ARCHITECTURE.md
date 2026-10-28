@@ -11,7 +11,7 @@ src/
   domain/        Simulation protocol, WebSocket client, playback store; cluster/ has the
                  cluster list, the operator API client, the live channel client and stores
   features/      React UI by section: workbench/ (connection, controls, metrics, monitor,
-                 scene), cluster/, capabilities/, campaigns/, observe/, results/
+                 scene), cluster/ (with instances/), capabilities/, campaigns/, history/, results/
   language/      Lezer grammar for .problem files
 ```
 
@@ -33,8 +33,19 @@ control panel.
 
 The left pane has six sections: Workbench (with the views Domain Configuration, Scene
 Generation, Trajectory Generation, Simulation and Connections), Cluster, Capabilities, Campaigns,
-Observe and Results. `uiStore` keeps `section` and `workbenchView` (persisted, v4). The workbench
-stays mounted while another section is shown, so its gateway socket and state carry on. The left
+Campaign History (section id `history`) and Results. `uiStore` keeps `section` and `workbenchView` (persisted, v6). Other sections
+open an output on a workbench page through `openInWorkbench(target)` in
+`features/workbench/pages/workbenchTarget.ts`, which shows the page and queues the target for it
+(`takeTarget(page)`). The workbench stays mounted while another section is shown, so its gateway socket and state carry on.
+
+The workbench pages (design doc 6.6, `features/workbench/pages/`): Scene Generation, Trajectory
+Generation and Simulation each hold `{input, loaded}` in a persisted page store (`pageStore.ts`): the
+input (from the previous page's output, a Campaign History output or a file, `PageInputPanel`) and
+the target of the latest loaded entry. Every run is a one-step workbench entry (`entryConfig.ts`
+builds its format 2 config; `WorkbenchJobDriver` creates it with `kind: "workbench"` and the page
+as origin, follows its case with `entryFollower.ts`, then loads its output). `entryLoader.ts` fetches
+a target's output from the master; a 404 clears the page. The shown page takes queued targets with
+`useTargetConsumer`, and every page fetches its loaded entry again on start (`useLoadedRefresh`). The left
 pane is 280px with a plain-language hint per destination, an icon rail of 72px when collapsed (the
 choice is kept per browser) and a bar at the top below 800px. Below 1100px the workbench panes stack
 and scroll as one page.
@@ -49,6 +60,22 @@ keeps the list (name and operator URL, per browser). A master's operator API lis
   reference-counted topic subscriptions, snapshot then updates with per-topic `seq`, reconnect
   with backoff and resubscribe, ping. `liveTopics.ts` has the reducers per topic.
 - `useLiveTopic(topic, reducer)`: a topic of the selected cluster as React state.
+
+## Campaign History and the Cluster page's instances
+
+`features/history/` is Campaign History: every entry of the selected cluster (campaigns and
+workbench runs) from `listHistory` (`domain/cluster/historyApi.ts`), kept live by the `campaigns`
+topic (`campaignsReducer` in `liveTopics.ts`: pushed rows patch the page, a new, deleted or
+filtered-out entry has the page read again; polling while the topic is not live). An entry's page
+follows `campaign:<id>` (`useCampaignFeed.ts`) and has a tab per executed step with its outputs
+(`listOutputs`); "Open in workbench" and "Watch live" call `openInWorkbench(outputTarget(...))`.
+`historyStore.ts` keeps the open entry and step per browser; other sections open an entry with
+`showHistoryEntry(id)`. The Campaigns section is the wizard only.
+
+`features/cluster/instances/` is the instance browser of a node (pools and leased jobs, from
+`domain/cluster/observableInstances.ts`) with the viewers; a node card's "Instances" opens it.
+A viewer subscribes to its `instance:` topic only while it is shown. `domain/cluster/observeFrames.ts`
+turns instance samples and frames into encounter view frames (the workbench's job driver uses it too).
 
 ## Capabilities
 
@@ -85,10 +112,16 @@ flowchart LR
 2. **Generate scenes and trajectories**: jobs on the active cluster (`features/workbench/cluster/`: `WorkbenchJobDriver` submits `scene_generation`, `trajectory_generation` and `monitoring.post_hoc` jobs through the operator API, follows them on the live channel and reports them to the stores as `generated_scene`, `trajectory_generation_preview` and `trajectory_generation_result`). A job type no usable node offers is not submitted; `workbenchResources.ts` says why.
 3. **Load scenario**: `load_scenario_file` -> `preview_trajectory_chunk`(s), then the cluster's post-hoc monitor replaces the preview with monitored frames
    A bare scene loads as its initial scene only (`initial_state` with trajectory length 0); trajectories come from the trajectory generator, and the simulation refuses to run without them.
-4. **Run on the cluster**: a kinematic setup runs as one `simulation.kinematic` job (`simulationJobs.ts`), its frames observed on `instance:<node>/job-<id>-<attempt>`
+4. **Run on the cluster**: a kinematic setup runs as one `simulation.kinematic` job, a replay on ArduPilot SITL or Gazebo as one `simulation.ardupilot` job (`simulationJobs.ts`), each as a workbench entry whose run is the matching stack of the campaign config (`pages/entryConfig.ts` `simulationStack`); the frames are observed on `instance:<node>/job-<id>-<attempt>`
 5. **Live session**: `connect_to_mqtt_broker` (the master's broker by default), `initialize_simulation` -> `initial_state`, `start_simulation` -> `simulation_trajectory_chunk`(s) and live `frame` pushes
 
-Preview and simulation trajectories are stored separately in `playbackStore`; the monitoring panel shows one of them at a time.
+`playbackStore.ts` makes one store per page (`createPlaybackStore`): `useScenePlaybackStore` (the
+scene page's scene), `useTrajectoryPlaybackStore` (the planned trajectories) and `usePlaybackStore`
+(the simulation page's preview and simulation streams, plus the gateway session: stream, broker,
+monitor and simulation status, stack options, errors). `WorkbenchSection` provides the shown page's
+store through `PlaybackStoreContext` (`playbackContext.ts`); the canvas, the playback bar and the
+monitor panels read it with `useShownPlayback`, so each page renders its own frames. The monitoring
+panel shows one stream at a time.
 
 ## Tests
 

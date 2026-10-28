@@ -6,13 +6,11 @@ from typing import Any, Dict, Tuple, Type
 import numpy as np
 
 from concrete_level.models.actor_state import ActorState
-from functional_level.metamodels.functional_object import FuncObject
-from functional_level.models.functional_scenario_builder import FunctionalScenarioBuilder
 from logical_level.mapping.static_obstacle import StaticObstacleType
 from logical_level.mapping.vessel_type import VesselType
 from logical_level.models.actor_variable import ActorVariable, OSVariable, StaticObstacleVariable, TSVariable, VesselVariable
 from utils.global_constants import EPSILON, PHANTOM_SHIP_ANGLE
-from utils.math_utils import abs_heading_diff, calculate_heading, distance, heading_diff, rotate_heading
+from utils.math_utils import calculate_heading, distance, heading_diff, rotate_heading
 from utils.safety_domains import CircularSafetyDomain, EllipticalSafetyDomain, SafetyDomain
 from utils.serializable import Serializable
 
@@ -280,10 +278,6 @@ class ConcreteVessel(ConcreteActor):
     @property
     def thruster_mass(self) -> float:
         return self._thruster_mass
-
-    @property
-    def visible_height(self) -> float:
-        return self.height - self.draft
 
     @property
     def max_speed(self) -> float:

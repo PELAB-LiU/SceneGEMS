@@ -8,7 +8,7 @@ import paho.mqtt.client as mqtt
 from scenegems_tool.gateway.protocol import ServerMessage, make_trajectory_generation_preview_message, make_trajectory_generation_result_message
 from scenegems_tool.messaging.mqtt_client import MqttClient, MQttConnectionInfo
 from scenegems_tool.subsystems.trajectory_generation.trajectory_generation_types import TrajectoryGenerationParams
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 
 # (request_id, trajectory_data, valid, complete, error_message): the result as the service sent it.
 TrajectoryResultHandler = Callable[[str, Optional[Dict[str, Any]], bool, bool, Optional[str]], None]

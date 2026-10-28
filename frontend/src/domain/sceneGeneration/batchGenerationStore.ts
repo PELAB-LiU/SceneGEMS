@@ -11,6 +11,16 @@ export interface BatchRunResult {
   evaluationData?: EvaluationData;
   evaluationTimeBaseline?: number;
   scene?: SimulationFrame;
+  /** The case of the batch entry that generated the scene, to load it on the scene page. */
+  target?: BatchRowTarget;
+}
+
+/** A batch row's case in its entry (a `WorkbenchTarget` of the scene generation page). */
+export interface BatchRowTarget {
+  page: "sceneGeneration";
+  campaignId: string;
+  caseId: number;
+  step: "scene_generation";
 }
 
 const TERMINAL_STATUSES: BatchRunResult["status"][] = [
@@ -40,6 +50,7 @@ interface BatchGenerationState {
   handleBatchGeneratedScene: (requestId: string, scene: GeneratedSceneData) => void;
   /** The status of one scene's cluster job; a scene that already ended keeps its status. */
   setBatchRequestStatus: (requestId: string, status: BatchRunResult["status"], message?: string) => void;
+  setBatchRequestTarget: (requestId: string, target: BatchRowTarget) => void;
   markAllBatchStopped: () => void;
 }
 
@@ -121,6 +132,8 @@ export const useBatchGenerationStore = create<BatchGenerationState>((set, get) =
         r.requestId === requestId && !TERMINAL_STATUSES.includes(r.status) ? { ...r, status, message } : r
       ),
     })),
+  setBatchRequestTarget: (requestId, target) =>
+    set((state) => ({ results: state.results.map((r) => (r.requestId === requestId ? { ...r, target } : r)) })),
   markAllBatchStopped: () =>
     set((state) => ({
       running: false,

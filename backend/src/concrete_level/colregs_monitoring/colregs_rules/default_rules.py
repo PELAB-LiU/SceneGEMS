@@ -1,19 +1,7 @@
-from concrete_level.colregs_monitoring.colregs_rules.colregs_rules import (
-    GiveWayEarlyActionRule,
-    GoAroundCollisionDomainSuggestion,
-    HoldAvoidanceCourseRule,
-    OverturningSuggestion,
-    PersistingCourseAfterCourseChangeRule,
-    ReadilyApparentCourseChangeRule,
-    ReadilyApparentCoursePersistenceRule,
-    ReadilyApparentSpeedChangeRule,
-    SafeDistanceRule,
-    StandOnCoursePersistenceRule,
-)
+from concrete_level.colregs_monitoring.colregs_rules.colregs_rules import GiveWayEarlyActionRule, GoAroundCollisionDomainSuggestion, HoldAvoidanceCourseRule, PersistingCourseAfterCourseChangeRule, ReadilyApparentCourseChangeRule, ReadilyApparentCoursePersistenceRule, ReadilyApparentSpeedChangeRule, SafeDistanceRule, StandOnCoursePersistenceRule
 from concrete_level.colregs_monitoring.colregs_rules.conditions.give_way_early_action_condition import GiveWayEarlyActionCondition
 from concrete_level.colregs_monitoring.colregs_rules.conditions.go_around_collision_domain_condition import GoAroundCollisionDomainCondition
 from concrete_level.colregs_monitoring.colregs_rules.conditions.hold_avoidance_course_condition import HoldAvoidanceCourseCondition
-from concrete_level.colregs_monitoring.colregs_rules.conditions.overturning_condition import OverturningCondition
 from concrete_level.colregs_monitoring.colregs_rules.conditions.persisting_course_after_course_change_condition import PersistingCourseAfterCourseChangeCondition
 from concrete_level.colregs_monitoring.colregs_rules.conditions.readily_apparent_course_change_condition import ReadilyApparentCourseChangeCondition
 from concrete_level.colregs_monitoring.colregs_rules.conditions.readily_apparent_course_persistence_condition import ReadilyApparentCoursePersistenceCondition

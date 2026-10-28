@@ -9,8 +9,8 @@ from scenegems_tool.cluster.master.api.live_routes import live_router
 from scenegems_tool.cluster.master.api.master_apps import create_node_api_app
 from scenegems_tool.cluster.master.api.operator_routes import NODES_PATH, operator_router
 from scenegems_tool.cluster.master.live.live_channel import LiveChannel
-from scenegems_tool.cluster.master.live.topics import CampaignTopics, create_live_channel
-from scenegems_tool.cluster.protocol.live import TopicKind, campaign_topic, instance_topic, job_instance, job_topic
+from scenegems_tool.cluster.master.live.topics import CampaignListTopic, CampaignTopics, create_live_channel
+from scenegems_tool.cluster.protocol.live import TopicKind, campaign_topic, campaigns_topic, instance_topic, job_instance, job_topic
 from scenegems_tool.cluster.protocol.messages import JobStatus, LeaseOffer, LogLine, LogLines, LogStream
 from scenegems_tool.cluster.protocol.routes import JOBS_PATH
 from scenegems_tool.persistence.schema import CampaignActualState, CampaignClassState, CampaignDesiredState, CampaignEventKind
@@ -283,3 +283,81 @@ def test_the_channel_hooks_into_the_pipeline_engine(plane, channel):
     plane.pipeline = Engine()
     with_campaigns = create_live_channel(plane, assurance=object())
     assert plane.pipeline.on_change == with_campaigns.producers.campaigns.campaigns_changed
+
+
+@pytest.mark.anyio
+@pytest.mark.postgres
+async def test_the_campaigns_topic_sends_a_row_for_every_change_and_the_id_of_a_deleted_campaign(campaign_stores):
+    stores = campaign_stores
+    listing = CampaignListTopic(LiveChannel(), stores)
+    channel = listing._channel
+    channel.add_source(TopicKind.CAMPAIGNS, listing)
+    campaign = create_campaign(stores, config_dict(classes=(CLASS_A, CLASS_B), quota=2), CampaignDesiredState.PAUSED)
+    browser = Browser(channel)
+    browser.socket.subscribe(campaigns_topic())
+    (subscribed,) = await browser.messages(1)
+    assert subscribed["topic"] == "campaigns" and subscribed["snapshot"] == {}
+
+    listing.campaigns_changed({campaign.campaign_id, "a-campaign-that-does-not-exist"})
+    await listing.worker.idle()
+    (created,) = await browser.messages(1)
+    row = created["data"]["campaign"]
+    assert created["seq"] == 1 and set(created["data"]) == {"campaign"}
+    assert (row["campaign_id"], row["kind"], row["origin"], row["actual_state"]) == (campaign.campaign_id, "campaign", None, "created")
+    assert row["steps"] == ["scene_generation", "trajectory_generation", "simulation"] and row["input"] == {"first_step": "scene_generation", "item_count": 0} and row["made_from"] == []
+    assert row["totals"] == {"cases": {}, "verdicts": {}}
+
+    listing.campaigns_changed({campaign.campaign_id})  # nothing changed in the row
+    await listing.worker.idle()
+    await settle()
+    assert browser.socket.take() == []
+
+    stores.campaigns.set_actual_state(campaign.campaign_id, CampaignActualState.RUNNING)
+    listing.campaigns_changed({campaign.campaign_id})
+    await listing.worker.idle()
+    (running,) = await browser.messages(1)
+    assert running["data"]["campaign"]["actual_state"] == "running" and running["seq"] == 2
+
+    stores.campaigns.set_actual_state(campaign.campaign_id, CampaignActualState.COMPLETED)
+    stores.campaigns.delete_campaign(campaign.campaign_id)
+    listing.campaign_deleted(campaign.campaign_id)
+    listing.campaigns_changed({campaign.campaign_id})  # a change that was marked before the delete is not sent as a row
+    await listing.worker.idle()
+    await settle()
+    (deleted,) = browser.socket.take()
+    assert deleted["data"] == {"deleted": campaign.campaign_id} and deleted["seq"] == 3
+
+    await browser.leave()
+    listing.campaigns_changed({"someone"})
+    assert not listing.worker.busy  # nobody watches: nothing is read
+    listing.campaign_deleted("someone")  # and nothing is sent
+
+
+@pytest.mark.anyio
+@pytest.mark.postgres
+async def test_the_engines_notification_reaches_the_campaigns_topic(campaign_stores):
+    channel = LiveChannel()
+    listing = CampaignListTopic(channel, campaign_stores)
+    campaigns = CampaignTopics(channel, campaign_stores, listing)
+    channel.add_source(TopicKind.CAMPAIGNS, listing)
+    campaign = create_campaign(campaign_stores, config_dict(), CampaignDesiredState.PAUSED)
+    browser = Browser(channel)
+    browser.socket.subscribe(campaigns_topic())
+    await browser.messages(1)
+    campaigns.campaigns_changed({campaign.campaign_id})  # what PipelineEngine.on_change calls
+    await listing.worker.idle()
+    (row,) = await browser.messages(1)
+    assert row["data"]["campaign"]["campaign_id"] == campaign.campaign_id
+    await browser.leave()
+
+
+def test_the_channel_serves_the_campaigns_topic_beside_the_campaign_topics(plane):
+    class Engine:
+        on_change = None
+
+    plane.pipeline = Engine()
+    with_campaigns = create_live_channel(plane, assurance=object())
+    listing = with_campaigns.producers.campaign_list
+    assert isinstance(listing, CampaignListTopic) and with_campaigns.source(TopicKind.CAMPAIGNS) is listing
+    assert listing.worker in with_campaigns.producers._workers()
+    assert create_live_channel(plane).source(TopicKind.CAMPAIGNS) is None and create_live_channel(plane).producers.campaign_list is None

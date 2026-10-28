@@ -1,8 +1,6 @@
 import os
 import tkfilebrowser
 from concrete_level.data_parser import EvalDataParser
-from logical_level.constraint_satisfaction.evaluation_data import EvaluationData
-from typing import List
 
 from utils.file_system_utils import GEN_DATA_FOLDER
 

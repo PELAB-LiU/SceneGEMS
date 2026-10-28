@@ -37,6 +37,7 @@ from pydantic import ValidationError
 from scenegems_tool.cluster.master.control_plane import ControlPlane
 from scenegems_tool.cluster.master.job_activity import JobProgress
 from scenegems_tool.cluster.master.live.live_channel import InvalidOptions, LiveChannel, UnknownTopic
+from scenegems_tool.cluster.node.instance_scope import node_topic_scope
 from scenegems_tool.cluster.protocol.live import (
     DEFAULT_OBSERVED_SPEED,
     JOB_INSTANCE_KINDS,
@@ -54,16 +55,15 @@ from scenegems_tool.cluster.protocol.live import (
     job_instance,
     parse_instance,
 )
-from scenegems_tool.cluster.node.instance_scope import node_topic_scope
 from scenegems_tool.persistence.stores import JobRecord
-from scenegems_tool.subsystems.scene_generation.scenario_generation_types import SCENARIO_GENERATION_SERVICE_TOPIC
+from scenegems_tool.subsystems.scene_generation.scene_generation_types import SCENE_GENERATION_SERVICE_TOPIC
 from scenegems_tool.subsystems.trajectory_generation.trajectory_generation_types import TRAJECTORY_GENERATION_SERVICE_TOPIC
 
 logger = logging.getLogger(__name__)
 
 InstanceUpdateModel = Union[SceneSample, TrajectoryPreview, SimulationFrames, InstanceStatus]
 
-GENERATED_SCENE_TOPIC = f"{SCENARIO_GENERATION_SERVICE_TOPIC}/sensor/generated_scene"
+GENERATED_SCENE_TOPIC = f"{SCENE_GENERATION_SERVICE_TOPIC}/sensor/generated_scene"
 TRAJECTORY_PREVIEW_TOPIC = f"{TRAJECTORY_GENERATION_SERVICE_TOPIC}/sensor/planned_trajectory_preview"
 TRAJECTORY_RESULT_TOPIC = f"{TRAJECTORY_GENERATION_SERVICE_TOPIC}/sensor/planned_trajectory"
 # The topics a pool publishes its previews on, relative to its scope (messaging/mqtt_*_generation_service.py)

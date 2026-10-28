@@ -3,10 +3,10 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from utils.colregs_approximations import drift_threshold, vis_distance
 from logical_level.constraint_satisfaction.assignments import Assignments
 from logical_level.models.actor_variable import ActorVariable
 from logical_level.models.values import ActorValues
+from utils.colregs_approximations import drift_threshold, vis_distance
 from utils.global_constants import EPSILON, SIDE_ANGLE
 from utils.math_utils import compute_angle, magnitude
 
@@ -38,7 +38,7 @@ class GeometricProperties(ABC):
         if self.__safety_dist is None:
             self.__safety_dist = max(self.val1.r, self.val2.r)
         return self.__safety_dist
-    
+
     @property
     def drift_threshold(self) -> float:
         if self.__drift_threshold is None:
@@ -167,56 +167,3 @@ class EvaluationCache(Dict[Tuple[ActorVariable, ActorVariable], GeometricPropert
             props = GeometricProperties(var1, var2, self.assignments)
             self[(var1, var2)] = props
         return props
-
-
-# class ObstacleToVesselProperties(GeometricProperties):
-#     def __init__(
-#         self,
-#         var1: StaticObstacleVariable,
-#         var2: VesselVariable,
-#         assignments: Assignments,
-#     ):
-#         super().__init__(var1, var2, assignments)
-
-#     @property
-#     def tcpa(self) -> float:
-#         return np.dot(self.p21, self.val2.v_norm)
-
-#     @property
-#     def dcpa(self) -> float:
-#         return magnitude(self.p21 - self.tcpa * self.val2.v_norm)
-
-#     @property
-#     def vis_distance(self) -> float:
-#         return o2VisibilityByo1(True, self.val1.r)
-
-#     @property
-#     def collision_points(self) -> List[np.ndarray]:
-#         # Coefficients for the quadratic equation
-#         a = np.dot(self.val2.v, self.val2.v)
-#         b = 2 * np.dot(self.p12, self.val2.v)
-#         c = np.dot(self.p12, self.p12) - self.safety_dist**2
-
-#         # Calculate discriminant
-#         discriminant = b**2 - 4 * a * c
-
-#         # Check for real solutions (collision possible)
-#         if discriminant < 0:
-#             return []
-
-#         sqrt_discriminant = np.sqrt(discriminant)
-#         collision_points = []
-
-#         # Find times of collision
-#         t1 = (-b + sqrt_discriminant) / (2 * a)
-#         t2 = (-b - sqrt_discriminant) / (2 * a)
-
-#         # Check if times are within the time limit and positive
-#         for t in [t1, t2]:
-#             if 0 <= t <= np.inf:
-#                 # Compute the collision points
-#                 collision_point_vessel2 = self.val2.p + self.val2.v * t
-#                 collision_points.append(collision_point_vessel2)
-
-#         # Return the list of collision points as standard list of np.ndarray
-#         return collision_points

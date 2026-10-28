@@ -4,6 +4,11 @@ The operator sets the desired state; the pipeline engine converges the actual st
 and records each step as a campaign event. A desired stop is final, and a campaign whose
 actual state is final (stopped or completed) changes no more.
 
+A campaign's kind (campaign or workbench entry) and origin come with its creation, outside
+its config, so they do not change the config hash. A final campaign can be deleted: its
+rows go, and with them the artifact references of the campaign, its cases and its runs, so
+the sweep frees what nothing else references.
+
 Every method takes an optional session (see store_session).
 """
 
@@ -11,11 +16,13 @@ from datetime import datetime
 from typing import Any, Collection, Dict, List, Mapping, Optional, Sequence
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from scenegems_tool.persistence.clock import Clock, utc_now
 from scenegems_tool.persistence.schema import (
+    ArtifactHolderKind,
+    ArtifactReferenceRow,
     CampaignActualState,
     CampaignClassRow,
     CampaignClassState,
@@ -23,11 +30,23 @@ from scenegems_tool.persistence.schema import (
     CampaignDesiredState,
     CampaignEventKind,
     CampaignEventRow,
+    CampaignKind,
+    CampaignOrigin,
     CampaignRow,
+    RunRecordRow,
+    ScenarioCaseRow,
+    VerdictRow,
 )
 from scenegems_tool.persistence.schema.artifact_tables import require_sha256_hex
-from scenegems_tool.persistence.stores.campaign_records import CampaignEventRecord, CampaignRecord, ClassSpec, ConfigVersionRecord
+from scenegems_tool.persistence.stores.artifact_records import drop_references
+from scenegems_tool.persistence.stores.campaign_records import CampaignEventRecord, CampaignRecord, CampaignTotals, ClassSpec, ConfigVersionRecord
 from scenegems_tool.persistence.stores.store_session import session_scope
+
+
+def _name_contains(text: str):
+    """A case-insensitive substring match on the name, with LIKE's wildcards taken literally."""
+    escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return CampaignRow.name.ilike(f"%{escaped}%", escape="\\")
 
 
 class UnknownCampaign(LookupError):
@@ -54,15 +73,20 @@ class CampaignStore:
         pinned_fingerprints: Optional[Mapping[str, str]] = None,
         desired_state: CampaignDesiredState = CampaignDesiredState.PAUSED,
         *,
+        kind: CampaignKind = CampaignKind.CAMPAIGN,
+        origin: Optional[CampaignOrigin] = None,
         session: Optional[Session] = None,
     ) -> CampaignRecord:
         """Creates a campaign with config version 1 and its classes, and records its creation.
 
         The config is the validated config as JSON and config_hash its sha256; the classes
         come resolved from the catalog with their content hashes. A new campaign is created
-        (actual state); it waits paused unless desired_state says otherwise.
+        (actual state); it waits paused unless desired_state says otherwise. kind and origin
+        say what made it; an origin belongs to one kind (wizard and cli to campaigns).
         """
         require_sha256_hex(config_hash)
+        if origin is not None and origin.kind != kind:
+            raise ValueError(f"origin {origin.value} makes a {origin.kind.value}, not a {kind.value}")
         if not classes:
             raise ValueError("a campaign needs at least one class")
         class_ids = [spec.class_id for spec in classes]
@@ -78,6 +102,8 @@ class CampaignStore:
             row = CampaignRow(
                 id=campaign_id,
                 name=name,
+                kind=kind,
+                origin=origin,
                 desired_state=desired_state,
                 actual_state=CampaignActualState.CREATED,
                 config_version=1,
@@ -106,7 +132,10 @@ class CampaignStore:
                 )
                 for spec in classes
             )
-            self._append(scope, campaign_id, CampaignEventKind.CREATED, now, {"config_hash": config_hash, "classes": len(classes), "desired_state": desired_state.value})
+            detail = {"config_hash": config_hash, "classes": len(classes), "desired_state": desired_state.value, "kind": kind.value}
+            if origin is not None:
+                detail["origin"] = origin.value
+            self._append(scope, campaign_id, CampaignEventKind.CREATED, now, detail)
             scope.flush()
             return CampaignRecord.from_row(row)
 
@@ -117,22 +146,72 @@ class CampaignStore:
             return None if row is None else CampaignRecord.from_row(row)
 
     def list_campaigns(
-        self, actual_states: Optional[Collection[CampaignActualState]] = None, limit: Optional[int] = 100, offset: int = 0, *, session: Optional[Session] = None
+        self,
+        actual_states: Optional[Collection[CampaignActualState]] = None,
+        limit: Optional[int] = 100,
+        offset: int = 0,
+        *,
+        kinds: Optional[Collection[CampaignKind]] = None,
+        origins: Optional[Collection[CampaignOrigin]] = None,
+        q: Optional[str] = None,
+        session: Optional[Session] = None,
     ) -> List[CampaignRecord]:
-        """Campaigns, newest first, optionally only those in the given actual states."""
+        """Campaigns, newest first, optionally only those in the given actual states, of the given kinds and origins, whose name contains q (any case)."""
         with session_scope(self._sessions, session) as scope:
-            query = select(CampaignRow).order_by(CampaignRow.created_at.desc(), CampaignRow.id).offset(offset).limit(limit)
-            if actual_states is not None:
-                query = query.where(CampaignRow.actual_state.in_(list(actual_states)))
+            query = self._campaign_filtered(select(CampaignRow), actual_states, kinds, origins, q)
+            query = query.order_by(CampaignRow.created_at.desc(), CampaignRow.id).offset(offset).limit(limit)
             return [CampaignRecord.from_row(row) for row in scope.execute(query).scalars()]
 
-    def count_campaigns(self, actual_states: Optional[Collection[CampaignActualState]] = None, *, session: Optional[Session] = None) -> int:
-        """How many campaigns list_campaigns would return for the same filter without a page."""
+    def count_campaigns(
+        self,
+        actual_states: Optional[Collection[CampaignActualState]] = None,
+        *,
+        kinds: Optional[Collection[CampaignKind]] = None,
+        origins: Optional[Collection[CampaignOrigin]] = None,
+        q: Optional[str] = None,
+        session: Optional[Session] = None,
+    ) -> int:
+        """How many campaigns list_campaigns would return for the same filters without a page."""
         with session_scope(self._sessions, session) as scope:
-            query = select(func.count()).select_from(CampaignRow)
-            if actual_states is not None:
-                query = query.where(CampaignRow.actual_state.in_(list(actual_states)))
-            return scope.execute(query).scalar_one()
+            return scope.execute(self._campaign_filtered(select(func.count()).select_from(CampaignRow), actual_states, kinds, origins, q)).scalar_one()
+
+    def campaign_totals(self, campaign_ids: Collection[str], *, session: Optional[Session] = None) -> Dict[str, CampaignTotals]:
+        """Per campaign: its cases by state and its verdicts by step and state, in two queries for a whole page of campaigns.
+
+        Every campaign asked for gets an entry, empty when it has no cases (or does not exist).
+        """
+        ids = sorted(set(campaign_ids))
+        totals: Dict[str, CampaignTotals] = {campaign_id: CampaignTotals() for campaign_id in ids}
+        if not ids:
+            return totals
+        with session_scope(self._sessions, session) as scope:
+            cases = select(ScenarioCaseRow.campaign_id, ScenarioCaseRow.state, func.count()).where(ScenarioCaseRow.campaign_id.in_(ids)).group_by(ScenarioCaseRow.campaign_id, ScenarioCaseRow.state)
+            for campaign_id, state, count in scope.execute(cases):
+                totals[campaign_id].cases[state] = count
+            verdicts = (
+                select(VerdictRow.campaign_id, VerdictRow.step, VerdictRow.state, func.count())
+                .where(VerdictRow.campaign_id.in_(ids))
+                .group_by(VerdictRow.campaign_id, VerdictRow.step, VerdictRow.state)
+            )
+            for campaign_id, step, state, count in scope.execute(verdicts):
+                totals[campaign_id].verdicts.setdefault(step, {})[state] = count
+        return totals
+
+    def current_configs(self, campaign_ids: Collection[str], *, session: Optional[Session] = None) -> Dict[str, ConfigVersionRecord]:
+        """The current config version of each campaign, in one query; campaigns that do not exist are left out.
+
+        The list rows read their steps, input and the campaigns their items came from out of it.
+        """
+        ids = sorted(set(campaign_ids))
+        if not ids:
+            return {}
+        with session_scope(self._sessions, session) as scope:
+            query = (
+                select(CampaignConfigVersionRow)
+                .join(CampaignRow, (CampaignRow.id == CampaignConfigVersionRow.campaign_id) & (CampaignRow.config_version == CampaignConfigVersionRow.version))
+                .where(CampaignRow.id.in_(ids))
+            )
+            return {row.campaign_id: ConfigVersionRecord.from_row(row) for row in scope.execute(query).scalars()}
 
     def unfinished_campaigns(self, *, session: Optional[Session] = None) -> List[CampaignRecord]:
         """Campaigns the engine still works on (actual state not final), oldest first."""
@@ -215,6 +294,34 @@ class CampaignStore:
             scope.flush()
             return CampaignRecord.from_row(row)
 
+    # Deletion
+
+    def delete_campaign(self, campaign_id: str, *, session: Optional[Session] = None) -> List[str]:
+        """Deletes a final campaign with its config versions, classes, cases, jobs links, run records, verdicts and events.
+
+        The artifact references the campaign, its cases and its runs hold go in the same
+        transaction; returns the hashes they referenced, sorted. Their artifacts stay until the
+        sweep finds them unreferenced, so an artifact another campaign references survives.
+        Raises UnknownCampaign, or CampaignStateConflict while the campaign is not final.
+        """
+        now = self._clock()
+        with session_scope(self._sessions, session) as scope:
+            row = self._require(scope, campaign_id, lock=True)
+            if not row.actual_state.is_final:
+                raise CampaignStateConflict(f"campaign {campaign_id} is {row.actual_state.value}; only a stopped or completed campaign can be deleted")
+            case_ids = select(cast(ScenarioCaseRow.id, String)).where(ScenarioCaseRow.campaign_id == campaign_id).scalar_subquery()
+            run_ids = select(cast(RunRecordRow.id, String)).where(RunRecordRow.campaign_id == campaign_id).scalar_subquery()
+            held = or_(
+                ArtifactReferenceRow.campaign_id == campaign_id,
+                (ArtifactReferenceRow.holder_kind == ArtifactHolderKind.CAMPAIGN) & (ArtifactReferenceRow.holder_id == campaign_id),
+                (ArtifactReferenceRow.holder_kind == ArtifactHolderKind.CASE) & ArtifactReferenceRow.holder_id.in_(case_ids),
+                (ArtifactReferenceRow.holder_kind == ArtifactHolderKind.RUN) & ArtifactReferenceRow.holder_id.in_(run_ids),
+            )
+            released = drop_references(scope, [held], now)
+            scope.delete(row)  # every table of the campaign cascades from its row
+            scope.flush()
+            return released
+
     # Events
 
     def append_event(
@@ -252,6 +359,24 @@ class CampaignStore:
             return scope.execute(query).scalar_one()
 
     # Helpers
+
+    @staticmethod
+    def _campaign_filtered(
+        query,
+        actual_states: Optional[Collection[CampaignActualState]],
+        kinds: Optional[Collection[CampaignKind]],
+        origins: Optional[Collection[CampaignOrigin]],
+        q: Optional[str],
+    ):
+        if actual_states is not None:
+            query = query.where(CampaignRow.actual_state.in_(list(actual_states)))
+        if kinds is not None:
+            query = query.where(CampaignRow.kind.in_(list(kinds)))
+        if origins is not None:
+            query = query.where(CampaignRow.origin.in_(list(origins)))
+        if q:
+            query = query.where(_name_contains(q))
+        return query
 
     @staticmethod
     def _append(session: Session, campaign_id: str, kind: CampaignEventKind, at: datetime, detail: Optional[Dict[str, Any]] = None, class_id: Optional[str] = None) -> CampaignEventRow:

@@ -31,9 +31,13 @@ def test_the_default_origins_pass_a_preflight_of_a_campaign_create(operator, ori
     response = preflight(operator, CAMPAIGNS_PATH, origin)
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == origin
-    assert set(response.headers["access-control-allow-methods"].replace(" ", "").split(",")) == {"GET", "POST", "HEAD"}
+    assert set(response.headers["access-control-allow-methods"].replace(" ", "").split(",")) == {"GET", "POST", "DELETE", "HEAD"}
     allowed = {name.strip() for name in response.headers["access-control-allow-headers"].lower().split(",")}
     assert "content-type" in allowed and "authorization" not in allowed
+
+
+def test_a_delete_of_another_origin_is_refused_by_the_origin_guard(operator):
+    assert operator.delete(f"{CAMPAIGNS_PATH}/c1", headers={"Origin": STRANGER}).status_code == 403
 
 
 def test_other_origins_are_refused(operator):
@@ -43,8 +47,9 @@ def test_other_origins_are_refused(operator):
     assert "access-control-allow-origin" not in operator.get(STATUS_PATH, headers={"Origin": "http://localhost:5174"}).headers  # same host, another port
 
 
-def test_only_get_post_and_head_and_the_content_type_header_are_allowed(operator):
-    for method in ("PUT", "DELETE", "PATCH"):
+def test_only_get_post_delete_and_head_and_the_content_type_header_are_allowed(operator):
+    assert preflight(operator, f"{CAMPAIGNS_PATH}/c1", method="DELETE").status_code == 200
+    for method in ("PUT", "PATCH"):
         assert preflight(operator, CAMPAIGNS_PATH, method=method).status_code == 400, method
     assert preflight(operator, CAMPAIGNS_PATH, headers="authorization").status_code == 400
     for method in ("GET", "HEAD"):

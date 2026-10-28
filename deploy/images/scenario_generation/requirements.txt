@@ -1,9 +1,0 @@
-# Runtime dependencies for scenegems-scenario-generation-subsystem (see deploy/images/scenario_generation/Dockerfile).
-paho-mqtt==2.1.0
-pyyaml==6.0.3
-numpy==2.5.4
-portion==2.6.3
-scenic==3.1.1
-scipy==1.18.1
-pyproj==3.8.0
-haversine==2.9.0
