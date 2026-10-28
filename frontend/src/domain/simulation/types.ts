@@ -188,9 +188,3 @@ export interface GeneratedSceneData {
   /** Whether the generated scene complies with the functional specification. */
   valid: boolean;
 }
-
-export type SimulationCommand =
-  | { command: "pause" }
-  | { command: "resume" }
-  | { command: "set_speed"; value: number }
-  | { command: "seek"; value: number };

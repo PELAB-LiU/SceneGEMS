@@ -13,15 +13,6 @@ const nullableTime = isoTime.nullable();
 const stringMap = z.record(z.string(), z.string());
 const jsonObject = z.record(z.string(), z.unknown());
 
-export const JOB_TYPE_VALUES = [
-  "scene_generation",
-  "trajectory_generation",
-  "simulation.kinematic",
-  "simulation.ardupilot",
-  "monitoring.post_hoc",
-  "calibration.deviation",
-] as const;
-
 export const nodeStatusSchema = z.enum(["online", "draining", "offline"]);
 export const jobStateSchema = z.enum(["queued", "leased", "running", "succeeded", "failed", "cancelled"]);
 export const campaignDesiredStateSchema = z.enum(["running", "paused", "draining", "stopped"]);
@@ -58,8 +49,6 @@ export const CAMPAIGN_ORIGINS = ["wizard", "cli", "scene_generation", "trajector
 export const campaignOriginSchema = z.enum(CAMPAIGN_ORIGINS);
 /** Where a run record came from: a cluster job or a recorded live session. */
 export const runSourceSchema = z.enum(["job", "live_session"]);
-
-export type NodeStatus = z.infer<typeof nodeStatusSchema>;
 export type JobState = z.infer<typeof jobStateSchema>;
 export type CampaignDesiredState = z.infer<typeof campaignDesiredStateSchema>;
 export type CampaignActualState = z.infer<typeof campaignActualStateSchema>;
@@ -71,7 +60,6 @@ export type CampaignStep = z.infer<typeof campaignStepSchema>;
 export type VerdictStep = z.infer<typeof verdictStepSchema>;
 export type CampaignKind = z.infer<typeof campaignKindSchema>;
 export type CampaignOrigin = z.infer<typeof campaignOriginSchema>;
-export type RunSource = z.infer<typeof runSourceSchema>;
 
 // Nodes and the master (views.py, operator_routes.py)
 
@@ -125,10 +113,6 @@ export const masterStatusSchema = z.object({
   }),
   connected_nodes: z.array(z.string()),
 });
-
-export type FingerprintMismatch = z.infer<typeof fingerprintMismatchSchema>;
-export type NodeResources = z.infer<typeof nodeResourcesSchema>;
-export type CapabilityUsage = z.infer<typeof capabilityUsageSchema>;
 export type NodeView = z.infer<typeof nodeViewSchema>;
 export type MasterStatus = z.infer<typeof masterStatusSchema>;
 
@@ -196,26 +180,15 @@ export const jobDetailSchema = jobViewSchema.extend({
   log_lines: z.array(logLineSchema),
 });
 
-export const jobListSchema = z.array(jobViewSchema);
-
 export const cancelJobResultSchema = z.object({
   cancelled: z.boolean(),
   job: jobViewSchema,
 });
 
 export const nodeRemovedSchema = z.object({ removed: z.string() });
-
-export type JobRequirements =z.infer<typeof jobRequirementsSchema>;
 export type JobProgress = z.infer<typeof jobProgressSchema>;
 export type LogLine = z.infer<typeof logLineSchema>;
 export type JobView = z.infer<typeof jobViewSchema>;
-export type JobEvent = z.infer<typeof jobEventSchema>;
-export type JobDetail = z.infer<typeof jobDetailSchema>;
-
-// Artifact references (cluster/protocol/artifacts.py)
-
-/** Kinds of stored artifacts; a plain string so a master that adds one still parses. */
-export const ARTIFACT_KIND_VALUES = ["scene", "trajectory_data", "trajectories", "frames", "calibration", "functional_scenario"] as const;
 
 export const artifactRefSchema = z.object({
   sha256: z.string(),
@@ -431,12 +404,9 @@ export const campaignConfigSchema = z.object({
   current_version: z.number().int(),
   versions: z.array(configVersionSchema),
 });
-
-export type CampaignInputSummary = z.infer<typeof campaignInputSummarySchema>;
 export type CampaignRowTotals = z.infer<typeof campaignRowTotalsSchema>;
 export type CampaignRow = z.infer<typeof campaignRowSchema>;
 export type CampaignSummary = z.infer<typeof campaignSummarySchema>;
-export type VerdictCounts = z.infer<typeof verdictCountsSchema>;
 export type ClassView = z.infer<typeof classViewSchema>;
 export type CampaignTotals = z.infer<typeof campaignTotalsSchema>;
 export type CampaignDetail = z.infer<typeof campaignDetailSchema>;
@@ -446,5 +416,4 @@ export type RunRecord = z.infer<typeof runRecordSchema>;
 export type Verdict = z.infer<typeof verdictSchema>;
 export type CaseDetail = z.infer<typeof caseDetailSchema>;
 export type CampaignEvent = z.infer<typeof campaignEventSchema>;
-export type ConfigVersion = z.infer<typeof configVersionSchema>;
 export type CampaignConfig = z.infer<typeof campaignConfigSchema>;

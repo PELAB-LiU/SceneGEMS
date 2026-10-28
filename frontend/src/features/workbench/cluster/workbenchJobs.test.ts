@@ -1,18 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { jobViewSchema } from "../../../domain/cluster/schemas";
 import { sampleJob } from "../../../test/fixtures/clusterViews";
-import {
-  monitoringSubmission,
-  poolRequestId,
-  poolTopic,
-  runClusterJob,
-  sceneGenerationSubmission,
-  sceneJobResult,
-  singleSceneTrajectories,
-  trajectoryGenerationSubmission,
-  trajectoryJobResult,
-  type WorkbenchCluster,
-} from "./workbenchJobs";
+import { monitoringSubmission, poolRequestId, poolTopic, runClusterJob, sceneJobResult, singleSceneTrajectories, trajectoryJobResult, type WorkbenchCluster } from "./workbenchJobs";
 
 function job(overrides: Record<string, unknown> = {}) {
   return jobViewSchema.parse(sampleJob(overrides));
@@ -30,34 +19,6 @@ function fakeCluster(overrides: Record<string, unknown> = {}): WorkbenchCluster 
 }
 
 describe("job payloads", () => {
-  it("builds the scene generation payload the job type expects", () => {
-    const submission = sceneGenerationSubmission({
-      functionalScenarioContent: "problem",
-      colregsConstraintsContent: "colregs",
-      vesselTypesContent: "vessels",
-      obstacleTypesContent: "obstacles",
-      timeoutSeconds: 30.4,
-      enforceLowTcpa: true,
-    });
-    expect(submission).toEqual({
-      job_type: "scene_generation",
-      payload: {
-        functional_scenario_content: "problem",
-        colregs_constraints_content: "colregs",
-        vessel_types_content: "vessels",
-        obstacle_types_content: "obstacles",
-        timeout_s: 30,
-        enforce_low_tcpa: true,
-      },
-    });
-  });
-
-  it("gives a trajectory job the search's timeout plus a margin, and only the set parameters", () => {
-    const submission = trajectoryGenerationSubmission({ scenarioContent: "{}", colregsConstraintsContent: "c", params: { timeout: 60, generator: "straight", timespan: undefined } });
-    expect(submission.payload).toEqual({ scenario_content: "{}", colregs_constraints_content: "c", params: { timeout: 60, generator: "straight" }, timeout_s: 180 });
-    expect(submission.max_attempts).toBe(1);
-    expect(trajectoryGenerationSubmission({ scenarioContent: "{}", colregsConstraintsContent: "c", params: {} }).payload.timeout_s).toBe(1800);
-  });
 
   it("monitors a scenario's first scene as a one-step state log", () => {
     expect(singleSceneTrajectories({ best_scene: { actors: 1 } })).toEqual({ scene_list: [{ actors: 1 }], time_step: 1 });

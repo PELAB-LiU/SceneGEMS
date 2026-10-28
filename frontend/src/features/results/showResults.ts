@@ -13,9 +13,3 @@ export function showCampaignResults(campaignId: string, step?: CampaignStep): vo
   useResultsStore.getState().openCampaign(campaignId, step);
   useUiStore.getState().setSection("results");
 }
-
-/** Opens the Results section on one case of an entry (its case page). */
-export function showCaseResults(campaignId: string, caseId: number, step?: CampaignStep): void {
-  useResultsStore.getState().openCase(campaignId, caseId, step);
-  useUiStore.getState().setSection("results");
-}

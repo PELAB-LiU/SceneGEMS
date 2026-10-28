@@ -115,13 +115,9 @@ export const architectureSchema = z.object({
 });
 
 export type Fact = z.infer<typeof factSchema>;
-export type FactGroup = z.infer<typeof factGroupSchema>;
 export type Lane = z.infer<typeof laneSchema>;
 export type MetamodelNode = z.infer<typeof metamodelNodeSchema>;
-export type MetamodelEdge = z.infer<typeof metamodelEdgeSchema>;
 export type ArchitectureNode = z.infer<typeof architectureNodeSchema>;
-export type ArchitectureEdge = z.infer<typeof architectureEdgeSchema>;
-export type UnsupportedLink = z.infer<typeof unsupportedLinkSchema>;
 export type Combination = z.infer<typeof combinationSchema>;
 export type ArchitectureDocument = z.infer<typeof architectureDocumentSchema>;
 export type Architecture = z.infer<typeof architectureSchema>;

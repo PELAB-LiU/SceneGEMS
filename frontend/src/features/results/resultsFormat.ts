@@ -71,18 +71,6 @@ export function describeStack(stack: Record<string, unknown>): string {
   return parts.length > 0 ? parts.join(" ") : JSON.stringify(stack);
 }
 
-/** Compass course in degrees (0 = north, clockwise) from a heading in radians counterclockwise from east. */
-export function compassCourse(headingRad: number): number {
-  const degrees = 90 - (headingRad * 180) / Math.PI;
-  return ((degrees % 360) + 360) % 360;
-}
-
-const KNOTS_PER_MS = 1.9438444924;
-
-export function metersPerSecondToKnots(value: number): number {
-  return value * KNOTS_PER_MS;
-}
-
 /** The roles of an artifact in a run record, the ones people look for first. */
 const ARTIFACT_ORDER = ["state_log", "frames", "trajectory_data"];
 

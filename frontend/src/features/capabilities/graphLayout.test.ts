@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { laneBands, layoutGraph, stackedLayout, type LayoutEdge, type LayoutNode } from "./graphLayout";
+import { laneBands, layoutGraph, type LayoutEdge, type LayoutNode } from "./graphLayout";
 
 const NODES: LayoutNode[] = [
   { id: "a", lane: "one", width: 200, height: 100 },
@@ -49,14 +49,6 @@ describe("layoutGraph", () => {
   });
 });
 
-describe("stackedLayout", () => {
-  it("stacks the cards of a lane in the order given and the lanes side by side", () => {
-    const { positions } = stackedLayout(["one", "two", "three"], NODES);
-    expect(positions.get("a")).toEqual({ x: 0, y: 0 });
-    expect(positions.get("b")?.y).toBeGreaterThan(100);
-    expect(positions.get("c")?.x).toBeGreaterThan(200);
-  });
-});
 
 describe("laneBands", () => {
   it("follows a card that was moved: its lane grows to hold it and the bands stay as tall as the graph", () => {

@@ -177,13 +177,6 @@ export const PAGE_STORES: Record<WorkbenchPage, PageStore> = {
   simulation: useSimulationPageStore,
 };
 
-/** The page whose output is the input of this page, null for the first page. */
-export const PREVIOUS_PAGE: Record<WorkbenchPage, WorkbenchPage | null> = {
-  sceneGeneration: null,
-  trajectoryGeneration: "sceneGeneration",
-  simulation: "trajectoryGeneration",
-};
-
 /** The input a page takes in one click from the previous page's output; null when that page shows nothing usable. */
 export function inputFromPreviousPage(output: PageOutput | null): PageInput | null {
   if (output === null) {

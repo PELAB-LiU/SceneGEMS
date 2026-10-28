@@ -83,7 +83,6 @@ export const outputRowSchema = z.object({
 });
 
 export type InputSource = z.infer<typeof inputSourceSchema>;
-export type OutputVerdict = z.infer<typeof outputVerdictSchema>;
 export type OutputRow = z.infer<typeof outputRowSchema>;
 
 export interface OutputFilters {

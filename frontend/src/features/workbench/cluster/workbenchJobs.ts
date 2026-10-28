@@ -20,11 +20,6 @@ export const SCENE_GENERATION_JOB = "scene_generation";
 export const TRAJECTORY_GENERATION_JOB = "trajectory_generation";
 export const MONITORING_JOB = "monitoring.post_hoc";
 
-/** How long a trajectory job waits for its search beyond the search's own timeout. */
-const TRAJECTORY_REPLY_MARGIN_S = 120;
-/** The trajectory job's wait when the search names no timeout (TrajectoryGenerationPayload.timeout_s). */
-const DEFAULT_TRAJECTORY_JOB_TIMEOUT_S = 1800;
-
 export interface WorkbenchCluster {
   client: OperatorClient;
   /** The cluster's live channel for pushed job updates and previews; polling alone when null. */
@@ -75,20 +70,6 @@ export interface SceneGenerationInput {
   enforceLowTcpa: boolean;
 }
 
-export function sceneGenerationSubmission(input: SceneGenerationInput): JobSubmission {
-  return {
-    job_type: SCENE_GENERATION_JOB,
-    payload: {
-      functional_scenario_content: input.functionalScenarioContent,
-      colregs_constraints_content: input.colregsConstraintsContent,
-      vessel_types_content: input.vesselTypesContent,
-      obstacle_types_content: input.obstacleTypesContent,
-      timeout_s: Math.max(1, Math.round(input.timeoutSeconds)),
-      enforce_low_tcpa: input.enforceLowTcpa,
-    },
-  };
-}
-
 export interface SceneJobResult {
   /** The worker's EvaluationData with `best_scene`, as a scenario file holds it. */
   evaluationData: Record<string, unknown>;
@@ -112,22 +93,6 @@ export interface TrajectoryGenerationInput {
   scenarioContent: string;
   colregsConstraintsContent: string;
   params: TrajectoryGenerationParamsWire;
-}
-
-export function trajectoryGenerationSubmission(input: TrajectoryGenerationInput): JobSubmission {
-  const params = Object.fromEntries(Object.entries(input.params).filter(([, value]) => value !== undefined));
-  const searchTimeout = typeof input.params.timeout === "number" && input.params.timeout > 0 ? input.params.timeout : null;
-  return {
-    job_type: TRAJECTORY_GENERATION_JOB,
-    payload: {
-      scenario_content: input.scenarioContent,
-      colregs_constraints_content: input.colregsConstraintsContent,
-      params,
-      timeout_s: searchTimeout === null ? DEFAULT_TRAJECTORY_JOB_TIMEOUT_S : searchTimeout + TRAJECTORY_REPLY_MARGIN_S,
-    },
-    // A search that runs into its timeout is a result, not a failure; another attempt would only repeat it.
-    max_attempts: 1,
-  };
 }
 
 export interface TrajectoryJobResult {

@@ -1,32 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  activateLiveMode,
-  getLatestSimulationTimestamp,
-  handleLivePlayback,
-} from "./livePlayback";
+import { activateLiveMode, getLatestSimulationTimestamp } from "./livePlayback";
 
 describe("handleLivePlayback", () => {
-  it("follows simulation live without starting playback", () => {
-    const followSimulationLive = vi.fn();
-
-    handleLivePlayback({
-      liveTimestamp: 42,
-      followSimulationLive,
-    });
-
-    expect(followSimulationLive).toHaveBeenCalledTimes(1);
-  });
-
-  it("does nothing when no simulation frame timestamp is available", () => {
-    const followSimulationLive = vi.fn();
-
-    handleLivePlayback({
-      liveTimestamp: null,
-      followSimulationLive,
-    });
-
-    expect(followSimulationLive).not.toHaveBeenCalled();
-  });
 
   it("activates live follow via store action", () => {
     const followSimulationLive = vi.fn();

@@ -115,12 +115,8 @@ export const catalogStacksSchema = z.object({
   note: z.string(),
   resolver: z.object({ combinations: z.number().int(), available: z.number().int() }),
 });
-
-export type ParameterType = z.infer<typeof parameterTypeSchema>;
 export type CatalogParameter = z.infer<typeof catalogParameterSchema>;
 export type CatalogStack = z.infer<typeof catalogStackSchema>;
-export type UnavailableStack = z.infer<typeof unavailableStackSchema>;
-export type CatalogMonitor = z.infer<typeof catalogMonitorSchema>;
 export type CatalogGenerator = z.infer<typeof catalogGeneratorSchema>;
 export type CatalogStacks = z.infer<typeof catalogStacksSchema>;
 
@@ -151,8 +147,6 @@ export const validationResultSchema = z.object({
     })
   ),
 });
-
-export type ValidatedClass = z.infer<typeof validatedClassSchema>;
 export type ValidationResult = z.infer<typeof validationResultSchema>;
 
 const CAMPAIGNS_PATH = "/cluster/campaigns";
@@ -258,7 +252,6 @@ export const functionalScenarioInputSchema = z.object({
   quota: z.number().int().positive().optional(),
   failure_budget: z.number().int().nonnegative().optional(),
 });
-export type FunctionalScenarioInput = z.infer<typeof functionalScenarioInputSchema>;
 
 /** A scene (trajectory generation) or a trajectory set (simulation) to start from. Its class id is `item/<n>`. */
 export const inputItemSchema = z.object({
@@ -266,7 +259,6 @@ export const inputItemSchema = z.object({
   ref: configArtifactRefSchema,
   source: inputItemSourceSchema.optional(),
 });
-export type InputItem = z.infer<typeof inputItemSchema>;
 
 export const campaignInputSchema = z.object({
   functional_scenarios: z.array(functionalScenarioInputSchema).optional(),

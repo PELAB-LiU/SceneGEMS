@@ -15,16 +15,3 @@ export function getLatestSimulationTimestamp(
 export function activateLiveMode({ followSimulationLive }: ActivateLiveModeParams): void {
   followSimulationLive();
 }
-
-export function handleLivePlayback({
-  liveTimestamp,
-  followSimulationLive,
-}: {
-  liveTimestamp: number | null;
-  followSimulationLive: () => void;
-}): void {
-  if (liveTimestamp === null) {
-    return;
-  }
-  activateLiveMode({ followSimulationLive });
-}

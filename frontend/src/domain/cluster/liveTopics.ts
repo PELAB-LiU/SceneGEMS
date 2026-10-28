@@ -227,10 +227,6 @@ export const jobReducer: LiveTopicReducer<JobTopicState> = {
   },
 };
 
-// instance:<node>/<instance>
-
-export const INSTANCE_KIND_VALUES = ["scene_generation", "trajectory_generation", "simulation", "monitoring"] as const;
-
 export const instanceSnapshotSchema = z.object({
   node_id: z.string(),
   instance: z.string(),
