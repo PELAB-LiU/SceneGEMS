@@ -236,6 +236,20 @@ class SimulationModelsMessage(SimulationModelsBody):
     type: Literal["simulation_models"]
 
 
+RunRecordingStatus = Literal["recording", "saved", "failed", "unavailable"]
+
+
+class RunRecordingMessage(TypedDict):
+    """Whether the live session's run is recorded as a workbench entry (design doc 6.4)."""
+
+    type: Literal["run_recording"]
+    status: RunRecordingStatus
+    # The workbench entry the run is recorded as, and its case once the run is recorded; None before they exist.
+    campaignId: Optional[str]
+    caseId: Optional[int]
+    message: Optional[str]
+
+
 ServerMessage = Union[
     InitialStateMessage,
     PreviewTrajectoryChunkMessage,
@@ -250,6 +264,7 @@ ServerMessage = Union[
     TrajectoryGenerationPreviewMessage,
     TrajectoryGenerationResultMessage,
     SimulationModelsMessage,
+    RunRecordingMessage,
 ]
 
 
@@ -285,6 +300,10 @@ def make_generated_scene_message(request_id: str, scene: Dict[str, Any], evaluat
 
 def make_monitor_status_message(*, status: str) -> MonitorStatusMessage:
     return MonitorStatusMessage(type="monitor_status", status=status)
+
+
+def make_run_recording_message(status: RunRecordingStatus, campaign_id: Optional[str] = None, case_id: Optional[int] = None, message: Optional[str] = None) -> RunRecordingMessage:
+    return RunRecordingMessage(type="run_recording", status=status, campaignId=campaign_id, caseId=case_id, message=message)
 
 
 def make_trajectory_generation_preview_message(request_id: str, trajectory_data: Dict[str, Any]) -> TrajectoryGenerationPreviewMessage:

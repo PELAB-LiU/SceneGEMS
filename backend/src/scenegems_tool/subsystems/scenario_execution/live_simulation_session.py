@@ -1,6 +1,6 @@
 import logging
 import threading
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Protocol
 
 from concrete_level.models.concrete_scene import ConcreteScene
 from concrete_level.models.trajectories import Trajectories
@@ -27,6 +27,26 @@ _SCENE_STREAM_STATUSES = (
 )
 
 
+class LiveRunListener(Protocol):
+    """Follows the runs of a live session (the gateway records them, gateway/live_run_recorder.py).
+
+    Called from the event loop and from the MQTT client's thread, so an implementation is
+    thread-safe and never blocks.
+    """
+
+    def run_started(self) -> None:
+        """The start command went out, or the worker reports running first."""
+
+    def state_simulated(self, clock: float, scene: ConcreteScene) -> None:
+        """A simulated state of the running run, in clock order."""
+
+    def run_ended(self) -> None:
+        """The worker left running: the run completed or was stopped there."""
+
+    def session_ended(self, reason: str) -> None:
+        """The session was torn down (stopped, replaced) or destroyed (disconnected); no run follows."""
+
+
 class LiveSimulationSession(SimulationSession):
 
     def __init__(
@@ -42,6 +62,7 @@ class LiveSimulationSession(SimulationSession):
     ):
         super().__init__(send_payload, SimulationStatus.INITIALIZING)
         self._destroyed = False
+        self._run_listener: Optional[LiveRunListener] = None
         self.trajectories = trajectories
         self.generate_vessel_models(trajectories.initial_scene, simulation_config)
         self.scenario_session = scenario_session
@@ -69,16 +90,31 @@ class LiveSimulationSession(SimulationSession):
         self._last_processed_clock: Optional[float] = None
         self._last_prep_scene_hash: Optional[int] = None
 
+    def set_run_listener(self, listener: Optional[LiveRunListener]) -> None:
+        """Who follows the runs of this session; nothing changes without one."""
+        self._run_listener = listener
+
+    def _notify_run_listener(self, notify: Callable[[LiveRunListener], None]) -> None:
+        listener = self._run_listener
+        if listener is None:
+            return
+        try:
+            notify(listener)
+        except Exception:
+            _logger.exception("The live run listener failed")
+
     def destroy(self) -> None:
         if self._destroyed:
             return
         self._destroyed = True
+        self._notify_run_listener(lambda listener: listener.session_ended("disconnected"))
         super().destroy()
 
     def teardown(self) -> None:
         if self._destroyed:
             return
         self._destroyed = True
+        self._notify_run_listener(lambda listener: listener.session_ended("stopped"))
         self.status_update_worker.cancel()
         if self._chunk_send_task is not None and not self._chunk_send_task.done():
             self._chunk_send_task.cancel()
@@ -161,6 +197,8 @@ class LiveSimulationSession(SimulationSession):
             self._client.publish_start_simulation_command()
         except Exception as exc:
             self.send_payload(make_error_message(message=f"Failed to start simulation: {str(exc)}"))
+            return
+        self._notify_run_listener(lambda listener: listener.run_started())
 
     def _step_prep_scene(self, scene: ConcreteScene) -> None:
         scene_hash = hash(scene)
@@ -194,6 +232,8 @@ class LiveSimulationSession(SimulationSession):
                 return
 
             self._emit_status_if_changed(worker_status)
+            if worker_status != SimulationStatus.RUNNING and self._running_confirmed:
+                self._notify_run_listener(lambda listener: listener.run_ended())
 
             if worker_status not in _SCENE_STREAM_STATUSES:
                 self._running_confirmed = False
@@ -209,11 +249,13 @@ class LiveSimulationSession(SimulationSession):
             if worker_status == SimulationStatus.RUNNING:
                 if not self._running_confirmed:
                     self._reset_running_trajectory()
+                    self._notify_run_listener(lambda listener: listener.run_started())
                 clock = float(state.get("clock", 0.0))
                 if self._last_processed_clock is not None and clock <= self._last_processed_clock:
                     return
                 self._last_processed_clock = clock
                 self.live_trajectory_builder.add_scene(scene)
+                self._notify_run_listener(lambda listener: listener.state_simulated(clock, scene))
                 self.monitor_session.step_simulation_monitor(
                     self.scenario_session.scenario_id,
                     scene,

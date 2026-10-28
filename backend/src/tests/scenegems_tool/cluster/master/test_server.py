@@ -7,7 +7,7 @@ import pytest
 from websockets.asyncio.client import connect
 
 from scenegems_tool.cluster.master.api.master_apps import create_master_apps
-from scenegems_tool.cluster.master.server import MAX_NODE_FRAME_BYTES, build_assurance_stores, build_live_channel, listeners, load_env_file
+from scenegems_tool.cluster.master.server import MAX_NODE_FRAME_BYTES, build_assurance_stores, build_live_channel, build_master, listeners, load_env_file
 from scenegems_tool.cluster.master.settings import BrokerClientSettings, Listener, MasterSettings
 from scenegems_tool.cluster.protocol.codec import decode_master_message, encode
 from scenegems_tool.cluster.protocol.jobs import JobSubmission
@@ -86,3 +86,18 @@ def test_an_env_file_fills_only_what_the_environment_lacks(tmp_path):
     environ = {"SCENEGEMS_MASTER_ID": "from-environment"}
     load_env_file(env_file, environ)
     assert environ == {"SCENEGEMS_MASTER_ID": "from-environment", "POSTGRES_DB": "quoted"}
+
+
+def test_the_master_hands_the_gateway_a_recorder_of_live_sessions(tmp_path, monkeypatch):
+    from scenegems_tool.cluster.master.settings import ArtifactSettings
+    from scenegems_tool.gateway import websocket_app
+    from scenegems_tool.gateway.live_run_recorder import LiveRunRecorder
+
+    monkeypatch.setattr(websocket_app.app.state, "run_recorder", None)
+    settings = _settings(artifacts=ArtifactSettings(folder=tmp_path, max_bytes=1024))
+    build_master(settings, with_gateway=False)
+    assert websocket_app.run_recorder() is None  # without the gateway nothing is recorded
+    build_master(settings)
+    recorder = websocket_app.run_recorder()
+    assert isinstance(recorder, LiveRunRecorder) and recorder.pipeline is not None and recorder.pipeline.stores is recorder.stores
+    assert recorder.max_bytes == 1024 and recorder.artifacts.store.root == tmp_path and recorder._announce is not None
