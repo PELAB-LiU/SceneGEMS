@@ -184,6 +184,10 @@ describe("Phase 6 views", () => {
     expect(campaignRowSchema.safeParse(sampleCampaignRow({ origin: "script" })).success).toBe(false);
   });
 
+  it("reads a null origin, as campaigns created before migration 0005 have", () => {
+    expect(campaignRowSchema.parse(sampleCampaignRow({ origin: null })).origin).toBeNull();
+  });
+
   it("reads verdicts with a step and without one", () => {
     expect(verdictSchema.parse(sampleSceneVerdict).step).toBe("scene");
     expect(verdictSchema.parse(sampleSceneVerdict).run_record_id).toBeNull();

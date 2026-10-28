@@ -250,7 +250,8 @@ export const campaignSummarySchema = z.object({
   finished_at: nullableTime,
   // Phase 6 (6.5): optional, so a master without Phase 6 still parses.
   kind: campaignKindSchema.optional(),
-  origin: campaignOriginSchema.optional(),
+  /** Null for campaigns created before migration 0005, which recorded no origin. */
+  origin: campaignOriginSchema.nullish(),
   steps: z.array(campaignStepSchema).optional(),
   input: campaignInputSummarySchema.optional(),
   /** Campaign ids the items of this campaign came from. */
