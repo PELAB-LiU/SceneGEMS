@@ -32,6 +32,7 @@ PayloadPath = Tuple[Union[str, int], ...]  # keys and list indices from the payl
 
 
 class ArtifactKind(str, Enum):
+    FUNCTIONAL_SCENARIO = "functional_scenario"  # a functional scenario (.problem text)
     SCENE = "scene"  # a scene or the scene generation's EvaluationData
     TRAJECTORY_DATA = "trajectory_data"  # trajectory generation's TrajectoryData payload
     TRAJECTORIES = "trajectories"  # Trajectories: generated trajectories or a run's state log

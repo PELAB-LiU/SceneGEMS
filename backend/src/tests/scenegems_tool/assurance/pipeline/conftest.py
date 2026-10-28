@@ -8,6 +8,7 @@ starts the engine of a restarted master; every engine's lock is released at the 
 """
 
 import asyncio
+import hashlib
 import random
 import time
 from dataclasses import dataclass, field
@@ -40,6 +41,21 @@ def config_dict(classes=(CLASS_A,), quota: int = 2, failure_budget: int = 2, run
     }
     config.update(sections)
     return config
+
+
+def format2_dict(steps, classes=(CLASS_A,), quota: int = 2, failure_budget: int = 2, runs: Optional[List[Dict[str, Any]]] = None, **sections: Any) -> Dict[str, Any]:
+    """config_dict in format 2 with the given steps; a campaign that starts after scene generation has no scope."""
+    config = config_dict(classes, quota, failure_budget, runs)
+    config.update(format=2, steps=list(steps))
+    if steps[0] != "scene_generation":
+        del config["scope"]
+    config.update(sections)
+    return config
+
+
+def input_ref(data: bytes, kind: str, pointer: Optional[str] = None, media_type: str = "application/json") -> Dict[str, Any]:
+    """An input reference to the given content, as a format 2 config names it."""
+    return {"sha256": hashlib.sha256(data).hexdigest(), "size_bytes": len(data), "kind": kind, "media_type": media_type, "pointer": pointer}
 
 
 def create_campaign(stores: AssuranceStores, config: Mapping[str, Any], desired: CampaignDesiredState = CampaignDesiredState.RUNNING) -> CampaignRecord:

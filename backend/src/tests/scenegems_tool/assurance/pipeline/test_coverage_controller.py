@@ -150,3 +150,19 @@ def test_the_selected_cases_do_not_depend_on_the_completion_order(outcomes, quot
                 assert state == CampaignClassState.ABANDONED, (seed, room)
             else:
                 assert (state, selected) == expected, (seed, room)
+
+
+def test_an_item_class_runs_no_spare():
+    assert spare_cases(make_class(quota=1, budget=0, class_id="item/0")) == 0
+    assert spare_cases(make_class(quota=1, budget=3, class_id="item/1")) == 0  # never a second run of the same item
+    assert spare_cases(make_class(quota=1, budget=3, class_id="scenario/mine")) == 1
+    assert startable(make_class(quota=1, budget=0, class_id="item/0")) == 1
+    assert startable(make_class(quota=1, budget=0, class_id="item/0", in_flight=1)) == 0
+
+
+def test_backpressure_counts_new_cases_at_the_first_stage():
+    caps = QueueDepthCaps(generate_scene=16, simulate=3, monitor=2)
+    assert Backpressure(caps, {PipelineStage.SIMULATE: 1}, PipelineStage.SIMULATE).room_for_new_cases() == 2
+    assert Backpressure(caps, {PipelineStage.GENERATE_TRAJECTORIES: 4}, PipelineStage.GENERATE_TRAJECTORIES).room_for_new_cases() == 12
+    pressure = Backpressure(caps, {PipelineStage.MONITOR_SCENE: 2})  # the scene monitor shares the monitor's cap
+    assert pressure.full_stages() == [PipelineStage.MONITOR_SCENE] and pressure.room_for_new_cases() == 0

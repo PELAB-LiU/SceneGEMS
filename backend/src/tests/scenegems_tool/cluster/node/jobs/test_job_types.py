@@ -21,11 +21,11 @@ def test_the_declared_fields_are_the_contract_of_the_artifact_transport():
     declared = {job_type: ({(f.name, f.kind, f.content, f.many) for f in artifact_input_fields(job_type)}, {(f.name, f.kind) for f in artifact_result_fields(job_type)}) for job_type in JobType}
     json, text = ArtifactContent.JSON, ArtifactContent.TEXT
     assert declared == {
-        JobType.SCENE_GENERATION: (set(), {("evaluation_data", ArtifactKind.SCENE)}),
+        JobType.SCENE_GENERATION: ({("functional_scenario_content", ArtifactKind.FUNCTIONAL_SCENARIO, text, False)}, {("evaluation_data", ArtifactKind.SCENE)}),
         JobType.TRAJECTORY_GENERATION: ({("scenario_content", ArtifactKind.SCENE, text, False)}, {("trajectory_data", ArtifactKind.TRAJECTORY_DATA)}),
         JobType.SIMULATION_KINEMATIC: ({("trajectories", ArtifactKind.TRAJECTORIES, json, False)}, {("trajectories", ArtifactKind.TRAJECTORIES)}),
         JobType.SIMULATION_ARDUPILOT: ({("trajectories", ArtifactKind.TRAJECTORIES, json, False)}, {("states", ArtifactKind.TRAJECTORIES), ("trajectories", ArtifactKind.TRAJECTORIES)}),
-        JobType.MONITORING_POST_HOC: ({("trajectories", ArtifactKind.TRAJECTORIES, json, False)}, {("frames", ArtifactKind.FRAMES)}),
+        JobType.MONITORING_POST_HOC: ({("trajectories", ArtifactKind.TRAJECTORIES, json, False), ("scene", ArtifactKind.SCENE, json, False)}, {("frames", ArtifactKind.FRAMES)}),
         JobType.CALIBRATION_DEVIATION: ({("trajectories", ArtifactKind.TRAJECTORIES, json, True)}, set()),
     }
 

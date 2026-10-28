@@ -7,8 +7,10 @@ master's artifact route does. The executor resolves the references of every payl
 runs, so a payload that names an artifact nobody stored fails the test.
 
 What a job returns is scripted per case (class id, case index) with a CaseScript: an invalid
-scene, a partial or missing trajectory, a failed verdict, a failure of some stage (retryable
-or not). Unscripted cases pass every stage.
+scene, a partial or missing trajectory, a failed verdict (of every monitor, or of the scene,
+trajectory or run monitor alone), a failure of some stage (retryable or not). Unscripted
+cases pass every stage. A case of an input class gets its input from the artifact store: the
+scenario's text, an item's scene or trajectories, as the node resolves them.
 """
 
 import hashlib
@@ -44,7 +46,8 @@ EVERY_STAGE = tuple(stage for stage in PipelineStage if stage != PipelineStage.V
 class CaseScript:
     scene_valid: bool = True
     trajectories: str = "complete"  # complete, partial (valid, not complete) or none
-    passed: bool = True  # the monitor's verdict on every run
+    passed: bool = True  # every monitor's verdict (the runs', and the scene's and trajectories' when monitored)
+    monitor_passed: Dict[PipelineStage, bool] = field(default_factory=dict)  # a monitor stage's own verdict, over passed
     fail: Optional[PipelineStage] = None  # this stage's job fails for good (not retryable)
     retryable_failures: Dict[PipelineStage, int] = field(default_factory=dict)  # this many retryable failures first
     tier: str = "exact"  # the repeatability tier the simulation reports
@@ -165,24 +168,34 @@ class FakeExecutor:
 # Results per stage, in the shapes of P4.2
 
 
+def _input_text(executor: FakeExecutor, case) -> str:
+    return executor.artifacts.documents[case.input_artifact].decode("utf-8")
+
+
 def _scene(executor: FakeExecutor, script: CaseScript, case, payload) -> Dict[str, Any]:
     assert payload["seed"] == case.seed, "scene generation runs with the case seed"
+    if case.class_id.startswith("scenario/"):
+        assert payload["functional_scenario_content"] == _input_text(executor, case), "scene generation gets the scenario given as content"
     evaluation_data = {"best_scene": {"case": f"{case.class_id}#{case.case_index}"}, "random_seed": payload["seed"]}
     return {"request_id": "fake", "valid": script.scene_valid, "evaluation_data": evaluation_data}
 
 
 def _trajectories(executor: FakeExecutor, script: CaseScript, case, payload) -> Dict[str, Any]:
-    assert f"{case.class_id}#{case.case_index}" in payload["scenario_content"], "trajectory generation gets the case's scene"
+    if case.class_id.startswith("item/"):
+        assert payload["scenario_content"] == _input_text(executor, case), "trajectory generation gets the item's scene"
+    else:
+        assert f"{case.class_id}#{case.case_index}" in payload["scenario_content"], "trajectory generation gets the case's scene"
     if script.trajectories == "none":
         return {"request_id": "fake", "valid": False, "complete": False, "trajectory_data": None, "error_message": "no path"}
     trajectory_data = {"trajectories": trajectories_data(), "algorithm_desc": payload["params"].get("generator"), "random_seed": payload["seed"]}
     return {"request_id": "fake", "valid": True, "complete": script.trajectories == "complete", "trajectory_data": trajectory_data, "error_message": None}
 
 
-def _outcomes(script: CaseScript) -> Dict[str, Any]:
-    rules = {"OS_0 - TS_1": {"Rule 14": {"passed": 0} if script.passed else {"failed": FAILED_RULE["first_failed_at"]}}}
-    failed = [] if script.passed else [dict(FAILED_RULE)]
-    return {"rules": rules, "failed_rules": failed, "passed": script.passed}
+def _outcomes(script: CaseScript, stage: PipelineStage = PipelineStage.MONITOR) -> Dict[str, Any]:
+    passed = script.monitor_passed.get(stage, script.passed)
+    rules = {"OS_0 - TS_1": {"Rule 14": {"passed": 0} if passed else {"failed": FAILED_RULE["first_failed_at"]}}}
+    failed = [] if passed else [dict(FAILED_RULE)]
+    return {"rules": rules, "failed_rules": failed, "passed": passed}
 
 
 def _simulation(executor: FakeExecutor, script: CaseScript, case, payload) -> Dict[str, Any]:
@@ -199,13 +212,16 @@ def _simulation(executor: FakeExecutor, script: CaseScript, case, payload) -> Di
     }
     result: Dict[str, Any] = {"run_record": run_record, "steps": 10, "state_digest": digest, "trajectories": trajectories_data()}
     if payload.get("monitor") == "live":
-        result["monitor"] = {"scenes": 11, "monitored_scenes": 11, "time_step": 1, **_outcomes(script), "stopped_early_at": script.stopped_early_at}
+        result["monitor"] = {"scenes": 11, "monitored_scenes": 11, "time_step": 1, **_outcomes(script, PipelineStage.SIMULATE), "stopped_early_at": script.stopped_early_at}
     return result
 
 
-def _monitoring(executor: FakeExecutor, script: CaseScript, case, payload) -> Dict[str, Any]:
-    assert payload["trajectories"]["scene_list"], "the monitor gets the simulation's state log"
-    result = {"scenes": 11, "monitored_scenes": 11, "time_step": 1, **_outcomes(script)}
+def _monitoring(executor: FakeExecutor, script: CaseScript, case, payload, stage: PipelineStage = PipelineStage.MONITOR) -> Dict[str, Any]:
+    if stage == PipelineStage.MONITOR_SCENE:
+        assert payload["scene"]["best_scene"]["case"] == f"{case.class_id}#{case.case_index}" and "trajectories" not in payload, "the scene monitor gets the case's scene"
+    else:
+        assert payload["trajectories"]["scene_list"], "the monitor gets a state log or the planned trajectories"
+    result = {"scenes": 11, "monitored_scenes": 11, "time_step": 1, **_outcomes(script, stage)}
     if payload.get("include_frames"):
         result["frames"] = [{"frame": index} for index in range(3)]
     return result
@@ -229,7 +245,9 @@ def _calibration(executor: FakeExecutor, script: CaseScript, case, payload) -> D
 
 RESULTS: Dict[PipelineStage, Callable[..., Dict[str, Any]]] = {
     PipelineStage.GENERATE_SCENE: _scene,
+    PipelineStage.MONITOR_SCENE: lambda *arguments: _monitoring(*arguments, stage=PipelineStage.MONITOR_SCENE),
     PipelineStage.GENERATE_TRAJECTORIES: _trajectories,
+    PipelineStage.MONITOR_TRAJECTORIES: lambda *arguments: _monitoring(*arguments, stage=PipelineStage.MONITOR_TRAJECTORIES),
     PipelineStage.SIMULATE: _simulation,
     PipelineStage.MONITOR: _monitoring,
     PipelineStage.CALIBRATE: _calibration,
