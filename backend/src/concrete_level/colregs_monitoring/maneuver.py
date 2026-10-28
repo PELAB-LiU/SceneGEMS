@@ -134,10 +134,6 @@ class SpeedChange:
         return self.colregs_constants.undetectable_speed_change(self.time_step)
 
     @property
-    def speed_change_detected(self) -> bool:
-        return abs(self.speed_diff_since_previous) > self.undetectable_step
-
-    @property
     def speed_change_detected_since_start(self) -> bool:
         return abs(self.speed_diff_since_start) > self.colregs_constants.UNDETECTABLE_SPEED_CHANGE
 
@@ -206,10 +202,6 @@ class HeadingChange:
         return self.heading_diff_since_previous < -self.undetectable_step
 
     @property
-    def change_detected(self) -> bool:
-        return abs(self.heading_diff_since_previous) > self.undetectable_step
-
-    @property
     def change_detected_since_start_to_left(self) -> bool:
         return self.heading_diff_since_start > self.colregs_constants.UNDETECTABLE_HEADING_CHANGE
 
@@ -218,20 +210,12 @@ class HeadingChange:
         return self.heading_diff_since_start < -self.colregs_constants.UNDETECTABLE_HEADING_CHANGE
 
     @property
-    def change_detected_since_start(self) -> bool:
-        return abs(self.heading_diff_since_start) > self.colregs_constants.UNDETECTABLE_HEADING_CHANGE
-
-    @property
     def is_readily_apparent_since_start_to_left(self) -> bool:
         return self.heading_diff_since_start > self.colregs_constants.READILY_APPARENT_HEADING_CHANGE
 
     @property
     def is_readily_apparent_since_start_to_right(self) -> bool:
         return self.heading_diff_since_start < -self.colregs_constants.READILY_APPARENT_HEADING_CHANGE
-
-    @property
-    def is_readily_apparent_since_start(self) -> bool:
-        return abs(self.heading_diff_since_start) > self.colregs_constants.READILY_APPARENT_HEADING_CHANGE
 
     @property
     def is_readily_apparent_since_readily_apparent_time(self) -> bool:

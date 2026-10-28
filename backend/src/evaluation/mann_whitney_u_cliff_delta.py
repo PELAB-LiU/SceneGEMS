@@ -1,7 +1,7 @@
 from typing import List
 import cliffs_delta
 import numpy as np
-from scipy.stats import mannwhitneyu, rankdata, ttest_ind
+from scipy.stats import mannwhitneyu, ttest_ind
 
 
 class MannWhitneyUCliffDelta:

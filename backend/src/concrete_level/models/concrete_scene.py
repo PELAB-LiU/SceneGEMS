@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from itertools import combinations, product
-from typing import Any, Dict, List, Optional, Set, Tuple, Type
+from typing import Any, Dict, List, Optional, Set, Type
 
 from concrete_level.models.actor_state import ActorState
 from concrete_level.models.concrete_actors import ConcreteActor, ConcreteStaticObstacle, ConcreteVessel
@@ -8,29 +8,20 @@ from concrete_level.models.relation import Relation
 from logical_level.constraint_satisfaction.assignments import Assignments
 from logical_level.constraint_satisfaction.evaluation_cache import EvaluationCache, GeometricProperties
 from logical_level.models.actor_variable import ActorVariable
-from logical_level.models.relation_constraints_concept.literals import AtVis, InBowSectorOf, InSternSectorOf, InVis, LowTCPA, OnCollisionCourse, OutVis
+from logical_level.models.relation_constraints_concept.literals import AtVis, InVis, LowTCPA, OnCollisionCourse, OutVis
 from logical_level.models.relation_constraints_concept.predicates import (
-    AtOrInCrossingFromPortCR,
-    AtOrInHeadOnCR,
     AtOrInOvertakingToPortCR,
     AtOrInOvertakingToStarboardCR,
-    AtOrInTwoWayCrossingFromPortCR,
-    AtOrInTwoWayCrossingFromStarboardCR,
     CrossingFromPort,
     HeadOn,
-    InCrossingFromPortCR,
-    InHeadOnCR,
     InOvertakingToPortCR,
     InOvertakingToStarboardCR,
-    InTwoWayCrossingFromPortCR,
-    InTwoWayCrossingFromStarboardCR,
     OvertakingToPort,
     OvertakingToStarboard,
     TwoWayCrossingFromPort,
     TwoWayCrossingFromStarboard,
 )
 from utils.colregs_approximations import COLREGSConstraints
-from utils.safety_domains import DomainCollection
 from utils.serializable import Serializable
 
 
@@ -257,18 +248,8 @@ class ConcreteScene(Serializable):
             return "out"
         return "in"
 
-    def in_stern_sector_of(self, actor1: ConcreteActor, actor2: ConcreteActor) -> bool:
-        return InSternSectorOf(self.vars[actor1], self.vars[actor2]).holds(self.evaluation_cache)
-
-    def in_bow_sector_of(self, actor1: ConcreteActor, actor2: ConcreteActor) -> bool:
-        return InBowSectorOf(self.vars[actor1], self.vars[actor2]).holds(self.evaluation_cache)
-
     # `include_visibility_band` also accepts the pair at the visibility boundary band
     # (AtOrIn*CR), not only strictly inside visibility (In*CR). See AtOrInHeadOnCR.
-
-    def in_head_on_cr(self, actor1: ConcreteActor, actor2: ConcreteActor, colregs_constants: COLREGSConstraints, include_visibility_band: bool = False) -> bool:
-        predicate = AtOrInHeadOnCR if include_visibility_band else InHeadOnCR
-        return predicate(self.vars[actor1], self.vars[actor2], colregs_constants).holds(self.evaluation_cache)
 
     def in_overtaking_cr(self, actor1: ConcreteActor, actor2: ConcreteActor, colregs_constants: COLREGSConstraints, include_visibility_band: bool = False) -> bool:
         return self.in_overtaking_to_port_cr(actor1, actor2, colregs_constants, include_visibility_band) or self.in_overtaking_to_starboard_cr(
@@ -281,18 +262,6 @@ class ConcreteScene(Serializable):
 
     def in_overtaking_to_starboard_cr(self, actor1: ConcreteActor, actor2: ConcreteActor, colregs_constants: COLREGSConstraints, include_visibility_band: bool = False) -> bool:
         predicate = AtOrInOvertakingToStarboardCR if include_visibility_band else InOvertakingToStarboardCR
-        return predicate(self.vars[actor1], self.vars[actor2], colregs_constants).holds(self.evaluation_cache)
-
-    def in_crossing_from_port_cr(self, actor1: ConcreteActor, actor2: ConcreteActor, colregs_constants: COLREGSConstraints, include_visibility_band: bool = False) -> bool:
-        predicate = AtOrInCrossingFromPortCR if include_visibility_band else InCrossingFromPortCR
-        return predicate(self.vars[actor1], self.vars[actor2], colregs_constants).holds(self.evaluation_cache)
-
-    def in_two_way_crossing_from_port_cr(self, actor1: ConcreteActor, actor2: ConcreteActor, colregs_constants: COLREGSConstraints, include_visibility_band: bool = False) -> bool:
-        predicate = AtOrInTwoWayCrossingFromPortCR if include_visibility_band else InTwoWayCrossingFromPortCR
-        return predicate(self.vars[actor1], self.vars[actor2], colregs_constants).holds(self.evaluation_cache)
-
-    def in_two_way_crossing_from_starboard_cr(self, actor1: ConcreteActor, actor2: ConcreteActor, colregs_constants: COLREGSConstraints, include_visibility_band: bool = False) -> bool:
-        predicate = AtOrInTwoWayCrossingFromStarboardCR if include_visibility_band else InTwoWayCrossingFromStarboardCR
         return predicate(self.vars[actor1], self.vars[actor2], colregs_constants).holds(self.evaluation_cache)
 
     def in_sight_on_collision_course(self, actor1: ConcreteActor, actor2: ConcreteActor, include_visibility_band: bool = False) -> bool:
@@ -330,30 +299,8 @@ class ConcreteScene(Serializable):
     def get_geo_props(self, actor1: ConcreteActor, actor2: ConcreteActor) -> GeometricProperties:
         return self.evaluation_cache.get_props(self.vars[actor1], self.vars[actor2])
 
-    def potential_safety_domains(self, actor1: ConcreteActor, actor2: ConcreteActor) -> Tuple[DomainCollection, DomainCollection]:
-        actor1_violates_actor2 = self.get_geo_props(actor1, actor2).domain_violation_times
-        actor2_violates_actor1 = self.get_geo_props(actor2, actor1).domain_violation_times
-        state1, state2 = self[actor1], self[actor2]
-        domain_collection1, domain_collection2 = DomainCollection(), DomainCollection()
-        for time in actor1_violates_actor2:
-            actor1_position = actor1.simulate(state1, (state1.heading, state1.speed), time).p
-            actor2_position = actor2.simulate(state2, (state2.heading, state2.speed), time).p
-            domain_collection1.add_domain(actor1_position, state1.heading, actor2.safety_radius)
-            domain_collection2.add_domain(actor2_position, state2.heading, actor2.safety_radius)
-
-        for time in actor2_violates_actor1:
-            actor1_position = actor1.simulate(state1, (state1.heading, state1.speed), time).p
-            actor2_position = actor2.simulate(state2, (state2.heading, state2.speed), time).p
-            domain_collection2.add_domain(actor2_position, state2.heading, actor1.safety_radius)
-            domain_collection1.add_domain(actor1_position, state1.heading, actor1.safety_radius)
-
-        return domain_collection1, domain_collection2
-
     def get_tcpa(self, actor1: ConcreteActor, actor2: ConcreteActor) -> float:
         return self.evaluation_cache.get_props(self.vars[actor1], self.vars[actor2]).tcpa
-
-    def get_dcpa(self, actor1: ConcreteActor, actor2: ConcreteActor) -> float:
-        return self.evaluation_cache.get_props(self.vars[actor1], self.vars[actor2]).dcpa
 
     def to_dict(self):
         result = {}

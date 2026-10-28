@@ -1,7 +1,5 @@
 """ManeuverSuggestions: merging by intersection, uniting, the allowed maneuvers and the suggested heading range."""
 
-import random
-
 from concrete_level.colregs_monitoring.colregs_rules.maneuver_suggestions import ManeuverSuggestions
 from concrete_level.colregs_monitoring.maneuver import ManeuverType
 from scenegems_tool.vessel_stack.calibration.reference_scenarios import make_vessel
@@ -46,17 +44,6 @@ def test_all_maneuvers_of_an_unknown_actor_are_every_detected_type():
 
 def test_get_info_of_an_actor_without_info_is_empty():
     assert ManeuverSuggestions({A: {LEFT}}).get_info(A) == ""
-
-
-def test_a_random_maneuver_comes_from_the_suggestion_and_never_is_undetected():
-    random.seed(7)
-    suggestions = ManeuverSuggestions({A: {LEFT, RIGHT, UNDETECTED}})
-    assert {suggestions.get_random_maneuver(A) for _ in range(40)} == {LEFT, RIGHT}
-
-
-def test_a_random_maneuver_with_nothing_suggested_falls_back_to_a_detected_type():
-    random.seed(7)
-    assert ManeuverSuggestions({A: {UNDETECTED}}).get_random_maneuver(A) in {LEFT, RIGHT, PERSIST}
 
 
 def test_the_suggested_heading_range_is_the_union_of_the_ranges_of_the_maneuvers():

@@ -97,17 +97,11 @@ async def backend_service_socket(websocket: WebSocket) -> None:  # noqa: C901
         return
 
 
-def create_app() -> FastAPI:
-    return app
 
 
 if __name__ == "__main__":
     multiprocessing.set_start_method("spawn")
-    # Run the WebSocket app with uvicorn when executed as a script.
-    # Example:
-    #   python -m simulation.backend_service.websocket_app
-    # or (if PYTHONPATH is configured appropriately):
-    #   python src/simulation/backend_service/websocket_app.py
+    # Run the gateway on its own (no cluster): PYTHONPATH=src python -m scenegems_tool.gateway.websocket_app
     import uvicorn
 
     uvicorn.run(

@@ -262,8 +262,6 @@ class InstanceStatus(LiveModel):
     observed_speed: Optional[float] = None  # set for a job instance; a change of speed sends a status of its own
 
 
-InstanceUpdate = Annotated[Union[SceneSample, TrajectoryPreview, SimulationFrames, InstanceStatus], Field(discriminator="kind")]
-
 # Updates that may be rate limited and coalesced: previews and frames. A final sample or result is not a preview.
 RATED_INSTANCE_KINDS = ("scene_sample", "trajectory_preview", "simulation_frames")
 
@@ -316,10 +314,6 @@ class InstanceName:
     @property
     def is_job(self) -> bool:
         return self.job_id is not None
-
-
-def nodes_topic() -> str:
-    return NODES_TOPIC
 
 
 def campaigns_topic() -> str:

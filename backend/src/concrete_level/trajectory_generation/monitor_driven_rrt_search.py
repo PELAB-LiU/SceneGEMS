@@ -1,5 +1,4 @@
 # pyright: reportMissingImports=false
-import random
 from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -404,61 +403,6 @@ class MonitorDrivenRRTSearch:
         for rel, rules in new_node.monitor_result_map_set.get_failed_rules().items():
             print(f"Failed in {rel} context: {rules}")
 
-    def _goal_reached(self) -> bool:
-        """True once the best leaf has resolved every encounter and reached its goal.
-
-        Before this the search had no goal test at all: it ran until the iteration cap
-        or the timeout and returned whatever leaf was cheapest, and the goal itself was
-        pushed further out every iteration so it could never be reached.
-        """
-        best_node = self._best_leaf
-        if best_node is None or best_node.id not in self.trajectory_tree_builder.node_list:
-            return False
-        if not self.trajectory_objective_set.is_resolved(best_node):
-            return False
-        return self.trajectory_objective_set.reached_goal(best_node)
-
-    def smooth_path(self, last_node: SceneNode) -> Trajectories:
-        """Replace corner sequences on the final path with re-simulated shortcuts.
-
-        Rewiring the tree in place is not sound here: a node's COLREGS state is produced
-        by stepping the monitor from its parent, so re-parenting a node would invalidate
-        its own monitor state and every descendant's. Instead the finished path is
-        smoothed as a post-process and each candidate is re-run through the monitor from
-        the branch point, so a shortcut is only accepted when it is still compliant and
-        actually cheaper.
-        """
-        node_path = self.trajectory_tree_builder.get_path(last_node)
-        if len(node_path) < 3:
-            return self.trajectory_tree_builder.get_path_trajectories(last_node)[0]
-
-        best_path = node_path
-        best_cost = self.trajectory_objective_set.calculate_cost(best_path[-1])
-
-        for _ in range(self.SMOOTHING_ROUNDS):
-            improved = False
-            # Sampled rather than exhaustive: every attempt re-simulates the rest of the
-            # path through the monitor, so trying all (start, span) pairs would be cubic
-            # in the path length and dominate the whole planner.
-            for _attempt in range(self.SMOOTHING_ATTEMPTS):
-                if len(best_path) < 3:
-                    break
-                span = random.randint(2, min(self.MAX_SHORTCUT_SPAN, len(best_path) - 1))
-                start = random.randint(0, len(best_path) - 1 - span)
-                candidate = self._try_shortcut(best_path, start, start + span)
-                if candidate is None:
-                    continue
-                candidate_cost = self.trajectory_objective_set.calculate_cost(candidate[-1])
-                if candidate_cost < best_cost:
-                    best_path, best_cost = candidate, candidate_cost
-                    improved = True
-                    break
-            if not improved:
-                break
-
-        builder = TrajectoryBuilder(scene_list=[node.scene for node in best_path], time_step=self.time_step)
-        return builder.build()
-
     def _try_shortcut(self, node_path: List[SceneNode], start_index: int, end_index: int) -> Optional[List[SceneNode]]:
         """Re-steer directly from node_path[start_index] toward node_path[end_index].
 
@@ -537,20 +481,6 @@ class MonitorDrivenRRTSearch:
             print(f"Readily apparent timestamp: {maneuver_state.readily_apparent_timestamp}")
             print("------------------------------------------------------------------------------------------------")
 
-    def end_iteration(self) -> None:
-        if self.SHOW_ANIMATION:
-            self.update_anim()
-
-        if len(self.trajectory_tree_builder.leaves) > self.MAX_LEAFS:
-            self.trajectory_tree_builder.prune_worst_leaves_global(self.trajectory_objective_set, self.MAX_LEAFS // 10)
-
-        # Sorting every leaf by cost is the most expensive thing per iteration, so the
-        # winner is computed once here and reused by the goal test and the observer.
-        self._best_leaf = self.trajectory_tree_builder.get_best_leaf_global(self.trajectory_objective_set)
-
-        self._iteration_count += 1
-        self._notify_observer()
-
     def _notify_observer(self) -> None:
         if self._observer is None:
             return
@@ -581,138 +511,3 @@ class MonitorDrivenRRTSearch:
         if path is None:
             raise Exception("No path is found")
         return path, self._iteration_count
-
-    # def path_validation(self, goal_position: np.ndarray) -> None:
-    #     last_node_opt = self.trajectory_tree_builder.get_goal_node(goal_position)
-    #     if last_node_opt is None:
-    #         return
-    #     current_node = last_node_opt
-    #     while True:
-    #         parent = self.trajectory_tree_builder.parent(current_node)
-    #         if parent is None:
-    #             break
-    #         ok, _ = self.check_no_collision_extend(self.node_list[parent_index], self.node_list[current_index])
-    #         if not ok:
-    #             self.trajectory_tree_builder.remove_branch(current_node)
-    #         current_node = parent
-
-    # def choose_parent(self) -> SceneNode:
-    #     branch = self.trajectory_tree_builder.get_best_random_node(point=self.goal_position, k=self.BEST_RANDOM_NODE_K)
-    #     random_leaf = self.trajectory_tree_builder.random_leaf
-    #     return random_leaf
-    #     if random.randint(0, 100) > self.LEAF_SAMPLE_RATE:
-    #         random_node = self.trajectory_tree_builder.random_node_on_path(branch)
-    #         return self.trajectory_tree_builder.find_previous_actor_maneuver(random_node)
-    #     return branch
-
-    # def choose_parent(self, new_node: SceneNode, nearest_indexes: Iterable[int]) -> bool:
-    #     indexes = list(nearest_indexes)
-    #     if len(indexes) == 0:
-    #         return False
-
-    #     min_cost = float("inf")
-    #     min_cost_index: Optional[int] = None
-    #     for i in indexes:
-    #         no_coll, dist = self.check_no_collision_extend(self.node_list[i], new_node)
-    #         if no_coll:
-    #             cost = self.node_list[i].distance_cost + dist
-    #             if cost < min_cost:
-    #                 min_cost = cost
-    #                 min_cost_index = i
-
-    #     if min_cost_index is None:
-    #         if self.DEBUG_OUTPUT:
-    #             print("No feasible parent found for new node.")
-    #         return False
-
-    #     new_node.distance_cost = min_cost
-    #     new_node.parent = min_cost_index
-    #     return True
-
-    # def get_random_point(self) -> np.ndarray:
-    #     if random.randint(0, 100) < self.GOAL_SAMPLE_RATE:
-    #         return self.goal_position
-    #     return np.array([random.uniform(*self.sample_area[0]), random.uniform(*self.sample_area[1])])
-
-    # def find_valid_parents(self, random_point: np.ndarray) -> List[SceneNode]:
-    #     valid_parents: List[SceneNode] = []
-    #     for node in self.trajectory_tree_builder.node_list.values():
-    #         heading_diff_to_point = heading_diff(node.scene[self.vessel].heading, calculate_heading(random_point - node.scene[self.vessel].p))
-    #         suggested_maneuvers = node.maneuver_suggestions
-    #         suggested_ranges = suggested_maneuvers.get_suggested_range_of_heading_change(self.vessel, self.time_step)
-    #         if suggested_ranges.contains(heading_diff_to_point):
-    #             valid_parents.append(node)
-    #     return valid_parents
-
-    # def find_best_parent(self, valid_parents: List[SceneNode], random_point: np.ndarray) -> Optional[SceneNode]:
-    #     min_cost = float("inf")
-    #     best_node: Optional[SceneNode] = None
-    #     for node in valid_parents:
-    #         cost = distance(node.scene[self.vessel].p, random_point)
-    #         if cost < min_cost:
-    #             min_cost = cost
-    #             best_node = node
-    #     return best_node
-
-    # def get_random_headings(self, nearest_node: SceneNode, max_headings: int = 10) -> List[float]:
-    #     actor_state = nearest_node.scene[self.vessel]
-    #     choice = self.get_heading_sample_choice()
-
-    #     suggested_maneuvers = nearest_node.maneuver_suggestions
-    #     print(f"Suggested maneuvers: {suggested_maneuvers}")
-    #     # Get the suggested range of heading change for the chosen maneuvers
-    #     suggested_ranges = suggested_maneuvers.get_suggested_range_of_heading_change(self.vessel, self.time_step)
-
-    #     self.actor_state = actor_state.modify_copy(heading=suggested_ranges.sample())
-
-    #     if suggested_ranges.empty:
-    #         raise ValueError("No suggested ranges found")
-
-    #     # if (current_maneuver_type := nearest_node.maneuver_state_set[self.relation].type) in vessel_maneuvers and random.randint(0, 100) < self.STAY_IN_CURRENT_MANEUVER_RATE:
-    #     #     vessel_maneuvers = {current_maneuver_type}
-
-    #     headings = [rotate_heading(actor_state.heading, random.uniform(suggested_range[0], suggested_range[1])) for suggested_range in suggested_ranges]
-
-    #     return random.sample(headings, min(max_headings, len(headings)))
-
-    #     if choice == HeadingSampleChoices.GOAL_DIRECTION:
-    #         heading_to_goal = calculate_heading(self.goal_position - actor_state.p)
-    #         headings.append(self.vessel.sample_random_heading(actor_state, heading_to_goal, self.time_step))
-    #     elif choice == HeadingSampleChoices.ORIGINAL_HEADING:
-    #         headings.append(self.vessel.sample_random_heading(actor_state, self.start_state.heading, self.time_step))
-
-    # def rewire(self, new_node_index: int, new_node: RRTNode, near_indexes: Iterable[int]) -> None:
-    #     for i in near_indexes:
-    #         near_node = self.node_list[i]
-
-    #         d = distance(new_node.p, near_node.p)
-    #         new_cost = new_node.distance_cost + d
-
-    #         if near_node.distance_cost > new_cost:
-    #             no_coll, _ = self.check_no_collision_extend(new_node, near_node)
-    #             if no_coll:
-    #                 if near_node.parent is not None:
-    #                     self.node_list[near_node.parent].children.discard(i)
-    #                 near_node.parent = new_node_index
-    #                 s_d, s_fraction = RRTNode.calc_cost(self.start_scene, d)
-    #                 near_node.set_cost(new_cost, s_d + new_node.cost, s_fraction)
-    #                 new_node.children.add(i)
-
-    # def check_no_collision_extend(self, parent_node: SceneNode, node: SceneNode) -> Tuple[bool, float]:
-    #     delta_pos = node.scene[self.vessel].p - parent_node.scene[self.vessel].p
-    #     dist = magnitude(delta_pos)
-
-    #     tmp_node = RRTNode(np.array([parent_node.p[0], parent_node.p[1]]))
-    #     s_d, s_fraction = RRTNode.calc_cost(self.start_scene, dist)
-    #     s_d = int(s_d - int(np.ceil(s_fraction)))
-
-    #     if s_d <= 0:
-    #         return self.check_no_collision(node, self.obstacle_list), dist
-
-    #     for s in range(s_d):
-    #         fraction = s / s_d if s_d > 0 else 1.0
-    #         tmp_node.p = parent_node.p + delta_pos * fraction
-    #         tmp_node.set_cost(0, parent_node.distance_made + s, 0.0)
-    #         if not self.check_no_collision(tmp_node, self.obstacle_list):
-    #             return False, dist
-    #     return True, dist

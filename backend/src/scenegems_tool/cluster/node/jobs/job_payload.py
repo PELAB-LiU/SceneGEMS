@@ -51,7 +51,7 @@ class GeofencePayload(ProtocolModel):
     radius_meters: float = Field(gt=0.0)
 
     def to_geofence(self):
-        from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+        from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 
         return Geofence(latitude=self.latitude, longitude=self.longitude, radius_meters=self.radius_meters)
 

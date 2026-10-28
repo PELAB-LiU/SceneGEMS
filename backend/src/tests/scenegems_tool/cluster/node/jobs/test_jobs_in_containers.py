@@ -26,7 +26,7 @@ from scenegems_tool.cluster.protocol.jobs import JobType
 from scenegems_tool.cluster.protocol.messages import LogStream
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.subsystems.scene_generation.scenario_generation_types import SCENARIO_GENERATION_SERVICE_TOPIC
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 from scenegems_tool.vessel_stack.simulation_layers.kinematic.kinematic_runner import run_kinematic_replay
 from utils.file_system_utils import COLREGS_CONSTANTS_FOLDER, FUNCTIONAL_MODELS_FOLDER, STATIC_OBSTACLE_TYPES_FOLDER, VESSEL_TYPES_FOLDER
 

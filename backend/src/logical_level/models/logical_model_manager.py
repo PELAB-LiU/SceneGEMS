@@ -7,7 +7,7 @@ from logical_level.mapping.logical_scenario_builder import LogicalScenarioBuilde
 from logical_level.models.actor_variable import ActorVariable, OSVariable, StaticObstacleVariable, TSVariable
 from logical_level.models.logical_scenario import LogicalScenario
 from logical_level.models.relation_constraints_concept.composites import RelationConstrComposite, RelationConstrTerm
-from logical_level.models.relation_constraints_concept.predicates import AtVisAndMayCollide, AtVisAndMayCollideSoon, OutVisOrMayNotCollide
+from logical_level.models.relation_constraints_concept.predicates import AtVisAndMayCollideSoon, OutVisOrMayNotCollide
 
 
 class LogicalModelManager:

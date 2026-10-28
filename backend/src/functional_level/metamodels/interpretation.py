@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, Set, Tuple
 
 from functional_level.metamodels.functional_scenario import FuncObject
 

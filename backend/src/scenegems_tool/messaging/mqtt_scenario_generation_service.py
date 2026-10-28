@@ -19,7 +19,7 @@ from scenegems_tool.subsystems.scene_generation.scenario_generation_types import
     MqttSceneGenerationTask,
 )
 from scenegems_tool.subsystems.scene_generation.scene_generation_worker import run_scene_generation_worker
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 
 _logger = logging.getLogger(__name__)
 

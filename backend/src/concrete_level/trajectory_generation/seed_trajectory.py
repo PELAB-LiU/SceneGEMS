@@ -67,12 +67,6 @@ def latched_domains_from_nodes(nodes: Sequence[SceneNode]) -> Dict[ConcreteActor
     return store.domains()
 
 
-def domains_from_monitored(monitored: MonitoredSceneWithResults) -> Dict[ConcreteActor, ManeuveringDomain]:
-    store = LatchedGiveWayStore()
-    store.update(monitored)
-    return store.domains()
-
-
 def phase_of_pose(domain: Optional[ManeuveringDomain], along: float, across: float) -> str:
     if domain is None or along < domain.t0 - EPSILON:
         return PHASE_BEFORE

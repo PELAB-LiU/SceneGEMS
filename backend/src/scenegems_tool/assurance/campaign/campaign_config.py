@@ -52,7 +52,6 @@ from scenegems_tool.subsystems.trajectory_generation.trajectory_generation_types
 from utils.file_system_utils import COLREGS_CONSTANTS_FOLDER, STATIC_OBSTACLE_TYPES_FOLDER, VESSEL_TYPES_FOLDER
 
 CONFIG_FORMAT = 1  # the format of a config that names none
-LATEST_CONFIG_FORMAT = 2
 MAX_SEED = 2**31 - 1  # seeds are 31-bit, so every consumer (numpy included) takes them
 
 DEFAULT_COLREGS_CONSTANTS_FILE = Path(COLREGS_CONSTANTS_FOLDER) / "general_maritime_constants.yaml"

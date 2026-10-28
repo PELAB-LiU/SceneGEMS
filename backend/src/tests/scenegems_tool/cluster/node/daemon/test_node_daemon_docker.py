@@ -285,7 +285,7 @@ from scenegems_tool.cluster.node.jobs.job_payload import parse_payload
 from scenegems_tool.cluster.node.node_context import NodeContext
 from scenegems_tool.cluster.protocol.jobs import JobSpec, JobType
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 def vessel(vessel_id, own):
     return ConcreteActor.from_dict({"id": vessel_id, "type": "OSPassengerShip" if own else "PassengerShip", "length": 30.0, "breadth": 10.0, "safety_radius": 120.0,
         "is_vessel": True, "_is_os": own, "_max_speed": 20.57778, "_max_angular_speed": 0.05, "_max_acceleration": 0.4})

@@ -1,4 +1,3 @@
-import time
 from typing import List, Optional
 
 from pymoo.algorithms.moo.nsga3 import NSGA3
@@ -9,14 +8,8 @@ from pymoo.util.ref_dirs import get_reference_directions
 
 from functional_level.metamodels.functional_scenario import FunctionalScenario
 from logical_level.constraint_satisfaction.evaluation_data import EvaluationData
-from logical_level.constraint_satisfaction.evolutionary_computation.pymoo_nsga_algorithm import (
-    BestSolutionCallback,
-    NSGAProblem,
-    OptimumTermination,
-    PyMooNSGAAlgorithm,
-)
+from logical_level.constraint_satisfaction.evolutionary_computation.pymoo_nsga_algorithm import NSGAProblem, PyMooNSGAAlgorithm
 from logical_level.models.logical_scenario import LogicalScenario
-from utils.scenario import Scenario
 
 
 class PyMooNSGA3Algorithm(PyMooNSGAAlgorithm):

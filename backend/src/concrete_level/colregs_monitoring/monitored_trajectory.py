@@ -167,9 +167,6 @@ class MonitoredTrajectory:
             return []
         return list(self.initial_monitored_scene_with_results.scene.actors)
 
-    def get_monitored_scene_by_time(self, timestamp: int) -> MonitoredSceneWithResults:
-        return self.get_monitored_scene_by_index(timestamp // self.time_step)
-
     def get_monitored_scene_by_index(self, index: int) -> MonitoredSceneWithResults:
         return MonitoredSceneWithResults(
             monitored_scene=MonitoredScene(

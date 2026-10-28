@@ -52,10 +52,6 @@ class ActorState(Serializable):
         forward = self.v_norm_forward
         return float(abs(delta[0] * forward[1] - delta[1] * forward[0]))
 
-    @property
-    def heading_360(self) -> float:
-        return (self.heading + 2 * np.pi) % (2 * np.pi)
-
     def right_of(self, other: "ActorState") -> bool:
         return other.v_norm_perp_right @ (self.p - other.p) > 0 + EPSILON
 

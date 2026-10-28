@@ -13,11 +13,6 @@ class OverturningCondition(RuleCondition):
         super().__init__(relation, actor, colregs_constants)
 
     def condition(self, current_monitored_scene: MonitoredScene, next_monitored_scene: MonitoredScene) -> COLREGSRuleResult:
-        # current_maneuver = state_path.last_state.vessel_maneuvers[self.vessel]
-        # if not current_maneuver.heading_change.full_turn_detected:
-        #     return COLREGSRuleResult.UNKNOWN
-
-        # return COLREGSRuleResult.FAILED
         return COLREGSRuleResult.UNKNOWN
 
     def maneuver_suggestions(self, current_monitored_scene: MonitoredScene, time_step: int) -> ManeuverSuggestions:

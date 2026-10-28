@@ -37,7 +37,6 @@ from scenegems_tool.vessel_stack.simulation_layers.gazebo.gazebo_specs import AR
 from scenegems_tool.vessel_stack.simulation_layers.kinematic.kinematic_specs import KINEMATIC_COMMAND_INPUT, KINEMATIC_LAYER
 from scenegems_tool.vessel_stack.simulation_layers.real_vessel.real_vessel_specs import REAL_VESSEL_AUTOPILOT, REAL_VESSEL_SIMULATION_LAYER
 
-_REPLAY = LayerRef.of(AsvSoftwareId.REPLAY)
 _USV_NAVIGATION = LayerRef.of(AsvSoftwareId.USV_NAVIGATION)
 _MISSION_PLANNER = LayerRef.of(AsvSoftwareId.MISSION_PLANNER)
 _ON_BOARD = LayerRef.of(AsvSoftwareId.ON_BOARD)

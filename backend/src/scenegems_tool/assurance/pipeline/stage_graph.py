@@ -42,7 +42,7 @@ verdicts) or cancels it (above the quota).
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from scenegems_tool.assurance.campaign.campaign_config import ArdupilotStackConfig, CampaignConfig, CampaignStep, RunConfig, StackConfig
 from scenegems_tool.cluster.protocol.jobs import JobType
@@ -300,7 +300,3 @@ class StageGraph:
         if any(self.needs_calibration(run_index) and not progress.handled(Step(PipelineStage.CALIBRATE, run_index)) for run_index in indexes):
             return PipelineStage.CALIBRATE
         return PipelineStage.VERDICT
-
-
-def job_types_of(stages: Iterable[PipelineStage]) -> List[JobType]:
-    return sorted({STAGE_JOB_TYPES[stage] for stage in stages if stage in STAGE_JOB_TYPES}, key=lambda job_type: job_type.value)

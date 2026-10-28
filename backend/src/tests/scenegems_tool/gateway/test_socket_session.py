@@ -17,7 +17,7 @@ from scenegems_tool.gateway.live_run_recorder import OpenedEntry
 from scenegems_tool.gateway.protocol import SimulationStatus
 from scenegems_tool.gateway.socket_session import NO_TRAJECTORIES_MESSAGE, SocketSession, master_broker, master_broker_label
 from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, SimulationLayerId
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import AgentContext, VesselStackConfig
 from scenegems_tool.workbench.empty_subsystem_integration_session import EmptySubsystemIntegrationSession
 from tests.scenegems_tool.gateway.conftest import settle

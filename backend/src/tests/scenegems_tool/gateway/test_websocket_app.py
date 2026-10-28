@@ -102,8 +102,6 @@ def test_health_endpoint():
     assert websocket_app.health() == {"status": "ok"}
 
 
-def test_create_app_returns_the_module_app():
-    assert websocket_app.create_app() is websocket_app.app
 
 
 class TestRunRecorder:

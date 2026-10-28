@@ -1,8 +1,6 @@
 from dataclasses import dataclass
 from typing import List, Optional
 
-import numpy as np
-
 from logical_level.mapping.instance_initializer import InstanceInitializer
 from logical_level.models.actor_variable import (
     ActorVariable,
@@ -64,9 +62,3 @@ class LogicalScenario(Scenario):
             pop_size = 1
         population = self.initializer.get_population(pop_size=pop_size)
         return population
-
-    def pop_to_np_array(self, pop: List[List[float]]):
-        new_pop = []
-        for p in pop:
-            new_pop.append(np.array(p))
-        return np.array(new_pop)

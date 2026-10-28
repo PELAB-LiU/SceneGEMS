@@ -1,15 +1,9 @@
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Sequence, Tuple
+from typing import Callable, Iterable, Iterator, List, Sequence, Tuple
 
 from concrete_level.models.concrete_scene import ConcreteScene
-from scenegems_tool.gateway.protocol import (
-    ServerMessage,
-    make_generated_scene_message,
-    make_monitor_status_message,
-    make_preview_chunk_message,
-    make_simulation_chunk_message,
-)
+from scenegems_tool.gateway.protocol import ServerMessage, make_monitor_status_message, make_preview_chunk_message, make_simulation_chunk_message
 from scenegems_tool.gateway.serialization import serialize_frame
 
 # Keep MQTT payloads small on the live WARA-PS broker. Batches of 100 scenes were
@@ -53,9 +47,6 @@ class MonitorSession(ABC):
                 status = "disconnected"
             self.send_payload(make_monitor_status_message(status=status))
 
-    def step_preview_monitor(self, scenario_id: str, scene: ConcreteScene, timestamp: int, time_step: int) -> None:
-        self.step_preview_monitor_batch(scenario_id, [scene], [timestamp], time_step)
-
     def step_simulation_monitor(self, scenario_id: str, scene: ConcreteScene, timestamp: int, time_step: int) -> None:
         self.step_simulation_monitor_batch(scenario_id, [scene], [timestamp], time_step)
 
@@ -78,15 +69,6 @@ class MonitorSession(ABC):
         time_step: int,
     ) -> None:
         pass
-
-    @abstractmethod
-    def monitor_generated_scene(self, request_id: str, scene: ConcreteScene, evaluation_data: Dict[str, Any], valid: bool) -> None:
-        """Run a single generated or loaded scene through the monitor and send the
-        monitored frame to the frontend as a `generated_scene` message."""
-
-    def _send_unmonitored_generated_scene(self, request_id: str, scene: ConcreteScene, evaluation_data: Dict[str, Any], valid: bool) -> None:
-        frame = serialize_frame(scenario_id=request_id, scene=scene, timestamp=0, time_step=1)
-        self.send_payload(make_generated_scene_message(request_id=request_id, scene=frame, evaluation_data=evaluation_data, valid=valid))
 
     def send_unmonitored_chunk(
         self,

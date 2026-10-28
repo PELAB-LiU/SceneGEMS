@@ -1,17 +1,14 @@
+"""The local frame: geofence projection, true-north heading conversions and waypoints."""
+
 import math
 import unittest
 
 import numpy as np
+import pytest
 from haversine import Unit
 
 from concrete_level.models.actor_state import ActorState
-from scenegems_tool.vessel_stack.contracts.sim_utils import (
-    Geofence,
-    from_true_north,
-    to_true_north,
-    true_north_heading,
-    waypoint_from_state,
-)
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence, from_true_north, to_true_north, waypoint_from_state
 
 
 class TestSimUtils(unittest.TestCase):
@@ -69,21 +66,6 @@ class TestSimUtils(unittest.TestCase):
         self.assertAlmostEqual(from_true_north(0.0, Unit.RADIANS), math.pi / 2)
         self.assertAlmostEqual(from_true_north(math.pi / 2, Unit.RADIANS), 0.0)
 
-    def test_true_north_heading_axis_aligned(self):
-        east = true_north_heading(np.array([0.0, 0.0]), np.array([1.0, 0.0]), unit=Unit.DEGREES)
-        north = true_north_heading(np.array([0.0, 0.0]), np.array([0.0, 1.0]), unit=Unit.DEGREES)
-        west = true_north_heading(np.array([0.0, 0.0]), np.array([-1.0, 0.0]), unit=Unit.DEGREES)
-        south = true_north_heading(np.array([0.0, 0.0]), np.array([0.0, -1.0]), unit=Unit.DEGREES)
-
-        self.assertAlmostEqual(east, 90.0)
-        self.assertAlmostEqual(north, 360.0)
-        self.assertAlmostEqual(west, 270.0)
-        self.assertAlmostEqual(south, 180.0)
-
-    def test_true_north_heading_invalid_unit(self):
-        with self.assertRaises(ValueError):
-            true_north_heading(np.array([0.0, 0.0]), np.array([1.0, 1.0]), unit=Unit.METERS)
-
     def test_coord_to_lat_long_returns_center_for_zero_vector(self):
         lat_long = self.geofence.to_lat_long(np.array([0.0, 0.0]))
         np.testing.assert_allclose(lat_long, self.geofence.center)
@@ -106,7 +88,8 @@ class TestSimUtils(unittest.TestCase):
         lat, lon = self.geofence.latitude, self.geofence.longitude
         expected = {"north": (lat + 0.01, lon, 360.0), "east": (lat, lon + 0.01, 90.0), "south": (lat - 0.01, lon, 180.0), "west": (lat, lon - 0.01, 270.0)}
         for name, (point_lat, point_lon, bearing) in expected.items():
-            heading = true_north_heading(origin, self.geofence.to_coord(point_lat, point_lon), unit=Unit.DEGREES)
+            east, north = self.geofence.to_coord(point_lat, point_lon) - origin
+            heading = math.degrees(math.atan2(east, north)) % 360.0
             difference = abs((heading - bearing + 180.0) % 360.0 - 180.0)
             self.assertLess(difference, 2.0, f"{name}: {heading}")
 
@@ -126,3 +109,41 @@ class TestSimUtils(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestUtmZone:
+    @pytest.mark.parametrize(
+        "latitude,longitude,epsg",
+        [(57.757128, 16.673189, "EPSG:32633"), (-33.9, 18.4, "EPSG:32734"), (0.0, -179.9, "EPSG:32601"), (51.5, -0.1, "EPSG:32630")],
+    )
+    def test_zone_and_hemisphere(self, latitude, longitude, epsg):
+        assert Geofence(latitude, longitude, 1000).utm_epsg == epsg
+
+
+class TestProjection:
+    def test_the_center_is_the_local_origin(self):
+        geofence = Geofence(57.757128, 16.673189, 1000)
+        np.testing.assert_allclose(geofence.to_coord(57.757128, 16.673189), [0.0, 0.0], atol=1e-6)
+
+    def test_north_is_plus_y_and_east_is_plus_x(self):
+        geofence = Geofence(57.757128, 16.673189, 1000)
+        north = geofence.to_coord(57.757128 + 0.001, 16.673189)
+        east = geofence.to_coord(57.757128, 16.673189 + 0.001)
+        assert north[1] > 100 and abs(north[0]) < 25, "0.001 degrees of latitude are about 111 m"
+        assert east[0] > 50 and abs(east[1]) < 5
+
+    def test_round_trip_within_a_decimeter(self):
+        geofence = Geofence(57.757128, 16.673189, 1000)
+        original = np.array([321.0, -654.0])
+        np.testing.assert_allclose(geofence.to_coord(*geofence.to_lat_long(original)), original, atol=0.01)
+
+    def test_southern_hemisphere_round_trip(self):
+        geofence = Geofence(-33.9, 18.4, 1000)
+        original = np.array([-50.0, 80.0])
+        np.testing.assert_allclose(geofence.to_coord(*geofence.to_lat_long(original)), original, atol=0.01)
+
+    def test_center_property_is_latitude_longitude(self):
+        np.testing.assert_allclose(Geofence(1.0, 2.0, 3.0).center, [1.0, 2.0])
+
+    def test_radius_is_kept_for_the_subsystem_environments(self):
+        assert Geofence(1.0, 2.0, 3.5).radius_meters == 3.5

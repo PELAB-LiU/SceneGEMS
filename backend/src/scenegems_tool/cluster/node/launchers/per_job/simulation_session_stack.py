@@ -33,7 +33,7 @@ from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.messaging.mqtt_scenario_execution_service import SCENARIO_EXECUTION_SERVICE_TOPIC
 from scenegems_tool.vessel_stack.asv_software.mission_planner.mission_planner_specs import GCS_CONTAINER_PORT, MISSION_PLANNER_GCS_PORT
 from scenegems_tool.vessel_stack.contracts.roles import SimulationLayerId
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import SimulationInstanceConfig
 from scenegems_tool.vessel_stack.control_layers.ardupilot.vessel_service_generator import gcs_mavproxy_service_name
 from scenegems_tool.vessel_stack.registry.catalog import default_resolver

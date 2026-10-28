@@ -86,9 +86,6 @@ class EvalPlot(PlotBase, ABC):
         )
 
         self.measurements: Dict[Tuple[int, int], Dict[str, Dict[int, List[EvaluationData]]]] = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-        # for actor_number_by_type in self.actor_numbers_by_type:
-        #     for comparison_group in self.comparison_groups:
-        #         self.measurements[actor_number_by_type][comparison_group] = []
 
         self.eval_datas: List[EvaluationData] = sorted(eval_datas, key=lambda eval_data: eval_data.timestamp)
         for eval_data in self.eval_datas:
@@ -114,14 +111,6 @@ class EvalPlot(PlotBase, ABC):
 
     @staticmethod
     def generate_colors(size) -> List[np.ndarray]:
-        # Convert the colors to RGB format
-        color1_rgb = np.array((0, 0.5, 1))
-        # if size == 1:
-        #     return color1_rgb
-        color2_rgb = np.array((1, 0.5, 0))
-        # Generate a range of colors by linear interpolation
-        # colors = [color1_rgb + (color2_rgb - color1_rgb) * i / (size - 1) for i in range(size)]
-        # return [np.array([color[0], color[1], color[2], 0.7]) for color in colors]
         return [
             np.array([0.698, 0.875, 0.541, 1]),
             np.array([0.792, 0.698, 0.839, 1]),

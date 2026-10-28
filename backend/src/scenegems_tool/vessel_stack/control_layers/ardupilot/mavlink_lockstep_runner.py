@@ -40,7 +40,7 @@ from scenegems_tool.vessel_stack.asv_software.usv_navigation.usv_navigation_spec
 from scenegems_tool.vessel_stack.contracts.clock import LockstepClock, LockstepParticipant, StepAck, derive_seed
 from scenegems_tool.vessel_stack.contracts.ports import HeadingSpeedCommand, VesselStateObservation
 from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, SimulationLayerId
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import AgentConnection, EnvironmentConfig, SimulationInstanceConfig, VesselConfig, VesselStackConfig
 from scenegems_tool.vessel_stack.control_layers.ardupilot.mavlink_link import GUIDED_TARGET_TIMEOUT_S, MavlinkLink, MavlinkLinkError, StampedState, sitl_mavlink_endpoint
 from scenegems_tool.vessel_stack.registry.catalog import default_resolver

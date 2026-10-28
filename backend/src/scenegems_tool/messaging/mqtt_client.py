@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Mapping, Optional, Set
 import paho.mqtt.client as mqtt
 
 from scenegems_tool.messaging.topic_scope import ScopedPahoClient, TopicScope
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 
 _LOOPBACK_ALIASES = frozenset({"localhost", "127.0.0.1", "::1"})
 _DOCKER_HOST_GATEWAY = "host.docker.internal"
@@ -372,46 +372,6 @@ class MqttClient(ABC):
     @property
     def speed_topic(self) -> str:
         return f"{self.sensor_topic}/speed"
-
-    @property
-    def mode_topic(self) -> str:
-        return f"{self.sensor_topic}/mode"
-
-    @property
-    def state_topic(self) -> str:
-        return f"{self.sensor_topic}/state"
-
-    @property
-    def waypoints_topic(self) -> str:
-        return f"{self.sensor_topic}/waypoints"
-
-    @property
-    def energy_level_topic(self) -> str:
-        return f"{self.sensor_topic}/energy_level"
-
-    @property
-    def battery_status_topic(self) -> str:
-        return f"{self.sensor_topic}/battery_status"
-
-    @property
-    def cargo_topic(self) -> str:
-        return f"{self.sensor_topic}/cargo"
-
-    @property
-    def control_system_version_topic(self) -> str:
-        return f"{self.sensor_topic}/control_system_version"
-
-    @property
-    def course_topic(self) -> str:
-        return f"{self.sensor_topic}/course"
-
-    @property
-    def videoserver_url_topic(self) -> str:
-        return f"{self.sensor_topic}/videoserver_url"
-
-    @property
-    def ip_address_topic(self) -> str:
-        return f"{self.sensor_topic}/ip_address"
 
     @property
     def armable_topic(self) -> str:

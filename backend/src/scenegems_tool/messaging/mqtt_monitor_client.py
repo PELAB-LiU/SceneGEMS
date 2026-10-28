@@ -9,7 +9,7 @@ import paho.mqtt.client as mqtt
 from concrete_level.models.concrete_scene import ConcreteScene
 from scenegems_tool.gateway.protocol import ServerMessage, make_generated_scene_message, make_preview_chunk_message, make_simulation_chunk_message
 from scenegems_tool.messaging.mqtt_client import MqttClient, MQttConnectionInfo
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 
 # Every generated scene is monitored under this one scenario id, so the monitor keeps a
 # single runtime for them (it resets on each timestamp-0 scene) instead of one per request.

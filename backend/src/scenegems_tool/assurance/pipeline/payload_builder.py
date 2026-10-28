@@ -32,7 +32,7 @@ intent, so a payload the master would refuse never reaches the queue.
 """
 
 import hashlib
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, Mapping, Optional, Sequence
 
 from pydantic import ValidationError
 
@@ -286,10 +286,3 @@ def stack_key(config: CampaignConfig, run_index: int) -> Dict[str, Any]:
 
 def environment_of(config: CampaignConfig, run_index: int) -> Dict[str, Any]:
     return config.execution.runs[run_index].environment.model_dump(mode="json")
-
-
-def references_in(value: Any) -> List[Dict[str, Any]]:
-    """Every reference in a result, in wire form."""
-    from scenegems_tool.cluster.protocol.artifacts import find_references
-
-    return [reference.model_dump(mode="json") for _, reference in find_references(value)]

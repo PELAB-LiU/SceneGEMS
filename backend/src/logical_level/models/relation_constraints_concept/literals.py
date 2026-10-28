@@ -6,7 +6,6 @@ from logical_level.constraint_satisfaction.evaluation_cache import EvaluationCac
 from logical_level.models.actor_variable import ActorVariable
 from logical_level.models.penalty import Penalty
 from logical_level.models.relation_constraints_concept.composites import RelationConstrComposite
-from logical_level.models.values import ActorValues
 from utils.colregs_approximations import COLREGSConstraints
 from utils.global_constants import BEAM_ROTATION_ANGLE, EPSILON, HALF_BOW_ANGLE, HALF_SIDE_ANGLE, MAX_DISTANCE, MAX_TEMPORAL_DISTANCE, SIDE_ANGLE
 
@@ -96,31 +95,6 @@ class BinaryLiteral(Literal, ABC):
 
     def __repr__(self) -> str:
         return f"{self.name}({self.var1}, {self.var2})"
-
-
-class UnaryLiteral(Literal, ABC):
-    def __init__(self, var: ActorVariable, literal_type, max_penalty, negated):
-        super().__init__(literal_type, max_penalty, negated)
-        self.var: ActorVariable = var
-
-    def _evaluate_penalty(self, eval_cache: EvaluationCache) -> Penalty:
-        penalty_value = self._penalty_value(eval_cache)
-        return Penalty(
-            value=penalty_value,
-            actor_penalties={self.var: penalty_value},
-            info={(self.var, self.var): [rf"{self.name}({self.var}) : {penalty_value}"]},
-        )
-
-    def _penalty_value(self, eval_cache: EvaluationCache) -> float:
-        values = eval_cache.assignments[self.var]
-        return self._do_evaluate_penalty(values)
-
-    @abstractmethod
-    def _do_evaluate_penalty(self, value: ActorValues) -> float:
-        pass
-
-    def __repr__(self) -> str:
-        return f"{self.name}({self.var})"
 
 
 # ############ VISIBILITY DISTANCE ##################

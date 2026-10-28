@@ -53,7 +53,7 @@ from scenegems_tool.vessel_stack.calibration.measured_entry import MeasuredEntry
 from scenegems_tool.vessel_stack.calibration.reference_scenarios import REFERENCE_RUNS, reference_run
 from scenegems_tool.vessel_stack.calibration.repeat_analysis import DeviationSummary, TrackingSummary, TrackSamples, achieved_speedup, repeat_deviation, tracking_error
 from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, SimulationLayerId
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 from scenegems_tool.vessel_stack.control_layers.ardupilot.mavlink_link import MavlinkLink
 from scenegems_tool.vessel_stack.control_layers.ardupilot.mavlink_lockstep_runner import MavlinkRunResult, mavlink_instance, run_mavlink_stack
 from scenegems_tool.vessel_stack.registry.catalog import build_registry

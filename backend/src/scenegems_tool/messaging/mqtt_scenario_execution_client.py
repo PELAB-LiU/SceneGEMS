@@ -8,7 +8,7 @@ import paho.mqtt.client as mqtt
 from concrete_level.models.concrete_scene import ConcreteScene
 from scenegems_tool.gateway.protocol import SimulationStatus
 from scenegems_tool.messaging.mqtt_client import MqttClient, MQttConnectionInfo
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 
 
 class MqttScenarioExecutionClient(MqttClient):

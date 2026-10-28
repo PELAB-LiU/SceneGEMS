@@ -40,7 +40,7 @@ class PyGadGAAlgorithm(CSPSolver):
             solution, solution_fitness, solution_idx = ga_instance.best_solution()
             if abs(solution_fitness) == 0.0:
                 if self.verbose:
-                    print(f"Terminating due to fitness reaching 0.0.")
+                    print("Terminating due to fitness reaching 0.0.")
                 raise StopIteration
             if elapsed_time > self.eval_data.timeout:
                 if self.verbose:
@@ -95,12 +95,4 @@ class PyGadGAAlgorithm(CSPSolver):
         ga_instance, runtime = some_results
         # After the GA run, print the best solution found
         solution, solution_fitness, solution_idx = ga_instance.best_solution()
-        # if self.verbose:
-        #     # Get the best solutions
-        #     num_best_solutions = 1
-        #     population_fitness = ga_instance.last_generation_fitness
-        #     sorted_indices = np.argsort(population_fitness)[::-1]  # Sort in descending order of fitness
-        #     best_solutions = [ga_instance.population[idx] for idx in sorted_indices[:num_best_solutions]]
-        #     for sol in best_solutions:
-        #         ColregPlot(self.logical_scenario.update(sol))
         return list(solution.flatten()), ga_instance.generations_completed, runtime

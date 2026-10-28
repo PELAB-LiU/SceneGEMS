@@ -29,7 +29,7 @@ from scenegems_tool.vessel_stack.asv_software.usv_navigation.usv_navigation_para
 from scenegems_tool.vessel_stack.asv_software.usv_navigation.usv_navigation_specs import usv_navigation_participant_runtime
 from scenegems_tool.vessel_stack.contracts.clock import LockstepParticipant
 from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, SimulationLayerId
-from scenegems_tool.vessel_stack.contracts.sim_utils import Geofence
+from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import SimulationInstanceConfig
 from scenegems_tool.vessel_stack.registry.catalog import default_resolver
 from scenegems_tool.vessel_stack.registry.resolver import StackResolver

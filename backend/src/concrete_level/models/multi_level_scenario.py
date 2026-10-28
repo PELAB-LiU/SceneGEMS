@@ -1,9 +1,8 @@
-from typing import Dict, Optional, Set, Tuple, Union
+from typing import Dict, Set, Union
 
-from concrete_level.models.concrete_actors import ConcreteActor, ConcreteStaticObstacle, ConcreteVessel
+from concrete_level.models.concrete_actors import ConcreteActor, ConcreteVessel
 from concrete_level.models.concrete_scene import ConcreteScene
 from concrete_level.models.relation import Relation
-from concrete_level.trajectory_generation.scene_builder import SceneBuilder
 from functional_level.metamodels.functional_scenario import FuncObject, FunctionalScenario
 from logical_level.constraint_satisfaction.evaluation_cache import GeometricProperties
 from logical_level.models.actor_variable import ActorVariable
@@ -38,9 +37,6 @@ class MultiLevelScenario:
     def to_variable(self, actor_or_obj: Union[ConcreteActor, FuncObject]) -> ActorVariable:
         return self.logical_actor_map[actor_or_obj.id]
 
-    def to_object(self, actor_or_var: Union[ActorVariable, ConcreteActor]) -> FuncObject:
-        return self.functional_object_map[actor_or_var.id]
-
     def get_geo_props(self, actor1: ConcreteActor, actor2: ConcreteVessel) -> GeometricProperties:
         return self.concrete_scene.get_geo_props(actor1, actor2)
 
@@ -59,23 +55,3 @@ class MultiLevelScenario:
     def os_ts_pairs(self) -> Set[Relation]:
         os = self.concrete_scene.os
         return {Relation(os, vessel) for vessel in self.concrete_scene.ts_vessels}
-
-    @property
-    def os_obstacle_pairs(self) -> Set[Tuple[ConcreteVessel, ConcreteStaticObstacle]]:
-        os = self.concrete_scene.os
-        return {(os, obst) for obst in self.concrete_scene.obstacles}
-
-    def get_actor_name(self, actor: ConcreteActor) -> str:
-        return self.to_variable(actor).name
-
-    def modify_state_get_new_scene(
-        self,
-        actor: ConcreteActor,
-        x: Optional[float] = None,
-        y: Optional[float] = None,
-        speed: Optional[float] = None,
-        heading: Optional[float] = None,
-    ) -> "MultiLevelScenario":
-        new_state = self.concrete_scene[actor].modify_copy(x=x, y=y, speed=speed, heading=heading)
-        new_scene = SceneBuilder(self.concrete_scene).set_state(actor, new_state).build()
-        return MultiLevelScenario(new_scene, self.logical_scenario, self.functional_scenario)
