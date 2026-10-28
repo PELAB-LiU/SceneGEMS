@@ -1,0 +1,52 @@
+---
+sidebar_position: 19
+title: Campaign History
+---
+
+# Campaign History
+
+Campaign History lists every entry of the selected cluster, ongoing and finished: the campaigns made in the wizard or on the command line, and every run of the workbench (scene generation, trajectory generation, simulation, recorded live sessions). Each entry runs one or more consecutive steps of the chain scene generation, trajectory generation, simulation, and every step's outputs can be opened on the workbench page of its subsystem.
+
+## The list
+
+Each row shows:
+
+| Column | Description |
+|--------|-------------|
+| Entry | The name, the kind (campaign or workbench run) and where it was made (the wizard, the command line, a workbench page or a live session; entries made before Campaign History existed say "not recorded") |
+| Steps | The steps the entry runs, in chain order |
+| State | Created, running, paused, draining, stalled, stopped or completed, with what it is asked to become when that differs |
+| Made from | Links to the entries whose outputs this one took as its input; "its own input" when it started from catalog classes, scenarios or files |
+| Totals | Cases by state, and the verdicts of each monitored step |
+| Created | When the entry was made |
+
+Filter the list by kind, by state, by step and by a part of the name. The kind, state and name filters are applied by the master; the step filter narrows the page that is shown. The list follows the master's live channel (the badge says **live**); when the channel does not deliver, it is read every 4 seconds (**polling**).
+
+**New campaign** opens the Campaigns page.
+
+### Deleting an entry
+
+**Delete** on a finished entry (stopped or completed) asks for a confirmation, then removes the entry with its cases and outputs. Outputs another entry took as its input stay; that entry's link then reads "a deleted entry". A running entry cannot be deleted: stop it first.
+
+## An entry
+
+Clicking a row opens the entry:
+
+- **Header**: the name, the kind, the state, who made it, what it was made from and its input. **Open the results** shows its findings in Results; **Delete** removes a finished entry. **Entry details** has the id, the times and the config version.
+- **Controls** (campaigns only): Start, Pause, Drain, Resume and Stop, each with what it does. A stop is confirmed and cannot be undone.
+- **Numbers**: complete cases against the quota, cases in flight and dropped, and the verdicts.
+- **Outputs per step**: a tab per executed step with its outputs, a page of 20 at a time.
+- **Coverage** (campaigns only): the classes with their progress, failure budgets and verdicts per run.
+- **Activity log** and **Config**: the entry's events and its config versions as YAML.
+
+### Outputs of a step
+
+| Column | Description |
+|--------|-------------|
+| Case | The case, its class, and the run and repeat of a simulated run |
+| State | In progress, complete, dropped, failed or cancelled, with the reason |
+| Output | **valid** or **not valid** (the case dropped at this step), and **complete** or **partial** (a trajectory set in which not every vessel reached its goal) |
+| Verdict | The monitor's verdict of the step and the rules that failed, or "not monitored" |
+| Input from | The case of another entry the input came from (a link), the uploaded file, or "a deleted entry" |
+
+**Open in workbench** loads the output on its page: a scene on Scene Generation, a trajectory set on Trajectory Generation, a simulated run on Simulation (as a replay of its frames with the monitor). A case still working on the step shows **Watch live** instead, which opens the page following the running job.

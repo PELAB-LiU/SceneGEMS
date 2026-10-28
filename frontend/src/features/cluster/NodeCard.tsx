@@ -32,10 +32,13 @@ interface NodeCardProps {
   node: NodeView;
   operatorUrl: string;
   nowMs: number;
+  /** The node's instances are shown below the cards. */
+  instancesOpen: boolean;
+  onToggleInstances: () => void;
 }
 
-/** One node of the cluster as a machine resource: state, slots, resources, leases and release. */
-export function NodeCard({ node, operatorUrl, nowMs }: NodeCardProps) {
+/** One node of the cluster as a machine resource: state, slots, resources, leases and release; it opens the node's instances. */
+export function NodeCard({ node, operatorUrl, nowMs, instancesOpen, onToggleInstances }: NodeCardProps) {
   const applyNode = useNodesStore((s) => s.applyNode);
   const removeNode = useNodesStore((s) => s.removeNode);
   const [pending, setPending] = useState(false);
@@ -148,6 +151,17 @@ export function NodeCard({ node, operatorUrl, nowMs }: NodeCardProps) {
         <Meter value={totals.inUse} max={totals.slots} label="Slots in use" />
         {memoryLow && <span className="node-chip node-chip--warn">Memory is low</span>}
       </div>
+
+      <button
+        type="button"
+        className={`node-card-instances${instancesOpen ? " node-card-instances--open" : ""}`}
+        aria-expanded={instancesOpen}
+        aria-controls="cluster-node-instances"
+        onClick={onToggleInstances}
+        title="The node's pools and the jobs it holds, each viewable live"
+      >
+        {instancesOpen ? "Hide the instances" : `Instances${node.leases.length > 0 ? ` (${node.leases.length} ${node.leases.length === 1 ? "job" : "jobs"})` : ""}`}
+      </button>
 
       <Disclosure
         id={`cluster:node:${node.node_id}`}

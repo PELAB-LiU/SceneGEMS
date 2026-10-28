@@ -494,3 +494,12 @@
   background: rgba(245, 158, 11, 0.12);
   border: 1px solid rgba(245, 158, 11, 0.45);
 }
+
+/* Opens the node's instances below the cards */
+.node-card-instances {
+  align-self: flex-start;
+}
+
+.node-card-instances--open {
+  border-color: var(--accent);
+}

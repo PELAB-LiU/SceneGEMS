@@ -4,7 +4,7 @@ import { INSTANCE_FRAMES_KEPT, instanceReducer, type InstanceTopicState, type Sc
 import { LiveTopicWatcher } from "../../../domain/cluster/liveTopicWatcher";
 import type { JobSubmission } from "../../../domain/cluster/operatorApi";
 import type { JobView } from "../../../domain/cluster/schemas";
-import { FrameBuffer } from "../../observe/observeFrames";
+import { FrameBuffer } from "../../../domain/cluster/observeFrames";
 import { useClusterRunStore } from "./clusterRunStore";
 
 import { usePlaybackStore } from "../../../domain/playback/playbackStore";
