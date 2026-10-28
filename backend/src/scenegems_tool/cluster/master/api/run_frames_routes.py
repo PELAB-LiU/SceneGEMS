@@ -6,26 +6,31 @@ routes (campaign_routes.py), without authentication like them.
 
     POST CAMPAIGNS_PATH/<id>/run-records/<run record id>/frames
          submits a monitoring.post_hoc job with include_frames over the run's state log (the
-         campaign's COLREGS constants, labels and pinned fingerprints), or finds the one its
-         idempotency key frames:<run record id> already names: 201 when submitted, 200 when it
-         existed. 404 for an unknown campaign or run record, 409 when the run's state log is not
-         kept (retention removed it, or the run never stored one), 503 while the master's
-         expected fingerprints are not available, 422 when the master refuses the payload
+         campaign's COLREGS constants, labels and pinned fingerprints), or finds the newest one
+         of the run record: 201 when submitted, 200 when it existed. 404 for an unknown campaign
+         or run record, 409 when the run's state log is not kept (retention removed it, or the
+         run never stored one), 503 while the master's expected fingerprints are not available,
+         422 when the master refuses the payload
+    POST the same path with ?retry=true
+         as above, except that a newest job that failed or was cancelled is not returned: a new
+         job is submitted (201). A queued, leased, running or succeeded newest job is returned
     GET  the same path
-         the request's state: 404 when none was made
+         the newest job's state: 404 when none was made
 
 Both answer {"run_record_id", "job": the job view, "frames": the frames artifact reference once
 the job succeeded, else null}; the frames download from the artifact route (artifact_routes.py).
-A request whose job failed or was cancelled keeps its key, so it is not submitted again.
+The jobs of a run record are keyed frames:<run record id> (the first), then frames:<id>:2, :3
+and so on, one per retry; the newest is the one submitted last. Two retries at once name the
+same next key, so they create one job. Without retry a failed or cancelled job is returned as it is.
 """
 
 from functools import partial
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import anyio
 from fastapi import APIRouter, HTTPException, Response
 
-from scenegems_tool.assurance.pipeline.pipeline_queries import job_id_by_key
+from scenegems_tool.assurance.pipeline.pipeline_queries import latest_job_by_key_family
 from scenegems_tool.cluster.fingerprints.job_images import job_images
 from scenegems_tool.cluster.master.api.views import job_view
 from scenegems_tool.cluster.master.control_plane import ControlPlane, FingerprintsUnavailable, InvalidPayload
@@ -37,10 +42,12 @@ from scenegems_tool.persistence.stores import AssuranceStores, JobRecord, RunRec
 FRAMES_PATH = CAMPAIGNS_PATH + "/{campaign_id}/run-records/{run_record_id}/frames"
 FRAMES_PRIORITY = 100  # ahead of campaign work: an operator waits for it
 STATE_LOG_ROLE = "state_log"
+RETRYABLE_STATES = (JobState.FAILED, JobState.CANCELLED)
 
 
-def frames_key(run_record_id: int) -> str:
-    return f"frames:{run_record_id}"
+def frames_key(run_record_id: int, attempt: int = 1) -> str:
+    """The first request of a run record keeps frames:<id>; a request after a failed or cancelled one is frames:<id>:<n>."""
+    return f"frames:{run_record_id}" if attempt <= 1 else f"frames:{run_record_id}:{attempt}"
 
 
 async def _run(function: Callable[..., Any], *arguments: Any) -> Any:
@@ -82,7 +89,7 @@ def _state_log(stores: AssuranceStores, plane: ControlPlane, record: RunRecord) 
     return ArtifactRef(sha256=sha256, size_bytes=artifact.size_bytes, kind=ArtifactKind.TRAJECTORIES, media_type=artifact.media_type).model_dump(mode="json")
 
 
-def _submission(stores: AssuranceStores, plane: ControlPlane, campaign_id: str, run_record_id: int) -> JobSubmission:
+def _submission(stores: AssuranceStores, plane: ControlPlane, campaign_id: str, run_record_id: int, attempt: int = 1) -> JobSubmission:
     """The post-hoc job with frames over the run's state log, with the campaign's COLREGS constants, labels and pinned fingerprints."""
     record = _run_record(stores, campaign_id, run_record_id)
     trajectories = _state_log(stores, plane, record)
@@ -105,30 +112,42 @@ def _submission(stores: AssuranceStores, plane: ControlPlane, campaign_id: str, 
         payload=payload,
         requirements=JobRequirements(labels=labels, fingerprints=fingerprints),
         priority=FRAMES_PRIORITY,
-        idempotency_key=frames_key(run_record_id),
+        idempotency_key=frames_key(run_record_id, attempt),
         allowed_nodes=list(resources.get("nodes", [])),
     )
 
 
-def _requested(stores: AssuranceStores, plane: ControlPlane, campaign_id: str, run_record_id: int) -> Optional[JobRecord]:
-    """The frames job of the run record, if one was requested."""
+def _attempt_of(run_record_id: int, key: str) -> int:
+    """The request number a frames key names: 1 for the base key, n for frames:<id>:<n>."""
+    return 1 if key == frames_key(run_record_id) else int(key.rsplit(":", 1)[1])
+
+
+def _requested(stores: AssuranceStores, plane: ControlPlane, campaign_id: str, run_record_id: int) -> Optional[Tuple[JobRecord, int]]:
+    """The newest frames job of the run record with its request number, if one was requested."""
     _run_record(stores, campaign_id, run_record_id)
     with stores.transaction() as session:
-        job_id = job_id_by_key(session, frames_key(run_record_id))
-    return None if job_id is None else plane.jobs.get(job_id)
+        newest = latest_job_by_key_family(session, frames_key(run_record_id))
+    if newest is None:
+        return None
+    job = plane.jobs.get(newest[0])
+    return None if job is None else (job, _attempt_of(run_record_id, newest[1]))
 
 
 def run_frames_router(stores: AssuranceStores, plane: ControlPlane) -> APIRouter:
     router = APIRouter()
 
     @router.post(FRAMES_PATH)
-    async def request_frames(campaign_id: str, run_record_id: int, response: Response) -> dict:
+    async def request_frames(campaign_id: str, run_record_id: int, response: Response, retry: bool = False) -> dict:
         existing = await _run(_requested, stores, plane, campaign_id, run_record_id)
+        attempt = 1
         if existing is not None:
-            response.status_code = 200
-            return _view(run_record_id, existing)
+            job, number = existing
+            if not (retry and job.state in RETRYABLE_STATES):
+                response.status_code = 200
+                return _view(run_record_id, job)
+            attempt = number + 1
         try:
-            outcome = await plane.submit(await _run(_submission, stores, plane, campaign_id, run_record_id))
+            outcome = await plane.submit(await _run(_submission, stores, plane, campaign_id, run_record_id, attempt))
         except FingerprintsUnavailable as error:
             raise HTTPException(status_code=503, detail=str(error))
         except InvalidPayload as error:
@@ -138,9 +157,9 @@ def run_frames_router(stores: AssuranceStores, plane: ControlPlane) -> APIRouter
 
     @router.get(FRAMES_PATH)
     async def frames_status(campaign_id: str, run_record_id: int) -> dict:
-        job = await _run(_requested, stores, plane, campaign_id, run_record_id)
-        if job is None:
+        requested = await _run(_requested, stores, plane, campaign_id, run_record_id)
+        if requested is None:
             raise HTTPException(status_code=404, detail=f"no frames were requested for run record {run_record_id}")
-        return _view(run_record_id, job)
+        return _view(run_record_id, requested[0])
 
     return router
