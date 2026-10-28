@@ -5,7 +5,8 @@ import queue
 import threading
 import time
 from multiprocessing import Process, Queue
-from typing import Any, List, Optional
+from multiprocessing.synchronize import Event
+from typing import Any, Dict, List, Optional
 
 import paho.mqtt.client as mqtt
 
@@ -31,8 +32,9 @@ class MqttTrajectoryGenerationService(MqttClient):
         self.task_queue: Queue[MqttTrajectoryGenerationTask] = Queue()
         self.preview_queue: Queue = Queue()
         self.result_queue: Queue = Queue()
-        self.terminate_event = multiprocessing.Event()
-        self.current_tasks: List[MqttTrajectoryGenerationTask] = []
+        self.current_tasks: List[MqttTrajectoryGenerationTask] = []  # queued and running, in arrival order
+        self._cancel_events: Dict[str, Event] = {}  # by task uuid: each search stops on its own event only
+        self._tasks_lock = threading.Lock()
         self._active_workers: List[Process] = []
         self._worker_pool_stop_event = threading.Event()
         self._worker_pool_thread: Optional[threading.Thread] = None
@@ -46,7 +48,9 @@ class MqttTrajectoryGenerationService(MqttClient):
         self._publisher_thread.start()
 
     def stop_runtime(self) -> None:
-        self.terminate_event.set()
+        with self._tasks_lock:
+            for event in self._cancel_events.values():
+                event.set()
         self._worker_pool_stop_event.set()
         self._terminate_active_workers()
         if self._worker_pool_thread is not None:
@@ -55,7 +59,9 @@ class MqttTrajectoryGenerationService(MqttClient):
         if self._publisher_thread is not None:
             self._publisher_thread.join(timeout=2.0)
             self._publisher_thread = None
-        self.current_tasks.clear()
+        with self._tasks_lock:
+            self.current_tasks.clear()
+            self._cancel_events.clear()
         self._drain_task_queue()
 
     def _on_message(self, msg: mqtt.MQTTMessage, payload: Any):
@@ -72,17 +78,34 @@ class MqttTrajectoryGenerationService(MqttClient):
                 params=TrajectoryGenerationParams.from_task_params(task_params.get("params", {})),
                 seed=task_params.get("seed"),
             )
-            if self.max_workers == 1:
-                # Single-worker subsystem (the workbench): a new request supersedes whatever is running.
-                self.terminate_event.set()
-                self._drain_task_queue()
-                self.current_tasks = [task]
-            else:
-                # A node's pool: requests queue for the next free worker.
+            with self._tasks_lock:
+                if self.max_workers == 1:
+                    # Single worker: a new request supersedes whatever the pool holds. On a node the slot
+                    # table allows one lease at a time, so that is only ever a search whose job has ended.
+                    for event in self._cancel_events.values():
+                        event.set()
+                    self._drain_task_queue()
+                    self.current_tasks = []
+                    self._cancel_events = {}
+                # With more workers, requests queue for the next free one.
                 self.current_tasks.append(task)
+                self._cancel_events[task.task_uuid] = multiprocessing.Event()
             self.task_queue.put_nowait(task)
         elif payload["command"] == "signal-task" and payload.get("signal", {}).get("name") == "cancel":
-            self.terminate_event.set()
+            self.cancel_request(payload["signal"].get("request-id"))
+
+    def cancel_request(self, request_id: Optional[str]) -> None:
+        """Stop the searches of one request: a running one ends with its best partial result, a queued one never starts."""
+        if not request_id:
+            _logger.warning("Ignored a cancel that names no request")
+            return
+        with self._tasks_lock:
+            events = [self._cancel_events[task.task_uuid] for task in self.current_tasks if task.request_id == request_id and task.task_uuid in self._cancel_events]
+        if not events:
+            _logger.info("Cancel for request %s, which this pool does not hold", request_id)
+            return
+        for event in events:
+            event.set()
 
     @property
     def listen_topics(self) -> List[str]:
@@ -153,36 +176,54 @@ class MqttTrajectoryGenerationService(MqttClient):
                 task = self.task_queue.get(timeout=0.5)
             except queue.Empty:
                 continue
-            self.terminate_event.clear()
-            worker = Process(
-                target=run_trajectory_generation_worker,
-                args=(task, self.preview_queue, self.result_queue, self.terminate_event),
-                name=f"trajectory_generation_worker_{task.request_id}",
-                daemon=True,
-            )
-            worker.start()
-            self._active_workers.append(worker)
+            self._start_worker(task)
+
+    def _start_worker(self, task: MqttTrajectoryGenerationTask) -> None:
+        with self._tasks_lock:
+            cancel_event = self._cancel_events.get(task.task_uuid)
+            if cancel_event is None or cancel_event.is_set():
+                # Cancelled or superseded while it queued: it never starts and publishes nothing.
+                self._forget(task)
+                return
+        worker = Process(
+            target=run_trajectory_generation_worker,
+            args=(task, self.preview_queue, self.result_queue, cancel_event),
+            name=f"trajectory_generation_worker_{task.request_id}",
+            daemon=True,
+        )
+        worker.start()
+        self._active_workers.append(worker)
 
     def _poll_worker_output(self) -> None:
         while not self._worker_pool_stop_event.is_set():
-            published = False
-            try:
-                task, trajectory_data = self.preview_queue.get(timeout=0.2)
-                if self.is_connected:
-                    self.publish_preview(task, trajectory_data)
-                published = True
-            except queue.Empty:
-                pass
-            try:
-                task, trajectory_data, valid, complete, error_message = self.result_queue.get_nowait()
-                if self.is_connected:
-                    self.publish_result(task, trajectory_data, valid, error_message, complete)
-                self.current_tasks = [t for t in self.current_tasks if t.task_uuid != task.task_uuid]
-                published = True
-            except queue.Empty:
-                pass
-            if not published:
+            if not self._publish_next_output(preview_timeout=0.2):
                 time.sleep(0.05)
+
+    def _publish_next_output(self, preview_timeout: float) -> bool:
+        """Publish the next preview and the next result the workers queued; False when there was neither."""
+        published = False
+        try:
+            task, trajectory_data = self.preview_queue.get(timeout=preview_timeout) if preview_timeout > 0 else self.preview_queue.get_nowait()
+            if self.is_connected:
+                self.publish_preview(task, trajectory_data)
+            published = True
+        except queue.Empty:
+            pass
+        try:
+            task, trajectory_data, valid, complete, error_message = self.result_queue.get_nowait()
+            if self.is_connected:
+                self.publish_result(task, trajectory_data, valid, error_message, complete)
+            with self._tasks_lock:
+                self._forget(task)
+            published = True
+        except queue.Empty:
+            pass
+        return published
+
+    def _forget(self, task: MqttTrajectoryGenerationTask) -> None:
+        """Drop a task that ended or never started; the caller holds _tasks_lock."""
+        self.current_tasks = [t for t in self.current_tasks if t.task_uuid != task.task_uuid]
+        self._cancel_events.pop(task.task_uuid, None)
 
     def _terminate_active_workers(self) -> None:
         for worker in self._active_workers:

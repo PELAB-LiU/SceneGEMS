@@ -2,7 +2,9 @@
 
 The job is dispatched to the pooled trajectory generation service over the pool's scoped
 topics with today's generate-trajectories task. On a node the pool queues requests for its
-workers (one per trajectory_generation slot) instead of superseding the running one.
+workers (one per trajectory_generation slot) instead of superseding the running one. A job that
+stops waiting without its result (cancelled, lost, released, timed out) cancels its own search by
+request id, so the pool's other searches keep running and the worker is free for the next job.
 
 params.generator picks the generator: monitor_driven_rrt (the search, the default) or
 straight (every vessel straight on up to params.timespan, at once). The result's complete is
@@ -10,6 +12,7 @@ true for a complete plan; a search that ends with its best partial path reports 
 and complete false.
 """
 
+import logging
 import threading
 from typing import Any, Dict, Optional, Tuple
 
@@ -47,6 +50,8 @@ PARAM_KEYS = frozenset(
     }
 )
 MAX_SEED = 2**31 - 1
+CANCEL_FLUSH_TIMEOUT_S = 2.0  # how long the job waits for the broker to take its cancel before it disconnects
+_logger = logging.getLogger(__name__)
 
 # scenario_content is a string (the EvaluationData JSON); a reference to a scene artifact resolves to its text.
 ARTIFACT_INPUT_FIELDS: Tuple[ArtifactField, ...] = (ArtifactField("scenario_content", ArtifactKind.SCENE, ArtifactContent.TEXT),)
@@ -109,11 +114,25 @@ def run(job: JobSpec, node: NodeContext, report: JobReport, cancel: Optional[thr
         client.connect()
     except RuntimeError as error:
         raise JobFailed(str(error), retryable=True) from error
+    searching = False
     try:
         wait_for_pool(lambda: client.is_connected and client.is_heartbeat_valid, report, "trajectory generation pool", cancel)
         client.publish_generate_trajectories_command(request_id, payload.scenario_content, payload.colregs_constraints_content, TrajectoryGenerationParams.from_wire(payload.params), seed=payload.seed)
+        searching = True
         wait_for_reply(replied, report, "trajectory generation result", cancel, payload.timeout_s)
     finally:
+        if searching and not replied.is_set():
+            _cancel_search(client, request_id)
         client.disconnect()
     # A search that plans nothing is a result (valid false, with the reason), not a failed job.
     return {"request_id": request_id, **reply}
+
+
+def _cancel_search(client: Any, request_id: str) -> None:
+    """Stop this job's search in the pool; a cancel that cannot be sent leaves the job's outcome as it is."""
+    try:
+        info = client.publish_cancel_command(request_id)
+        if info is not None:
+            info.wait_for_publish(timeout=CANCEL_FLUSH_TIMEOUT_S)
+    except Exception as error:
+        _logger.warning("Could not cancel the search of request %s: %s", request_id, error)
