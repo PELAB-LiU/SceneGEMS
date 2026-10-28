@@ -1,13 +1,8 @@
 import type { DetailsHTMLAttributes, ReactNode } from "react";
-import type { TrajectoryStream } from "../../../app/uiStore";
 import { useUiStore } from "../../../app/uiStore";
 import type { ActorStaticInfo } from "../../../domain/simulation/types";
-import { renderActorName } from "./actorNameFormat";
+import { renderActorName } from "./actorNames";
 import { directionWord, fmtNum, resolveActorLabel, type Tone } from "./monitorFormat";
-
-export function monitorSectionKey(stream: TrajectoryStream, section: string): string {
-  return `monitor:${stream}:${section}`;
-}
 
 /**
  * Collapsible `details` whose open state is stored in `uiStore` (and localStorage).

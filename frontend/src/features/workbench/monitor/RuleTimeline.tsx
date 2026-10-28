@@ -1,7 +1,7 @@
 import { useState, type MouseEvent, type ReactNode } from "react";
 import { formatClock } from "../scene/encounterGeometry";
 import { encounterColor, RESULT_COLORS, RESULT_LABELS } from "../scene/encounterPalette";
-import { renderActorName, type ActorNameMap } from "./actorNameFormat";
+import { renderActorName, type ActorNameMap } from "./actorNames";
 import { isEncounter } from "./encounterPairs";
 import {
   niceTimeStep,

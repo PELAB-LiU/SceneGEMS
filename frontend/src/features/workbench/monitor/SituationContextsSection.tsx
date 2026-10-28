@@ -1,5 +1,5 @@
 import type { ActorStaticInfo, SituationContextData } from "../../../domain/simulation/types";
-import { renderRelationId } from "./actorNameFormat";
+import { renderRelationId } from "./renderRelationId";
 import { GeneralMonitorList } from "./GeneralMonitorList";
 import { fmtNum } from "./monitorFormat";
 import { looksLikeSituationContexts } from "./monitorFieldShapes";
