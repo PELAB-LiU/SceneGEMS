@@ -7,7 +7,7 @@ the sweep's queries see only unreferenced records unused for the grace period.
 
 import threading
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Collection, Dict, List, Optional, Set, Tuple
 
 from scenegems_tool.persistence.schema.artifact_tables import require_sha256_hex
@@ -22,6 +22,7 @@ class InMemoryArtifactRecords:
         self._lock = threading.Lock()
         self.records: Dict[str, ArtifactRecord] = {}
         self.references: Set[ReferenceKey] = set()
+        self.expiry: Dict[ReferenceKey, datetime] = {}  # upload references only
         self.calls: List[str] = []  # method names in call order, for ordering checks
 
     def insert_if_absent(self, artifact_hash: str, kind: str, size_bytes: int, media_type: str, stored_size_bytes: Optional[int] = None, *, session=None) -> ArtifactInsert:
@@ -61,6 +62,29 @@ class InMemoryArtifactRecords:
             self.references.add(key)
             self.records[artifact_hash] = replace(self.records[artifact_hash], last_used_at=self._clock())
             return created
+
+    def add_upload_reference(self, artifact_hash: str, expires_at: datetime, *, session=None) -> ReferenceKey:
+        """The operator's upload hold; a second upload keeps the later expiry."""
+        with self._lock:
+            self.calls.append("add_upload_reference")
+            if artifact_hash not in self.records:
+                raise UnknownArtifact(artifact_hash)
+            key = (artifact_hash, "upload", artifact_hash, "upload")
+            self.references.add(key)
+            self.expiry[key] = max(expires_at, self.expiry.get(key, expires_at))
+            self.records[artifact_hash] = replace(self.records[artifact_hash], last_used_at=self._clock())
+            return key
+
+    def remove_expired_uploads(self, *, session=None) -> List[str]:
+        with self._lock:
+            self.calls.append("remove_expired_uploads")
+            now = self._clock()
+            expired = [key for key, expires_at in self.expiry.items() if expires_at <= now]
+            for key in expired:
+                self.references.discard(key)
+                del self.expiry[key]
+                self.records[key[0]] = replace(self.records[key[0]], last_used_at=now)
+            return sorted({key[0] for key in expired})
 
     def remove_references_of(self, holder_kind, holder_id: str, roles: Optional[Collection[str]] = None, *, session=None) -> List[str]:
         with self._lock:

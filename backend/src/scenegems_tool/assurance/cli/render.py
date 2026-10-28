@@ -1,6 +1,6 @@
 """Plain text tables and summaries for the campaign CLI."""
 
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 
 def table(headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> str:
@@ -28,6 +28,12 @@ def verdicts_of(entry: Dict[str, Any]) -> Dict[str, int]:
     return counts
 
 
+def campaign_row(campaign: Dict[str, Any]) -> List[Any]:
+    """A line of the campaign list; a master before Phase 6 sends no kind, origin or steps."""
+    steps = ",".join(campaign["steps"]) if campaign.get("steps") else None
+    return [campaign["campaign_id"], campaign["name"], campaign.get("kind"), campaign.get("origin"), steps, campaign["desired_state"], campaign["actual_state"], campaign["created_at"]]
+
+
 def campaign_summary(campaign: Dict[str, Any]) -> str:
     lines = [
         f"campaign {campaign['name']} ({campaign['campaign_id']})",
@@ -42,6 +48,70 @@ def campaign_summary(campaign: Dict[str, Any]) -> str:
         lines.append(f"classes {totals['classes']}: open {totals['classes_open']}, complete {totals['classes_complete']}, abandoned {totals['classes_abandoned']}")
         lines.append(f"cases: {totals['complete']} complete of quota {totals['quota']}, {totals['dropped']} dropped, {totals['in_flight']} in flight")
         lines.append(f"verdicts: {verdicts}")
+    return "\n".join(lines)
+
+
+OUTPUT_HEADERS = ["class", "index", "case", "state", "valid", "complete", "run", "repeat", "verdict", "artifact", "from"]
+
+
+def _short(sha256: Optional[str]) -> Optional[str]:
+    return None if sha256 is None else sha256[:12]
+
+
+def _source(source: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Where an output's input came from: campaign and case, the file, or a deleted entry."""
+    if source is None:
+        return None
+    if "campaign_id" in source:
+        return f"{source['campaign_id']}#{source.get('case_id')}"
+    return source.get("file", "deleted")
+
+
+def output_row(output: Dict[str, Any]) -> List[Any]:
+    verdict = output.get("verdict")
+    verdict_text = None if verdict is None else verdict["state"] + (f" ({';'.join(verdict['failed_rules'])})" if verdict["failed_rules"] else "")
+    artifact = output.get("artifact")
+    return [
+        output["class_id"],
+        output["case_index"],
+        output["case_id"],
+        output["state"],
+        output["valid"],
+        output["complete"],
+        output["run_index"],
+        output["repeat_index"],
+        verdict_text,
+        _short(None if artifact is None else artifact["sha256"]),
+        _source(output.get("input_source")),
+    ]
+
+
+def findings_summary(findings: Dict[str, Any]) -> str:
+    """The findings of one step as text: cases, outputs, verdicts, failed rules, classes and durations."""
+    cases = ", ".join(f"{state} {count}" for state, count in sorted(findings["cases"].items())) or "none"
+    outputs = findings["outputs"]
+    lines = [
+        f"{findings['step']}: {'monitored' if findings['monitored'] else 'not monitored (statistics only)'}",
+        f"cases: {cases}",
+        f"outputs: {outputs['count']}, valid {outputs['valid']}, complete {outputs['complete']}",
+    ]
+    if findings["monitored"]:
+        verdicts = findings["verdicts"]
+        lines.append(f"verdicts: passed {verdicts['passed']}, failed {verdicts['failed']}, unmonitored {verdicts['unmonitored']}")
+    durations = findings["durations_s"]
+    if durations["median"] is not None:
+        lines.append(f"job duration s: median {durations['median']:.1f}, p90 {durations['p90']:.1f}")
+    if findings["failed_rules"]:
+        lines.append("")
+        lines.append(
+            table(
+                ["failed rule", "count", "first failure s (min)", "first failure s (median)"],
+                [[r["rule"], r["count"], r["first_failure_time_s"]["min"], r["first_failure_time_s"]["median"]] for r in findings["failed_rules"]],
+            )
+        )
+    if findings["classes"]:
+        lines.append("")
+        lines.append(table(["class", "cases", "passed", "failed"], [[c["class_id"], c["cases"], c["passed"], c["failed"]] for c in findings["classes"]]))
     return "\n".join(lines)
 
 

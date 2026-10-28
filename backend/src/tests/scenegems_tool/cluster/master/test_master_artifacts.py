@@ -90,3 +90,47 @@ def test_the_node_api_runs_the_sweep_with_its_timers(plane, artifacts):
         with TestClient(create_node_api_app(plane, run_timers=run_timers, artifacts=master_artifacts)):
             assert (master_artifacts._task is not None) == run_timers
         assert master_artifacts._task is None
+
+
+def test_a_round_drops_the_expired_upload_holds_before_it_lists_unreferenced_artifacts(artifacts, clock):
+    from datetime import timedelta
+
+    stored = artifacts.put(b'{"upload":true}', "scene", "application/json")
+    sha256 = stored.stored.sha256
+    artifacts.records.add_upload_reference(sha256, clock() + timedelta(hours=24))
+    master_artifacts = MasterArtifacts(artifacts, sweep_grace_s=60)
+
+    clock.advance(3600 * 23)  # the hold has not expired: nothing is unreferenced
+    assert asyncio.run(master_artifacts.sweep_once()) == [] and artifacts.store.exists(sha256)
+
+    clock.advance(3600 * 2)  # expired: the round drops the hold, which counts as a use, so the grace period starts now
+    assert asyncio.run(master_artifacts.sweep_once()) == [] and artifacts.store.exists(sha256)
+    assert artifacts.records.calls.count("remove_expired_uploads") == 2
+
+    clock.advance(61)
+    assert asyncio.run(master_artifacts.sweep_once()) == [sha256] and not artifacts.store.exists(sha256)
+
+
+def test_an_upload_a_campaign_took_over_survives_the_end_of_its_hold(artifacts, clock):
+    from datetime import timedelta
+
+    from scenegems_tool.persistence.schema import ArtifactHolderKind
+
+    sha256 = artifacts.put(b'{"upload":true}', "scene", "application/json").stored.sha256
+    artifacts.records.add_upload_reference(sha256, clock() + timedelta(hours=24))
+    artifacts.records.add_reference(sha256, ArtifactHolderKind.CAMPAIGN, "c1", "input:0", "c1")
+    clock.advance(3600 * 48)
+    assert asyncio.run(MasterArtifacts(artifacts, sweep_grace_s=60).sweep_once()) == [] and artifacts.store.exists(sha256)
+
+
+def test_the_hold_is_dropped_before_the_sweep_lists(artifacts, clock, monkeypatch):
+    from datetime import timedelta
+
+    sha256 = artifacts.put(b'{"upload":true}', "scene", "application/json").stored.sha256
+    artifacts.records.add_upload_reference(sha256, clock() + timedelta(hours=1))
+    clock.advance(7200)
+    order = []
+    sweep = artifacts.sweep
+    monkeypatch.setattr(artifacts, "sweep", lambda grace_s: order.append(("sweep", list(artifacts.records.calls))) or sweep(grace_s))
+    asyncio.run(MasterArtifacts(artifacts, sweep_grace_s=60).sweep_once())
+    assert order[0][0] == "sweep" and order[0][1][-1] == "remove_expired_uploads"
