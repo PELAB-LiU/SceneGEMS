@@ -90,6 +90,21 @@ flowchart LR
 
 Preview and simulation trajectories are stored separately in `playbackStore`; the monitoring panel shows one of them at a time.
 
+## Tests
+
+`npm test` runs vitest in two projects (`vite.config.ts`). Every `src/**/*.test.{ts,tsx}` runs in the
+`node` environment, without a DOM: stores, parsers, clients and static-markup checks
+(`renderToStaticMarkup`), with `localStorage` or `window` stubbed where a module needs them
+(`src/test/memoryStorage.ts`). A component test that needs a real DOM, with clicks, focus and
+state changes, goes in a file named `*.dom.test.tsx` next to the component. Only those files run in
+jsdom (chosen over happy-dom for the closest browser behaviour and the widest Testing Library
+support; the cost is paid only by the few DOM files), with `src/test/domSetup.ts` as setup: it adds the
+`jest-dom` matchers (`toBeVisible`, `toHaveAttribute`, ...) and unmounts after every test and clears
+`localStorage`. Write them with React Testing Library: `render` the real component, find elements by role
+and name (`screen.getByRole("button", { name: "..." })`), act through `userEvent.setup()` and `await` each
+interaction, assert on what the user sees. Reset any Zustand store a test touches in `beforeEach`.
+`components/Disclosure.dom.test.tsx` is the pattern to copy.
+
 ## Performance
 
 Large trajectory chunks may be merged in a **Web Worker** (`mergeFrames.worker.ts`) before updating the store. Playback uses **requestAnimationFrame** for smooth time advancement.
