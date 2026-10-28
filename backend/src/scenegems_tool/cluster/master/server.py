@@ -72,19 +72,32 @@ def build_master(settings: MasterSettings, with_gateway: bool = True) -> MasterA
     plane = ControlPlane(settings.master_id, NodeStore(sessions), JobStore(sessions), ExpectedFingerprints.of_release(settings.release_manifest))
     assurance = build_assurance_stores(sessions)
     plane.attach_pipeline(assurance)  # the pipeline engine, a timer of the control plane, on the master's one AssuranceStores
+    artifacts = build_artifacts(settings, sessions)
+    live = build_live_channel(settings, plane, assurance)
     gateway = None
     if with_gateway:
         from scenegems_tool.gateway.websocket_app import app as gateway
+        from scenegems_tool.gateway.websocket_app import set_run_recorder
 
-    live = build_live_channel(settings, plane, assurance)
+        set_run_recorder(build_run_recorder(plane, assurance, artifacts, live), gateway)
+
     return create_master_apps(
         plane,
         gateway=gateway,
-        artifacts=build_artifacts(settings, sessions),
+        artifacts=artifacts,
         assurance=assurance,
         allowed_origins=settings.operator_allowed_origins,
         live=live,
     )
+
+
+def build_run_recorder(plane: ControlPlane, assurance: AssuranceStores, artifacts: MasterArtifacts, live: LiveChannel):
+    """The gateway's recorder of live sessions: workbench entries on the master's stores, artifacts and pipeline engine (design doc 6.4)."""
+    from scenegems_tool.gateway.live_run_recorder import LiveRunRecorder
+
+    campaign_list = getattr(live.producers, "campaign_list", None)
+    announce = None if campaign_list is None else campaign_list.campaigns_changed
+    return LiveRunRecorder(assurance, artifacts.artifacts, plane.pipeline, max_bytes=artifacts.max_bytes, announce=announce)
 
 
 def build_live_channel(settings: MasterSettings, plane: ControlPlane, assurance: AssuranceStores) -> LiveChannel:

@@ -5,6 +5,7 @@ from typing import Mapping, Optional, Tuple, Union
 
 from fastapi import WebSocket
 
+from scenegems_tool.gateway.live_run_recorder import LiveRunRecorder, LiveRunSetup, LiveSessionRecording
 from scenegems_tool.gateway.protocol import ClientMessage, ServerMessage, make_error_message, make_monitor_status_message, make_mqtt_broker_status_message
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo, resolve_mqtt_broker_endpoints
 from scenegems_tool.subsystems.scenario_execution.lockstep_simulation_driver import uses_lockstep_driver
@@ -41,8 +42,11 @@ def master_broker_label(environ: Optional[Mapping[str, str]] = None) -> Optional
 
 class SocketSession:
 
-    def __init__(self, websocket: WebSocket):
+    def __init__(self, websocket: WebSocket, run_recorder: Optional[LiveRunRecorder] = None):
         self.websocket: WebSocket = websocket
+        # Records the live session's runs as workbench entries on the master; None when the gateway runs on its own.
+        self.run_recorder: Optional[LiveRunRecorder] = run_recorder
+        self.loop = asyncio.get_running_loop()
 
         self.outbound_queue: asyncio.Queue[ServerMessage] = asyncio.Queue()
         self.outbound_task: asyncio.Task[None] = asyncio.create_task(self._outbound_loop())
@@ -191,6 +195,21 @@ class SocketSession:
             return
         if self._accept_simulation_config(simulation_config):
             self.subsystem_integration_session.set_simulation_session(scenario_session=self.scenario_session, simulation_config=simulation_config)
+            self._record_runs(simulation_config)
+
+    def _record_runs(self, simulation_config: SimulationInstanceConfig) -> None:
+        """Records every run of the new live simulation session as a workbench entry (or reports that it cannot)."""
+        simulation_session = self.subsystem_integration_session.simulation_session
+        set_run_listener = getattr(simulation_session, "set_run_listener", None)
+        if set_run_listener is None:
+            return
+        setup = LiveRunSetup(
+            scenario_name=getattr(self.scenario_session, "file_name", None) or self.scenario_session.scenario_id,
+            trajectories=self.scenario_session.trajectories,
+            simulation_config=simulation_config,
+            time_step=int(getattr(simulation_session, "time_step", self.scenario_session.time_step)),
+        )
+        set_run_listener(LiveSessionRecording(self.run_recorder, setup, self.loop, self.send_payload))
 
     def generate_simulation_models(self, simulation_config: SimulationInstanceConfig) -> None:
         if not self.scenario_session.is_initialized:

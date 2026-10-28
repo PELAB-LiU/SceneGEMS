@@ -5,12 +5,15 @@ scenegems_tool.backend_service.session. The session no longer polls a status: th
 pushes `simulation_status` messages, so the checks are on the messages and on the session objects.
 """
 
+import asyncio
 import json
 from types import SimpleNamespace
 
 import pytest
 
 from logical_level.constraint_satisfaction.evaluation_data import EvaluationData
+from scenegems_tool.assurance.pipeline.case_machine import RecordedRun
+from scenegems_tool.gateway.live_run_recorder import OpenedEntry
 from scenegems_tool.gateway.protocol import SimulationStatus
 from scenegems_tool.gateway.socket_session import NO_TRAJECTORIES_MESSAGE, SocketSession, master_broker, master_broker_label
 from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, SimulationLayerId
@@ -248,3 +251,93 @@ class TestCancel:
         await settle()
         assert session.outbound_task.cancelled()
         assert session.mqtt_broker_status_task.cancelled()
+
+
+class FakeLiveSimulation:
+    """The part of a LiveSimulationSession the socket session wires the recording into."""
+
+    time_step = 1
+
+    def __init__(self):
+        self.listener = None
+
+    def set_run_listener(self, listener):
+        self.listener = listener
+
+    def destroy(self):
+        pass
+
+    def teardown(self):
+        pass
+
+
+class FakeRunRecorder:
+    def __init__(self):
+        self.stopped = []
+
+    async def open_entry(self, setup):
+        return OpenedEntry("entry-9", {"sha256": "0" * 64})
+
+    async def record_run(self, entry, setup, states, durations_s=None):
+        return RecordedRun(entry.campaign_id, 3, 30, "campaign:entry-9:case:3:monitor:0")
+
+    async def stop_entry(self, campaign_id):
+        self.stopped.append(campaign_id)
+
+
+class TestLiveRunRecording:
+    @pytest.fixture
+    async def live(self, session, monkeypatch):
+        """A loaded scenario whose simulation session is a live one."""
+        session.scenario_session = SimpleNamespace(
+            is_initialized=True, has_trajectories=True, trajectories=encounter_trajectories("head_on", 20), file_name="head_on.json", scenario_id="s1", time_step=1
+        )
+        simulation = FakeLiveSimulation()
+
+        def set_simulation_session(**_):
+            session.subsystem_integration_session.simulation_session = simulation
+
+        monkeypatch.setattr(session.subsystem_integration_session, "set_simulation_session", set_simulation_session)
+        return simulation
+
+    def config(self):
+        return stack_instance(SimulationLayerId.ARDUPILOT_SIM, [0, 1], adapter_ids=["replay_arduagent_follower"])
+
+    def recordings(self, websocket):
+        return [payload for payload in websocket.sent if payload["type"] == "run_recording"]
+
+    async def test_the_live_session_is_followed_with_what_it_runs(self, session, live):
+        config = self.config()
+        session.set_simulation_session(config)
+        setup = live.listener.setup
+        assert (setup.scenario_name, setup.trajectories, setup.simulation_config, setup.time_step) == ("head_on.json", session.scenario_session.trajectories, config, 1)
+        assert live.listener.loop is session.loop
+
+    async def test_without_the_master_a_run_is_reported_unavailable(self, session, live, websocket):
+        session.set_simulation_session(self.config())
+        live.listener.run_started()
+        await settle()
+        (message,) = self.recordings(websocket)
+        assert (message["status"], message["campaignId"], message["caseId"]) == ("unavailable", None, None)
+
+    async def test_with_the_master_a_run_is_recorded_and_saved(self, session, live, websocket):
+        session.run_recorder = FakeRunRecorder()
+        session.set_simulation_session(self.config())
+        live.listener.run_started()
+        live.listener.state_simulated(0.0, session.scenario_session.trajectories.initial_scene)
+        live.listener.run_ended()
+        (run,) = live.listener.recordings
+        await asyncio.wrap_future(run.future)
+        await settle()
+        assert [(message["status"], message["campaignId"], message["caseId"]) for message in self.recordings(websocket)] == [
+            ("recording", None, None),
+            ("recording", "entry-9", None),
+            ("saved", "entry-9", 3),
+        ]
+
+    async def test_an_empty_simulation_session_is_not_followed(self, session, websocket, monkeypatch):
+        session.scenario_session = SimpleNamespace(is_initialized=True, has_trajectories=True, trajectories=encounter_trajectories("head_on", 20))
+        monkeypatch.setattr(session.subsystem_integration_session, "set_simulation_session", lambda **_: None)
+        session.set_simulation_session(self.config())
+        await settle()
+        assert self.recordings(websocket) == []
