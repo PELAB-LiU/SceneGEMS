@@ -73,8 +73,8 @@ def create_operator_app(
     """The operator routes, with the workbench gateway mounted behind them when given.
 
     The campaign routes need the campaign stores (assurance); without them they answer 503.
-    Browsers of allowed_origins may read and post (CORS): GET, POST and HEAD with a JSON or YAML
-    body, and read X-Total-Count and Content-Disposition. No other origin is allowed, and the
+    Browsers of allowed_origins may read, post and delete (CORS): GET, POST, DELETE and HEAD with a
+    JSON, YAML or file body, and read X-Total-Count and Content-Disposition. No other origin is allowed, and the
     origin guard refuses other origins' POSTs and WebSockets, which CORS alone would let through.
     Without a live channel one is made on the control plane, observing jobs but no pools.
     """
@@ -89,19 +89,22 @@ def create_operator_app(
             yield
 
     app = FastAPI(title=f"SceneGEMS master {plane.master_id}: operator API", lifespan=lifespan)
+    # What the campaign routes use beside their stores: the artifact store their input is checked against, and the live channel's campaigns topic
+    app.state.artifact_store = None if artifacts is None else artifacts.artifacts
+    app.state.campaigns_topic = getattr(live.producers, "campaign_list", None)
     app.include_router(operator_router(plane, assurance))
     app.include_router(live_router(live))
     if assurance is not None:
         app.include_router(run_frames_router(assurance, plane))
     if artifacts is not None:
-        app.include_router(operator_artifact_router(artifacts.artifacts))
+        app.include_router(operator_artifact_router(artifacts.artifacts, artifacts.max_bytes))
     if gateway is not None:
         app.mount("/", gateway)  # last, so the cluster routes match first
     app.add_middleware(OriginGuard, allowed_origins=list(allowed_origins))
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(allowed_origins),
-        allow_methods=["GET", "POST", "HEAD"],
+        allow_methods=["GET", "POST", "DELETE", "HEAD"],
         allow_headers=["Content-Type"],
         expose_headers=["X-Total-Count", "Content-Disposition"],
     )

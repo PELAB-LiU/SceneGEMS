@@ -4,6 +4,9 @@
                       from the last one sent (a heartbeat that changes nothing but the time sends nothing)
     job:<id>          JobTopics: JobActivity's listener (status, log lines, state changes reported
                       by the lease manager, the scheduler and the control plane)
+    campaigns         CampaignListTopic: the list rows. PipelineEngine.on_change (through CampaignTopics) and the
+                      campaign routes (create, control, delete) tell it which campaigns changed; it publishes
+                      the row of each that differs from the last one sent, and the id of a deleted one
     campaign:<id>     CampaignTopics: PipelineEngine.on_change after each committed tick, then the
                       new events, the summary when it changed and the classes that changed
     instance:...      ObservationHub (observation_hub.py)
@@ -22,17 +25,20 @@ from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Set
 import anyio
 from sqlalchemy import func, select
 
-from scenegems_tool.cluster.master.api.campaign_views import campaign_detail_view, campaign_view, classes_view, event_view
+from scenegems_tool.cluster.master.api.campaign_views import campaign_detail_view, campaign_row_view, campaign_view, classes_view, event_view
 from scenegems_tool.cluster.master.api.views import job_view, node_view
 from scenegems_tool.cluster.master.control_plane import ControlPlane
 from scenegems_tool.cluster.master.job_activity import JobProgress
 from scenegems_tool.cluster.master.live.live_channel import LiveChannel, LiveSettings, UnknownTopic
 from scenegems_tool.cluster.master.live.observation_hub import BrokerClientFactory, ObservationHub
 from scenegems_tool.cluster.protocol.live import (
+    CAMPAIGNS_TOPIC,
     NODES_TOPIC,
     CampaignChanged,
     CampaignClassesChanged,
+    CampaignDeleted,
     CampaignEventAdded,
+    CampaignRowChanged,
     JobChanged,
     JobLogsAdded,
     JobProgressView,
@@ -209,6 +215,65 @@ class JobTopics:
             self._channel.publish(topic, JobChanged(job=view).model_dump())
 
 
+class CampaignListTopic:
+    """`campaigns`: nothing in the snapshot (the list is read with GET /cluster/campaigns), then a list row whenever a campaign is
+    created or changes, and the id of a deleted one.
+
+    Like the other topics it reads in a worker thread, after the engine's commit or the route's, and sends a row only when it differs
+    from the last one sent, so an engine tick that changed nothing of a row sends nothing.
+    """
+
+    def __init__(self, channel: LiveChannel, stores: AssuranceStores):
+        self._channel = channel
+        self._stores = stores
+        self._sent: Dict[str, Dict[str, Any]] = {}
+        self._deleted: Set[str] = set()  # campaign ids are never reused, so a row read before a delete is dropped by id
+        self.worker = CoalescingWorker(self._refresh, "campaigns")
+
+    async def snapshot(self, topic: Topic) -> Any:
+        return {}
+
+    def activate(self, topic: Topic) -> None:
+        self._sent.clear()
+        self._deleted.clear()
+
+    def deactivate(self, topic: Topic) -> None:
+        self._sent.clear()
+        self._deleted.clear()
+
+    def campaigns_changed(self, campaign_ids: Set[str]) -> None:
+        """A campaign was created or changed (the engine after a commit, a route)."""
+        if self._channel.has_subscribers(CAMPAIGNS_TOPIC):
+            for campaign_id in sorted(campaign_ids):
+                self.worker.mark(campaign_id)
+
+    def campaign_deleted(self, campaign_id: str) -> None:
+        if self._channel.has_subscribers(CAMPAIGNS_TOPIC):
+            self._sent.pop(campaign_id, None)
+            self._deleted.add(campaign_id)
+            self._channel.publish(CAMPAIGNS_TOPIC, CampaignDeleted(deleted=campaign_id).model_dump())
+
+    async def _refresh(self, campaign_ids: List[str]) -> None:
+        rows = await _run(self._read_rows, campaign_ids)
+        if not self._channel.has_subscribers(CAMPAIGNS_TOPIC):
+            return
+        for row in rows:
+            campaign_id = row["campaign_id"]
+            if campaign_id in self._deleted or self._sent.get(campaign_id) == row:
+                continue
+            self._sent[campaign_id] = row
+            self._channel.publish(CAMPAIGNS_TOPIC, CampaignRowChanged(campaign=row).model_dump())
+
+    def _read_rows(self, campaign_ids: List[str]) -> List[Dict[str, Any]]:
+        stores = self._stores
+        with stores.transaction() as session:
+            campaigns = [campaign for campaign in (stores.campaigns.get_campaign(campaign_id, session=session) for campaign_id in campaign_ids) if campaign is not None]
+            ids = [campaign.campaign_id for campaign in campaigns]
+            configs = stores.campaigns.current_configs(ids, session=session)
+            totals = stores.campaigns.campaign_totals(ids, session=session)
+        return [campaign_row_view(campaign, configs[campaign.campaign_id].config if campaign.campaign_id in configs else None, totals[campaign.campaign_id]) for campaign in campaigns]
+
+
 class _Watch:
     """What the subscribers of one campaign have been sent: up to which event, the summary, each class."""
 
@@ -229,9 +294,10 @@ class CampaignTopics:
     sent, so its event updates may repeat events up to its snapshot's last_event_id.
     """
 
-    def __init__(self, channel: LiveChannel, stores: AssuranceStores):
+    def __init__(self, channel: LiveChannel, stores: AssuranceStores, listing: Optional[CampaignListTopic] = None):
         self._channel = channel
         self._stores = stores
+        self._listing = listing  # told of the same changes, for the campaigns topic
         self._watches: Dict[str, _Watch] = {}
         self.worker = CoalescingWorker(self._refresh, "campaign")
 
@@ -241,7 +307,7 @@ class CampaignTopics:
         primes = watch is not None and not watch.primer_taken
         if primes:
             watch.primer_taken = True
-        campaign, classes, last_event_id = await _run(self._read_snapshot, campaign_id)
+        campaign, classes, last_event_id, config = await _run(self._read_snapshot, campaign_id)
         if campaign is None:
             raise UnknownTopic(f"no campaign {campaign_id}")
         if primes and self._watches.get(campaign_id) is watch:
@@ -250,17 +316,18 @@ class CampaignTopics:
             watch.summary = campaign_view(campaign)
             watch.classes = {entry["class_id"]: entry for entry in classes}
             self.worker.mark(campaign_id)  # what changed between this read and the priming
-        return {**campaign_detail_view(campaign, classes), "last_event_id": last_event_id}
+        return {**campaign_detail_view(campaign, classes, config), "last_event_id": last_event_id}
 
     def _read_snapshot(self, campaign_id: str) -> tuple:
         stores = self._stores
         with stores.transaction() as session:
             campaign = stores.campaigns.get_campaign(campaign_id, session=session)
             if campaign is None:
-                return None, [], 0
+                return None, [], 0, None
+            config = stores.campaigns.current_configs([campaign_id], session=session)[campaign_id].config
             last_event_id = session.execute(select(func.max(CampaignEventRow.id)).where(CampaignEventRow.campaign_id == campaign_id)).scalar() or 0
             classes = classes_view(stores.cases.list_classes(campaign_id, session=session), stores.results.coverage(campaign_id, session=session))
-            return campaign, classes, last_event_id
+            return campaign, classes, last_event_id, config
 
     def activate(self, topic: Topic) -> None:
         self._watches[topic.key] = _Watch()
@@ -270,6 +337,8 @@ class CampaignTopics:
 
     def campaigns_changed(self, campaign_ids: Set[str]) -> None:
         """The pipeline engine's notification after a committed transaction."""
+        if self._listing is not None:
+            self._listing.campaigns_changed(campaign_ids)
         for campaign_id in sorted(campaign_ids):
             if self._channel.has_subscribers(campaign_topic(campaign_id)):
                 self.worker.mark(campaign_id)
@@ -309,11 +378,12 @@ class CampaignTopics:
 class LiveProducers:
     """The channel's producers of one master, kept for shutdown and for tests."""
 
-    def __init__(self, nodes: NodesTopic, jobs: JobTopics, campaigns: Optional[CampaignTopics], hub: ObservationHub):
+    def __init__(self, nodes: NodesTopic, jobs: JobTopics, campaigns: Optional[CampaignTopics], hub: ObservationHub, campaign_list: Optional[CampaignListTopic] = None):
         self.nodes = nodes
         self.jobs = jobs
         self.campaigns = campaigns
         self.hub = hub
+        self.campaign_list = campaign_list  # the campaigns topic; the campaign routes tell it of creates, controls and deletes
 
     async def idle(self) -> None:
         """Waits until every producer handled what it was told (for tests)."""
@@ -329,6 +399,8 @@ class LiveProducers:
         workers = [self.nodes.worker, self.jobs.worker]
         if self.campaigns is not None:
             workers.append(self.campaigns.worker)
+        if self.campaign_list is not None:
+            workers.append(self.campaign_list.worker)
         return workers
 
 
@@ -340,14 +412,15 @@ def create_live_channel(
 ) -> LiveChannel:
     """A live channel on the master's control plane: hooks into the registry, the job activity and the pipeline engine.
 
-    Without assurance stores the campaign topics are not served; without a broker the observation
+    Without assurance stores the campaign topics (campaigns and campaign:<id>) are not served; without a broker the observation
     hub serves job instances only. The producers are at channel.producers.
     """
     channel = LiveChannel(settings)
     hub = ObservationHub(channel, plane, broker)
     nodes = NodesTopic(channel, plane)
     jobs = JobTopics(channel, plane, hub)
-    campaigns = CampaignTopics(channel, assurance) if assurance is not None else None
+    campaign_list = CampaignListTopic(channel, assurance) if assurance is not None else None
+    campaigns = CampaignTopics(channel, assurance, campaign_list) if assurance is not None else None
     channel.add_source(TopicKind.NODES, nodes)
     channel.add_source(TopicKind.JOB, jobs)
     channel.add_source(TopicKind.INSTANCE, hub)
@@ -360,7 +433,8 @@ def create_live_channel(
     plane.observations.frames_sink = hub.publish_simulation_frames
     if campaigns is not None:
         channel.add_source(TopicKind.CAMPAIGN, campaigns)
+        channel.add_source(TopicKind.CAMPAIGNS, campaign_list)
         if plane.pipeline is not None:
             plane.pipeline.on_change = campaigns.campaigns_changed
-    channel.producers = LiveProducers(nodes, jobs, campaigns, hub)
+    channel.producers = LiveProducers(nodes, jobs, campaigns, hub, campaign_list)
     return channel

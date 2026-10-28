@@ -7,9 +7,11 @@ and, on the artifact routes, in the NODE_ID_HEADER.
 
 NODE_CONTROL_PATH = "/cluster/node/control"  # WebSocket opened by the node, frames from messages.py
 JOBS_PATH = "/cluster/jobs"  # POST JobSubmission; GET lists jobs, GET <JOBS_PATH>/<job id> one job
-# GET and PUT <ARTIFACTS_PATH>/<sha256> on the node API (NODE_ID_HEADER); GET and HEAD on the operator API
+# GET and PUT <ARTIFACTS_PATH>/<sha256> on the node API (NODE_ID_HEADER); GET and HEAD <ARTIFACTS_PATH>/<sha256> and POST <ARTIFACTS_PATH>?kind= (the operator's upload) on the operator API
 ARTIFACTS_PATH = "/cluster/artifacts"
-CAMPAIGNS_PATH = "/cluster/campaigns"  # operator API: POST a campaign config; GET lists campaigns, GET <CAMPAIGNS_PATH>/<campaign id> one (campaign_routes.py)
+# operator API (campaign_routes.py): POST a campaign config; GET lists campaigns; GET and DELETE <CAMPAIGNS_PATH>/<campaign id> read and delete one;
+# GET <CAMPAIGNS_PATH>/<campaign id>/outputs?step= and /findings?step= read a step's outputs and summary
+CAMPAIGNS_PATH = "/cluster/campaigns"
 LIVE_PATH = "/cluster/live"  # operator API: the browser's live channel WebSocket (live.py)
 
 CATALOG_PATH = "/cluster/catalog"  # operator API: GET <CATALOG_PATH>/classes the class catalog, GET <CATALOG_PATH>/stacks what a campaign run may use (catalog_routes.py)

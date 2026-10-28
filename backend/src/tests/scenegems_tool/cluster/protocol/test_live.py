@@ -11,7 +11,9 @@ from scenegems_tool.cluster.protocol.live import (
     LIVE_VERSION,
     CampaignChanged,
     CampaignClassesChanged,
+    CampaignDeleted,
     CampaignEventAdded,
+    CampaignRowChanged,
     Configure,
     Error,
     InstanceKind,
@@ -38,6 +40,7 @@ from scenegems_tool.cluster.protocol.live import (
     Unsubscribed,
     Update,
     campaign_topic,
+    campaigns_topic,
     decode_client_message,
     decode_server_message,
     instance_topic,
@@ -112,6 +115,8 @@ def test_update_data_shapes():
     assert CampaignEventAdded(event={"event_id": 4}).model_dump() == {"event": {"event_id": 4}}
     assert CampaignChanged(campaign={"actual_state": "running"}).model_dump() == {"campaign": {"actual_state": "running"}}
     assert CampaignClassesChanged(classes=[{"class_id": "a"}]).model_dump() == {"classes": [{"class_id": "a"}]}
+    assert CampaignRowChanged(campaign={"campaign_id": "c1", "totals": {}}).model_dump() == {"campaign": {"campaign_id": "c1", "totals": {}}}
+    assert CampaignDeleted(deleted="c1").model_dump() == {"deleted": "c1"}
     status = JobStatusChanged(status=JobProgressView(progress=0.5, message="half", at=at)).model_dump(mode="json")
     assert status == {"status": {"progress": 0.5, "message": "half", "at": "2026-10-26T12:00:00Z"}}
     assert JobLogsAdded(logs=[{"text": "x"}]).model_dump() == {"logs": [{"text": "x"}]}
@@ -157,6 +162,8 @@ def test_every_job_type_has_an_instance_kind():
 def test_topic_names_parse_back():
     job_id = "6f1c2b9e-1d2a-4c3b-9a8e-0f1e2d3c4b5a"
     assert parse_topic("nodes").kind == TopicKind.NODES and parse_topic("nodes").name == "nodes"
+    campaigns = parse_topic(campaigns_topic())
+    assert (campaigns.kind, campaigns.key, campaigns.name) == (TopicKind.CAMPAIGNS, "", "campaigns") and campaigns_topic() == "campaigns"
     campaign = parse_topic(campaign_topic("c-17"))
     assert (campaign.kind, campaign.key, campaign.name) == (TopicKind.CAMPAIGN, "c-17", "campaign:c-17")
     job = parse_topic(job_topic(job_id))
@@ -171,6 +178,8 @@ def test_topic_names_parse_back():
     [
         "",
         "node",
+        "campaign",
+        "campaigns:c1",
         "campaign:",
         "job:",
         "job:has space",

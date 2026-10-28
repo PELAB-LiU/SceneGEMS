@@ -18,16 +18,30 @@ Node API (plain HTTP on the VPN; the node names itself in the X-Node-Id header, 
 Operator API (the operator listener, no authentication yet, as the other operator routes):
 
     GET and HEAD <ARTIFACTS_PATH>/<sha256>   as the node's GET
+    POST <ARTIFACTS_PATH>?kind=<functional_scenario|scene|trajectories>
+                                    stores the body as an artifact of the operator's file: `Content-Type` is
+                                    its media type (JSON by default), the body is not compressed (Content-Encoding
+                                    identity) and stays within the size limit of node uploads (413). The artifact
+                                    is held by an `upload` reference that expires after UPLOAD_HOLD (24 hours); a
+                                    campaign created with it takes over (the pipeline's `campaign` reference), and the
+                                    sweep frees it once the hold expired and nothing else references it. The body is
+                                    spooled while it is hashed, since the operator does not know its hash. 201 when the
+                                    artifact is new, 200 when it was stored already; the body is its reference
+                                    (sha256, size_bytes, kind, media_type, pointer null). An artifact stored
+                                    before under another kind keeps that kind.
 
 Bodies are never held in memory whole: uploads go through the store's writer in chunks,
 downloads stream from the file. Compression and hashing run in worker threads, so a large
 upload does not stall the control sockets on the same event loop.
 """
 
+import hashlib
 import logging
 import re
+import tempfile
 import zlib
-from typing import Callable, Iterator, Optional
+from datetime import timedelta
+from typing import BinaryIO, Callable, Iterator, Optional
 
 import anyio
 from fastapi import APIRouter, HTTPException, Path, Query, Request, Response
@@ -39,8 +53,9 @@ from scenegems_tool.cluster.protocol.routes import ARTIFACTS_PATH, NODE_ID_HEADE
 from scenegems_tool.cluster.scope_names import is_scope_name
 from scenegems_tool.persistence.artifacts.artifact_store import COMPRESSED_ENCODING, ArtifactHashMismatch, ArtifactNotFound, ArtifactTooLarge, ArtifactWriter
 from scenegems_tool.persistence.artifacts.recorded_artifacts import ArtifactHolder, RecordedArtifacts, result_role
+from scenegems_tool.persistence.clock import Clock, utc_now
 from scenegems_tool.persistence.schema import ArtifactHolderKind
-from scenegems_tool.persistence.stores.artifact_records import ArtifactMismatch
+from scenegems_tool.persistence.stores.artifact_records import ArtifactMismatch, UnknownArtifact
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +63,9 @@ ARTIFACT_PATH = ARTIFACTS_PATH + "/{sha256}"
 DEFAULT_MAX_ARTIFACT_BYTES = 256 * 1024 * 1024
 STREAM_CHUNK_BYTES = 1024 * 1024  # the unit of reading, decompressing and writing
 OCTET_STREAM = "application/octet-stream"
+UPLOAD_KINDS = ("functional_scenario", "scene", "trajectories")  # what the operator may upload; the kinds are strings in the records
+UPLOAD_HOLD = timedelta(hours=24)  # how long an upload without a campaign is kept
+SPOOL_MEMORY_BYTES = 8 * 1024 * 1024  # an upload up to this size is spooled in memory, a larger one on disk
 _FIELD_NAME = re.compile(r"^[a-z][a-z0-9_]{0,47}$")
 _MEDIA_TYPE = re.compile(r"^[\x21-\x7e][\x20-\x7e]{0,127}$")
 
@@ -107,8 +125,29 @@ def node_artifact_router(artifacts: RecordedArtifacts, job_holder: JobHolder, ma
     return router
 
 
-def operator_artifact_router(artifacts: RecordedArtifacts) -> APIRouter:
+def operator_artifact_router(artifacts: RecordedArtifacts, max_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES, clock: Clock = utc_now) -> APIRouter:
     router = APIRouter()
+
+    @router.post(ARTIFACTS_PATH)
+    async def upload(request: Request, kind: str = Query(...)) -> Response:
+        if kind not in UPLOAD_KINDS:
+            raise HTTPException(status_code=422, detail=f"kind is one of {', '.join(UPLOAD_KINDS)}, not {kind!r}")
+        if _upload_encoding(request, max_bytes) != "identity":
+            raise HTTPException(status_code=415, detail="the operator's upload is not compressed; send Content-Encoding identity")
+        media_type = _media_type(request)
+        with tempfile.SpooledTemporaryFile(max_size=SPOOL_MEMORY_BYTES) as spool:
+            sha256, size = await _spool(request, spool, max_bytes)
+            if size == 0:
+                raise HTTPException(status_code=422, detail="the body is empty")
+            recorded = await _store_spooled(artifacts, spool, sha256, max_bytes, kind, media_type)
+        try:
+            await anyio.to_thread.run_sync(artifacts.records.add_upload_reference, sha256, clock() + UPLOAD_HOLD)
+        except UnknownArtifact:
+            raise HTTPException(status_code=409, detail=f"artifact {sha256} was swept while it was uploaded; upload it again") from None
+        if recorded.recorded:
+            logger.info("The operator uploaded artifact %s (%s, %d bytes)", sha256, kind, size)
+        reference = {"sha256": sha256, "size_bytes": recorded.stored.size_bytes, "kind": recorded.record.kind, "media_type": recorded.record.media_type, "pointer": None}
+        return JSONResponse(reference, status_code=201 if recorded.recorded else 200)
 
     @router.get(ARTIFACT_PATH)
     async def download(request: Request, sha256: str = Sha256) -> Response:
@@ -205,6 +244,54 @@ def _media_type(request: Request) -> str:
     if not _MEDIA_TYPE.match(media_type):
         raise HTTPException(status_code=422, detail="invalid Content-Type")
     return media_type
+
+
+async def _spool(request: Request, spool: BinaryIO, max_bytes: int) -> tuple:
+    """Copies the request body into the spool while hashing it; returns its sha256 and size. 413 beyond max_bytes."""
+    digest = hashlib.sha256()
+    size = 0
+
+    def feed(data: bytes) -> None:
+        nonlocal size
+        size += len(data)
+        if size > max_bytes:
+            raise ArtifactTooLarge(max_bytes)
+        digest.update(data)
+        spool.write(data)
+
+    try:
+        pending = bytearray()
+        async for chunk in request.stream():
+            pending += chunk
+            if len(pending) >= STREAM_CHUNK_BYTES:
+                await anyio.to_thread.run_sync(feed, bytes(pending))
+                pending.clear()
+        if pending:
+            await anyio.to_thread.run_sync(feed, bytes(pending))
+    except ArtifactTooLarge as error:
+        raise HTTPException(status_code=413, detail=str(error)) from None
+    return digest.hexdigest(), size
+
+
+async def _store_spooled(artifacts: RecordedArtifacts, spool: BinaryIO, sha256: str, max_bytes: int, kind: str, media_type: str):
+    """Writes the spooled body into the store under its hash and records it."""
+
+    def store():
+        spool.seek(0)
+        with artifacts.writer(sha256, max_bytes) as writer:
+            while True:
+                chunk = spool.read(STREAM_CHUNK_BYTES)
+                if not chunk:
+                    break
+                writer.write(chunk)
+            return artifacts.commit(writer, kind, media_type, None)
+
+    try:
+        return await anyio.to_thread.run_sync(store)
+    except ArtifactTooLarge as error:
+        raise HTTPException(status_code=413, detail=str(error)) from None
+    except ArtifactMismatch as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
 
 
 class _Inflater:

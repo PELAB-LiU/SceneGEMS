@@ -2,29 +2,39 @@
 
 Plain dictionaries with ISO times (UTC, as stored), in the style of views.py. Enum values
 are their wire strings, and a verdict count map is keyed by the run index as a string.
+
+A list row (campaign_row_view) also says what the campaign's config says: the steps it runs, its input
+and the campaigns its items came from, read from the stored config JSON so that this module needs no
+config model (which pulls in numpy and the job type modules the master keeps out of its startup).
 """
 
 from datetime import datetime
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set
 
 from scenegems_tool.persistence.stores import (
     CampaignEventRecord,
     CampaignRecord,
+    CampaignTotals,
     CaseRecord,
     ClassCoverage,
     ClassRecord,
     ConfigVersionRecord,
     JobRecord,
+    OutputRecord,
     PipelineJobRecord,
     RunRecord,
+    StepFindings,
     VerdictRecord,
 )
+
+STEP_NAMES = ("scene_generation", "trajectory_generation", "simulation")  # the chain, as the config and the API name its steps
 
 VERDICT_COLUMNS = (
     "verdict_id",
     "class_id",
     "case_id",
     "case_index",
+    "step",
     "run_index",
     "state",
     "monitor",
@@ -48,6 +58,8 @@ def campaign_view(campaign: CampaignRecord) -> Dict[str, Any]:
         "desired_state": campaign.desired_state.value,
         "actual_state": campaign.actual_state.value,
         "state_reason": campaign.state_reason,
+        "kind": campaign.kind.value,
+        "origin": None if campaign.origin is None else campaign.origin.value,  # None for campaigns made before Phase 6
         "config_version": campaign.config_version,
         "pinned_fingerprints": campaign.pinned_fingerprints,
         "created_at": iso(campaign.created_at),
@@ -55,6 +67,54 @@ def campaign_view(campaign: CampaignRecord) -> Dict[str, Any]:
         "started_at": iso(campaign.started_at),
         "finished_at": iso(campaign.finished_at),
     }
+
+
+def config_steps(config: Mapping[str, Any]) -> List[str]:
+    """The steps a stored config runs; a format 1 config, which stores none, runs the full chain."""
+    return list(config.get("steps") or STEP_NAMES)
+
+
+def config_input(config: Mapping[str, Any]) -> Dict[str, Any]:
+    """The first step and how many items the config's input names: the items of a later start and the functional scenarios given as content."""
+    given = config.get("input") or {}
+    return {"first_step": config_steps(config)[0], "item_count": len(given.get("items") or []) + len(given.get("functional_scenarios") or [])}
+
+
+def config_made_from(config: Mapping[str, Any]) -> List[str]:
+    """The campaigns the config's items came from, in the order of the items, each once."""
+    ids: List[str] = []
+    for item in (config.get("input") or {}).get("items") or []:
+        campaign_id = (item.get("source") or {}).get("campaign_id")
+        if campaign_id is not None and campaign_id not in ids:
+            ids.append(campaign_id)
+    return ids
+
+
+def config_monitored(config: Mapping[str, Any], step: str) -> bool:
+    """Whether the config monitors a step. A generation step is monitored when its monitor is not empty (a format 1 config stores none); the simulation when any run's is."""
+    if step == "scene_generation":
+        return (config.get("scene_generation") or {}).get("monitor", "empty") != "empty"
+    if step == "trajectory_generation":
+        return (config.get("trajectories") or {}).get("monitor", "empty") != "empty"
+    return any(run.get("monitor", "post_hoc") != "empty" for run in (config.get("execution") or {}).get("runs") or [])
+
+
+def config_view(config: Mapping[str, Any]) -> Dict[str, Any]:
+    """What a list row and a detail say about the campaign's config: steps, input and made_from."""
+    return {"steps": config_steps(config), "input": config_input(config), "made_from": config_made_from(config)}
+
+
+def totals_view(totals: CampaignTotals) -> Dict[str, Any]:
+    """Cases by state and verdicts by step and state, with the enum values as keys."""
+    return {
+        "cases": {state.value: count for state, count in totals.cases.items()},
+        "verdicts": {step.value: {state.value: count for state, count in states.items()} for step, states in totals.verdicts.items()},
+    }
+
+
+def campaign_row_view(campaign: CampaignRecord, config: Optional[Mapping[str, Any]], totals: CampaignTotals) -> Dict[str, Any]:
+    """A list row: the summary with the config's steps, input and made_from, and the totals, so the list needs no detail call per row."""
+    return {**campaign_view(campaign), **config_view(config or {}), "totals": totals_view(totals)}
 
 
 def verdict_counts(coverage: ClassCoverage) -> Dict[str, Dict[str, int]]:
@@ -87,14 +147,16 @@ def classes_view(records: Sequence[ClassRecord], coverage: Iterable[ClassCoverag
     return [class_view(record, by_class.get(record.class_id)) for record in records]
 
 
-def campaign_detail_view(campaign: CampaignRecord, classes: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """The campaign with its classes (counts and verdicts per run and state) and their totals."""
+def campaign_detail_view(campaign: CampaignRecord, classes: List[Dict[str, Any]], config: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    """The campaign with its classes (counts and verdicts per run and state) and their totals; given its config, also steps, input and made_from."""
     verdicts: Dict[str, int] = {}
     for entry in classes:
         for states in entry["verdicts"].values():
             for state, count in states.items():
                 verdicts[state] = verdicts.get(state, 0) + count
     view = campaign_view(campaign)
+    if config is not None:
+        view.update(config_view(config))
     view["totals"] = {
         "classes": len(classes),
         "classes_open": sum(1 for entry in classes if entry["state"] == "open"),
@@ -169,7 +231,8 @@ def run_record_view(record: RunRecord) -> Dict[str, Any]:
         "class_id": record.class_id,
         "run_index": record.run_index,
         "repeat_index": record.repeat_index,
-        "trajectory_generator": record.trajectory_generator.value,
+        "trajectory_generator": None if record.trajectory_generator is None else record.trajectory_generator.value,  # None for a recorded live session
+        "source": record.source.value,
         "trajectories_complete": record.trajectories_complete,
         "stack": record.stack,
         "repeatability_tier": record.repeatability_tier,
@@ -194,6 +257,7 @@ def verdict_view(verdict: VerdictRecord) -> Dict[str, Any]:
         "case_index": verdict.case_index,
         "campaign_id": verdict.campaign_id,
         "class_id": verdict.class_id,
+        "step": verdict.step.value,
         "run_index": verdict.run_index,
         "run_record_id": verdict.run_record_id,
         "state": verdict.state.value,
@@ -217,6 +281,54 @@ def verdict_row(verdict: VerdictRecord) -> List[Any]:
 
 def event_view(event: CampaignEventRecord) -> Dict[str, Any]:
     return {"event_id": event.event_id, "at": iso(event.at), "kind": event.kind.value, "class_id": event.class_id, "detail": event.detail}
+
+
+def output_view(output: OutputRecord, source_exists: Callable[[str], bool] = lambda campaign_id: True) -> Dict[str, Any]:
+    """An output of a step. The artifact is None while the step has none or once its record is gone; an input source whose campaign was deleted since reads as {}."""
+    artifact = output.artifact
+    reference = None
+    if artifact is not None and artifact.size_bytes is not None and artifact.kind is not None:
+        reference = {"sha256": artifact.sha256, "size_bytes": artifact.size_bytes, "kind": artifact.kind, "media_type": artifact.media_type, "pointer": artifact.pointer}
+    source = output.input_source
+    if source is not None and source.get("campaign_id") is not None and not source_exists(source["campaign_id"]):
+        source = {}
+    return {
+        "case_id": output.case_id,
+        "case_index": output.case_index,
+        "class_id": output.class_id,
+        "state": output.state.value,
+        "reason": output.reason,
+        "artifact": reference,
+        "valid": output.valid,
+        "complete": output.complete,
+        "run_index": output.run_index,
+        "repeat_index": output.repeat_index,
+        "run_record_id": output.run_record_id,
+        "verdict": None if output.verdict_state is None else {"state": output.verdict_state.value, "failed_rules": list(output.failed_rules)},
+        "input_source": source,
+    }
+
+
+def source_campaigns(outputs: Iterable[OutputRecord]) -> Set[str]:
+    """The campaigns the outputs' input sources name."""
+    return {output.input_source["campaign_id"] for output in outputs if output.input_source is not None and output.input_source.get("campaign_id") is not None}
+
+
+def findings_view(step: str, findings: StepFindings) -> Dict[str, Any]:
+    """The findings of a step, which echo the step as the API names it (scene_generation, not scene)."""
+    verdicts = {state.value: count for state, count in findings.verdicts.items()}
+    return {
+        "step": step,
+        "monitored": findings.monitored,
+        "cases": {state.value: count for state, count in findings.cases.items()},
+        "outputs": {"count": findings.outputs_count, "valid": findings.outputs_valid, "complete": findings.outputs_complete},
+        "verdicts": {"passed": verdicts.get("passed", 0), "failed": verdicts.get("failed", 0), "unmonitored": verdicts.get("unmonitored", 0)},
+        "failed_rules": [
+            {"rule": rule.rule, "count": rule.count, "first_failure_time_s": {"min": rule.first_failure_time_min_s, "median": rule.first_failure_time_median_s}} for rule in findings.failed_rules
+        ],
+        "classes": [{"class_id": entry.class_id, "cases": entry.cases, "passed": entry.passed, "failed": entry.failed} for entry in findings.classes],
+        "durations_s": {"median": findings.duration_median_s, "p90": findings.duration_p90_s},
+    }
 
 
 def validated_campaign_view(validated: Any) -> Dict[str, Any]:
