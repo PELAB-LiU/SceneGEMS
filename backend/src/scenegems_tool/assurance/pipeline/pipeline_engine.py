@@ -84,7 +84,6 @@ from scenegems_tool.assurance.pipeline.coverage_controller import Backpressure, 
 from scenegems_tool.assurance.pipeline.engine_leadership import EngineLeadership, LeadershipLost
 from scenegems_tool.assurance.pipeline.payload_builder import required_fingerprints
 from scenegems_tool.assurance.pipeline.pipeline_queries import UNFINISHED_JOB_STATES, case_states, delete_intent, job_id_by_key, next_case_indexes, pin_fingerprints, unfinished_jobs_of_final_cases
-from scenegems_tool.assurance.pipeline.stage_graph import STAGE_JOB_TYPES
 from scenegems_tool.cluster.protocol.jobs import JobSubmission, JobType
 from scenegems_tool.persistence.clock import Clock, utc_now
 from scenegems_tool.persistence.schema import (
@@ -560,12 +559,13 @@ class PipelineEngine:
         allowed = frozenset(context.config.resources.nodes)
         missing = []
         for stage, count in sorted(queued.items(), key=lambda item: item[0].value):
-            job_type = STAGE_JOB_TYPES.get(stage)
-            if count <= 0 or job_type is None:
+            if count <= 0:
                 continue
-            fingerprints = required_fingerprints(job_type, {}, context.pinned)
-            if not any(node.runs(job_type, fingerprints, labels, allowed) for node in nodes):
-                missing.append(job_type)
+            # The simulate stage queues one job type per distinct stack of the runs (kinematic, ArduPilot SITL, Gazebo)
+            for job_type, images in context.graph.stage_jobs(stage):
+                fingerprints = required_fingerprints(job_type, images, context.pinned)
+                if job_type not in missing and not any(node.runs(job_type, fingerprints, labels, allowed) for node in nodes):
+                    missing.append(job_type)
         return missing
 
     def _stop_condition(self, session: Session, context: CampaignContext, now: datetime) -> Optional[str]:

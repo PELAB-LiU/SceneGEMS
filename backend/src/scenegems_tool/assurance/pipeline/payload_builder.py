@@ -16,6 +16,10 @@
                             trajectory_data with pointer /trajectories, or the inline list), or an
                             input item's trajectories reference; the stack's mode and parameters,
                             the run seed, the live monitor options
+    simulation.ardupilot    the same trajectories for a run on an ArduPilot stack: its simulation layer,
+                            speedup, geofence, dt, steps and the run seed; the observed run comes back
+                            as trajectories (include_trajectories), with the live monitor options when
+                            the run is judged live and no state rows (the trajectories are the state log)
     monitoring.post_hoc     (monitor) the simulation result's trajectories, the COLREGS constants
     calibration.deviation   the trajectories of the run's repeats
 
@@ -32,7 +36,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from pydantic import ValidationError
 
-from scenegems_tool.assurance.campaign.campaign_config import MAX_SEED, CampaignConfig, FunctionalScenarioInput, InputArtifactKind, InputItem, InputRef
+from scenegems_tool.assurance.campaign.campaign_config import MAX_SEED, ArdupilotStackConfig, CampaignConfig, FunctionalScenarioInput, InputArtifactKind, InputItem, InputRef, RunConfig
 from scenegems_tool.assurance.campaign.campaign_inputs import input_of_class
 from scenegems_tool.assurance.campaign.class_catalog import ClassCatalog
 from scenegems_tool.assurance.pipeline.stage_graph import StageGraph, Step
@@ -129,7 +133,8 @@ class PayloadBuilder:
     def __init__(self, config: CampaignConfig, catalog: Optional[ClassCatalog] = None):
         self.config = config
         self.catalog = catalog or ClassCatalog.default()
-        self.priority_offsets = StageGraph(config).priority_offsets
+        self.graph = StageGraph(config)
+        self.priority_offsets = self.graph.priority_offsets
         self._contents: Dict[str, str] = {}
 
     # Payloads
@@ -188,6 +193,8 @@ class PayloadBuilder:
 
     def _simulation(self, case_seed: int, run_index: int, trajectories: Any) -> Dict[str, Any]:
         run = self.config.execution.runs[run_index]
+        if isinstance(run.stack, ArdupilotStackConfig):
+            return self._ardupilot_simulation(run, run.stack, run.seed_for(case_seed, run_index), trajectories)
         stack = run.stack
         payload: Dict[str, Any] = {"mode": stack.mode.value, "trajectories": trajectories, "seed": run.seed_for(case_seed, run_index)}
         if stack.usv_navigation is not None:
@@ -198,6 +205,25 @@ class PayloadBuilder:
             payload["steps"] = stack.steps
         if run.monitor == MonitorImplementation.LIVE:
             payload.update(monitor="live", early_stop=run.early_stop, colregs_constraints_content=self.config.domain.colregs_constants)
+        return payload
+
+    def _ardupilot_simulation(self, run: RunConfig, stack: ArdupilotStackConfig, seed: int, trajectories: Any) -> Dict[str, Any]:
+        """The simulation.ardupilot payload of a run: the observed run always comes back as trajectories (what the post-hoc monitor, the calibration and the frames take)."""
+        payload: Dict[str, Any] = {
+            "simulation_layer": stack.simulation_layer,
+            "trajectories": trajectories,
+            "geofence": stack.geofence.model_dump(mode="json"),
+            "speedup": stack.speedup,
+            "seed": seed,
+            "include_states": False,  # the sample rows would be a second state log next to the trajectories
+            "include_trajectories": True,
+        }
+        if stack.dt is not None:
+            payload["dt"] = stack.dt
+        if stack.steps is not None:
+            payload["steps"] = stack.steps
+        if run.monitor == MonitorImplementation.LIVE:
+            payload.update(monitor="live", colregs_constraints_content=self.config.domain.colregs_constants)
         return payload
 
     def post_hoc_monitoring(self, scenario_id: str, simulation_result: Mapping[str, Any]) -> Dict[str, Any]:
@@ -227,11 +253,12 @@ class PayloadBuilder:
 
     def submission(self, step: Step, payload: Dict[str, Any], key: str, pinned: Mapping[str, str]) -> JobSubmission:
         """The job of a step, checked: its payload, the campaign's labels and nodes, the pinned fingerprints of its images, its priority."""
-        validate_payload(step.job_type, payload)
+        job_type = self.graph.job_type_of(step)
+        validate_payload(job_type, payload)
         resources = self.config.resources
-        requirements = JobRequirements(labels=dict(resources.required_labels), fingerprints=required_fingerprints(step.job_type, payload, pinned))
+        requirements = JobRequirements(labels=dict(resources.required_labels), fingerprints=required_fingerprints(job_type, payload, pinned))
         return JobSubmission(
-            job_type=step.job_type,
+            job_type=job_type,
             payload=payload,
             requirements=requirements,
             priority=step.priority(resources.priority, self.priority_offsets),

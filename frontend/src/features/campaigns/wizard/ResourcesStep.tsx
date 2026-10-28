@@ -2,7 +2,7 @@ import { Disclosure } from "../../../components/Disclosure";
 import type { NodeView } from "../../../domain/cluster/schemas";
 import { formatMegabytes } from "../../cluster/clusterFormat";
 import { plural } from "../campaignFormat";
-import { capabilityLabel, fullUsageQueueDepth, nodeProblems, slotsByJobType, type CapabilityCoverage } from "../resourcePlan";
+import { capabilityLabel, fullUsageQueueDepth, nodeProblems, simulationJobTypesOf, slotsByJobType, type CapabilityCoverage } from "../resourcePlan";
 import { requiredLabelsOf, stagesOf } from "./configBuilder";
 import { Field, FieldIssues, NumberField } from "./fields";
 import { reasonsOfEntry, splitByField } from "./reasons";
@@ -86,7 +86,8 @@ export function ResourcesStep({ draft, update, reasons, cluster }: ResourcesStep
   const plan = cluster.plan;
   const requiredJobTypes = new Set(plan?.required.map((capability) => capability.jobType) ?? []);
   const usableIds = cluster.nodes.filter((node) => nodeProblems(node, labels).length === 0).map((node) => node.node_id);
-  const fullDepth = fullUsageQueueDepth(cluster.slots);
+  const simulators = simulationJobTypesOf(plan?.required ?? []);
+  const fullDepth = fullUsageQueueDepth(cluster.slots, simulators);
   const selectedNodes = cluster.nodes.filter((node) => resources.nodes.includes(node.node_id));
 
   const setFullUsage = (fullUsage: boolean) =>
@@ -248,7 +249,7 @@ export function ResourcesStep({ draft, update, reasons, cluster }: ResourcesStep
                   type="button"
                   disabled={selectedNodes.length === 0}
                   onClick={() => {
-                    const sized = fullUsageQueueDepth(slotsByJobType(selectedNodes, labels));
+                    const sized = fullUsageQueueDepth(slotsByJobType(selectedNodes, labels), simulators);
                     update((next) => void (next.resources.queueDepth = sized));
                   }}
                 >

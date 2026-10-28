@@ -115,6 +115,9 @@ function RunCard({
             onChange={(event) =>
               onChange((item) => {
                 item.stackId = event.target.value;
+                if (catalog.stacks.find((entry) => entry.id === item.stackId)?.supports_early_stop === false) {
+                  item.earlyStop = false;
+                }
                 item.stackParameters = {};
                 item.groups = {};
                 item.windVector = null;
@@ -156,7 +159,7 @@ function RunCard({
         <Field
           label="Early stop"
           htmlFor={`run-early-${run.id}`}
-          hint={monitor?.supports_early_stop ? "Stop the run once every rule is decided." : "Needs the live monitor."}
+          hint={!stack?.supports_early_stop && stack ? "This stack runs to the end: a run on it does not stop early." : monitor?.supports_early_stop ? "Stop the run once every rule is decided." : "Needs the live monitor."}
           issues={byField.get("early_stop")}
         >
           <label className="wiz-check">
@@ -164,7 +167,7 @@ function RunCard({
               id={`run-early-${run.id}`}
               type="checkbox"
               checked={run.earlyStop}
-              disabled={!monitor?.supports_early_stop}
+              disabled={!monitor?.supports_early_stop || stack?.supports_early_stop === false}
               onChange={(event) => onChange((item) => void (item.earlyStop = event.target.checked))}
             />
             early_stop

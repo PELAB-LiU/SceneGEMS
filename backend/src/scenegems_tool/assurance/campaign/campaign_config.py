@@ -13,7 +13,8 @@ Sections:
     trajectories    the generator: monitor_driven_rrt with its search parameters (the wire keys of
                     TrajectoryGenerationParams) or straight with its timespan; the timeout; format 2:
                     the monitor of the planned trajectories (post_hoc or empty)
-    execution       the runs of every case: a stack, an environment, a seed, repeats, the monitor
+    execution       the runs of every case: a stack (kinematic, or ArduPilot SITL or Gazebo replay), an
+                    environment, a seed, repeats, the monitor
     resources       the nodes it may use (all when none are named), required node labels, queue depth
                     caps per stage, priority
     policy          retention, whether to keep frames, the campaign seed, stop conditions
@@ -36,11 +37,12 @@ one (RunConfig.seed_for).
 import hashlib
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Literal, Mapping, Optional, Tuple, Union
+from typing import Annotated, Any, Dict, Literal, Mapping, Optional, Tuple, Union
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidatorFunctionWrapHandler, WrapValidator, field_validator, model_validator
 
+from scenegems_tool.cluster.node.daemon.configuration.node_configuration import DEFAULT_REFERENCE_GEOFENCE
 from scenegems_tool.cluster.node.jobs.simulation_kinematic_job import KinematicMode, UsvNavigationPayload
 from scenegems_tool.cluster.node.jobs.trajectory_generation_job import PARAM_KEYS
 from scenegems_tool.cluster.protocol.artifacts import JSON_MEDIA_TYPE, SHA256_PATTERN
@@ -291,7 +293,7 @@ class EnvironmentSettings(ConfigModel):
 class KinematicStackConfig(ConfigModel):
     """A run on the kinematic layer: every vessel replays, or the own ship runs USV Navigation.
 
-    Stacks on other simulation layers (ArduPilot) join as a union on simulation_layer.
+    The stacks on the ArduPilot layers are ArdupilotStackConfig; StackConfig is the union on simulation_layer.
     """
 
     simulation_layer: Literal["kinematic"] = "kinematic"
@@ -307,7 +309,51 @@ class KinematicStackConfig(ConfigModel):
         return self
 
 
-StackConfig = KinematicStackConfig
+ARDUPILOT_LAYERS = ("ardupilot_sim", "gazebo")  # the simulation layers of ArdupilotStackConfig, as ArduPilotSimulationLayer names them
+DEFAULT_GEOFENCE_LATITUDE, DEFAULT_GEOFENCE_LONGITUDE, DEFAULT_GEOFENCE_RADIUS_M = DEFAULT_REFERENCE_GEOFENCE  # the workbench's reference area
+
+
+class GeofenceSettings(ConfigModel):
+    """The reference area that maps the scenes' local frame to SITL's home positions; the workbench's default when absent."""
+
+    latitude: float = Field(default=DEFAULT_GEOFENCE_LATITUDE, ge=-90, le=90)
+    longitude: float = Field(default=DEFAULT_GEOFENCE_LONGITUDE, ge=-180, le=180)
+    radius_meters: float = Field(default=DEFAULT_GEOFENCE_RADIUS_M, gt=0)
+
+
+class ArdupilotStackConfig(ConfigModel):
+    """A run on ArduPilot SITL (ardupilot_sim) or on SITL against a Gazebo world (gazebo): every vessel replays its trajectory.
+
+    The ASV software is replay over the replay_mavlink_lockstep adapter, in the bounded repeatability
+    tier, as simulation.ardupilot runs it. The job applies no environment, so a run on this stack is calm.
+    """
+
+    simulation_layer: Literal["ardupilot_sim", "gazebo"]
+    mode: Literal["replay"] = "replay"
+    speedup: int = Field(default=1, ge=1)  # SITL's requested pace, as the resolver checks it
+    dt: Optional[float] = Field(default=None, gt=0)  # the trajectories' time step when absent; whole seconds
+    steps: Optional[int] = Field(default=None, ge=1)  # the trajectories' timespan when absent
+    geofence: GeofenceSettings = Field(default_factory=GeofenceSettings)
+
+    @field_validator("dt")
+    @classmethod
+    def _whole_seconds(cls, dt: Optional[float]) -> Optional[float]:
+        if dt is not None and not float(dt).is_integer():
+            raise ValueError("the observed trajectories and the live monitor need a whole number of seconds as dt")
+        return dt
+
+
+def _stack_by_layer(value: Any, handler: ValidatorFunctionWrapHandler) -> Any:
+    """Validates a stack as the model of its simulation_layer (kinematic when it names none), so an error names the field under stack and not a union member."""
+    if isinstance(value, (KinematicStackConfig, ArdupilotStackConfig)):
+        return value
+    layer = value.get("simulation_layer", "kinematic") if isinstance(value, Mapping) else None
+    if layer != "kinematic" and layer not in ARDUPILOT_LAYERS and isinstance(value, Mapping):
+        raise ValueError(f"unknown simulation_layer {layer!r}; a stack runs on kinematic, {', '.join(ARDUPILOT_LAYERS)}")
+    return (ArdupilotStackConfig if layer in ARDUPILOT_LAYERS else KinematicStackConfig).model_validate(value)
+
+
+StackConfig = Annotated[Union[KinematicStackConfig, ArdupilotStackConfig], WrapValidator(_stack_by_layer)]
 
 
 class RunConfig(ConfigModel):
@@ -323,6 +369,8 @@ class RunConfig(ConfigModel):
     def _early_stop_needs_the_live_monitor(self) -> "RunConfig":
         if self.early_stop and self.monitor != MonitorImplementation.LIVE:
             raise ValueError("early_stop needs the live monitor")
+        if self.early_stop and isinstance(self.stack, ArdupilotStackConfig):
+            raise ValueError("the ArduPilot stacks do not stop early: the lockstep run always finishes")
         return self
 
     def seed_for(self, case_seed_value: int, run_index: int) -> int:

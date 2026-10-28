@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { campaignInputSchema } from "../../../domain/cluster/campaignApi";
+import { defaultReferenceGeofence } from "../connection/referenceGeofence";
 import {
   entryName,
   MAX_ENTRY_SEED,
@@ -9,6 +10,7 @@ import {
   scenarioInputName,
   sceneEntryConfig,
   simulationEntryConfig,
+  simulationStack,
   toConfigYaml,
   trajectoryEntryConfig,
   WORKBENCH_ORIGIN,
@@ -112,6 +114,38 @@ describe("simulation entries", () => {
       execution: { runs: [{ stack: { simulation_layer: "kinematic", mode: "usv_navigation" }, monitor: "live" }] },
       policy: { keep_frames: true, seed: 5 },
     });
+  });
+});
+
+describe("ArduPilot simulation entries", () => {
+  const trajectories = { name: "planned", ref: trajectoriesRef, source: { campaign_id: "wb1", case_id: 1, step: "trajectory_generation" as const } };
+
+  it("runs one trajectory item on SITL with its pace and the Connections page's geofence", () => {
+    const config = simulationEntryConfig({
+      name: "Simulation",
+      trajectories,
+      plan: { where: "cluster", jobType: "simulation.ardupilot", simulationLayer: "ardupilot_sim", speedup: 4, summary: "" },
+      colregsConstraintsContent: "colregs: 1\n",
+      seed: 5,
+      geofence: { latitude: 58.1, longitude: 15.2, radius_meters: 35 },
+    });
+    expect(config).toMatchObject({
+      format: 2,
+      steps: ["simulation"],
+      input: { items: [{ name: "planned", ref: trajectoriesRef }] },
+      execution: { runs: [{ stack: { simulation_layer: "ardupilot_sim", mode: "replay", speedup: 4, geofence: { latitude: 58.1, longitude: 15.2, radius_meters: 35 } }, monitor: "live" }] },
+      policy: { keep_frames: true, seed: 5 },
+    });
+    expect(config.execution).toEqual({ runs: [{ stack: simulationStack({ where: "cluster", jobType: "simulation.ardupilot", simulationLayer: "ardupilot_sim", speedup: 4, summary: "" }, { latitude: 58.1, longitude: 15.2, radius_meters: 35 }), monitor: "live" }] });
+  });
+
+  it("uses the workbench's default reference area when none is given, and Gazebo as its own layer", () => {
+    const stack = simulationStack({ where: "cluster", jobType: "simulation.ardupilot", simulationLayer: "gazebo", speedup: 1, summary: "" });
+    expect(stack).toEqual({ simulation_layer: "gazebo", mode: "replay", speedup: 1, geofence: { ...defaultReferenceGeofence } });
+  });
+
+  it("leaves the kinematic stack as it was, without a speedup or a geofence", () => {
+    expect(simulationStack({ where: "cluster", jobType: "simulation.kinematic", mode: "replay", ownShipId: null, summary: "" })).toEqual({ simulation_layer: "kinematic", mode: "replay" });
   });
 });
 

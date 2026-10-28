@@ -84,6 +84,15 @@ describe("checkDraft", () => {
     expect(checkDraft(draft, catalog)).toEqual([]);
   });
 
+  it("flags early stop on a stack that runs to the end", () => {
+    const draft = validDraft();
+    draft.runs = [{ ...emptyRun("ardupilot_sim.replay"), monitor: "live", earlyStop: true }];
+    expect(messages(draft)).toEqual(["runs/0/early_stop"]);
+    expect(checkDraft(draft, catalog)[0].message).toBe("Replay on ArduPilot SITL runs to the end: a run on it does not stop early.");
+    draft.runs[0].earlyStop = false;
+    expect(checkDraft(draft, catalog)).toEqual([]);
+  });
+
   it("requires the USV Navigation values once the group is set", () => {
     const draft = validDraft();
     draft.runs = [{ ...emptyRun("kinematic.usv_navigation"), groups: { usv_navigation: { speed: 4 } } }];

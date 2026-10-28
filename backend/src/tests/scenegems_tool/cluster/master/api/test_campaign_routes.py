@@ -145,9 +145,11 @@ def test_a_config_the_catalog_refuses_answers_422_with_every_reason(client):
 
 def test_a_config_the_resolver_refuses_answers_422(client):
     config = yaml.safe_load(small_config())
-    config["execution"]["runs"][0]["stack"] = {"simulation_layer": "gazebo", "mode": "replay"}
+    config["execution"]["runs"][0]["stack"] = {"simulation_layer": "ardupilot_sim", "mode": "replay", "speedup": 1000}  # a pace the resolver measured as too fast
     response = create(client, yaml.safe_dump(config))
-    assert response.status_code == 422 and response.json()["detail"]["reasons"]
+    assert response.status_code == 422 and "speedup 1000 exceeds the measured max_speedup" in response.json()["detail"]["reasons"][0]
+    config["execution"]["runs"][0]["stack"] = {"simulation_layer": "gazebo", "mode": "replay"}
+    assert create(client, yaml.safe_dump(config)).status_code == 201, "a Gazebo replay is a valid stack since P6.6"
 
 
 def test_a_body_in_another_format_is_refused(client):

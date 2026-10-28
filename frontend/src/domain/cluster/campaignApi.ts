@@ -55,6 +55,8 @@ export const catalogStackSchema = z.object({
   available: z.boolean(),
   reasons: z.array(z.string()),
   repeatability_tier: z.string().nullable(),
+  /** Whether the live monitor can stop a run on this stack early; an older master leaves it out (the kinematic stacks can). */
+  supports_early_stop: z.boolean().default(true),
   vessels: z.record(z.string(), stackTripleSchema),
   /** wind and waves: `supported`, `unmeasured` or `unsupported`. */
   environment: z.object({

@@ -7,6 +7,7 @@ import type { ParsedServerMessage } from "../../../domain/simulation/protocol";
 import { useTrajectoryGenerationStore } from "../../../domain/trajectoryGeneration/trajectoryGenerationStore";
 import { sampleCampaignDetail, sampleCampaignSummary, sampleCase } from "../../../test/fixtures/clusterViews";
 import { useScenePageStore, useTrajectoryPageStore } from "../pages/pageStore";
+import { useClusterRunStore } from "./clusterRunStore";
 import { WorkbenchJobDriver, type ClusterAccess } from "./workbenchJobDriver";
 
 const SCENE_SHA = "a".repeat(64);
@@ -188,6 +189,70 @@ describe("workbench job driver", () => {
     expect(master.uploads).toEqual([]);
     const seeds = master.created.map(({ body }) => parse(body.config as string).policy.seed);
     expect(seeds[0]).not.toBe(seeds[1]);
+  });
+
+  it("runs an ArduPilot replay as a workbench entry with the ArduPilot stack and the Connections page's geofence", async () => {
+    const created: Record<string, unknown>[] = [];
+    const client = {
+      request: async (method: string, path: string, _schema: unknown, options: { body?: Record<string, unknown> } = {}) => {
+        if (method === "POST" && path === "/cluster/campaigns") {
+          created.push(options.body ?? {});
+          return { data: { ...sampleCampaignDetail(), campaign_id: "wb2" }, total: null };
+        }
+        throw new Error(`unexpected ${method} ${path}`);
+      },
+      listCases: async () => ({ items: [{ ...sampleCase, campaign_id: "wb2", case_id: 1, class_id: "item/0", state: "active", stage: "simulate" }], total: 1 }),
+      getCampaign: async () => ({ ...sampleCampaignSummary, campaign_id: "wb2" }),
+      getCase: async () =>
+        caseDetailSchema.parse({
+          ...sampleCase,
+          campaign_id: "wb2",
+          case_id: 1,
+          class_id: "item/0",
+          stage: "verdict",
+          state: "complete",
+          progress: {},
+          jobs: [{ ...caseJob("simulate", "s1", "succeeded"), run_index: 0, repeat_index: 0 }],
+          run_records: [],
+          verdicts: [],
+        }),
+      getJob: async (jobId: string) => jobView(jobId, "succeeded", { trajectories: { scene_list: [] } }),
+      cancelJob: async () => ({}),
+      controlCampaign: async () => ({}),
+      artifactUrl: (sha256: string) => sha256,
+    } as unknown as OperatorClient;
+    const requested: string[] = [];
+    const driver = new WorkbenchJobDriver(() => ({
+      cluster: { client, channel: null },
+      resources: (jobType) => {
+        requested.push(jobType);
+        return { jobType, nodes: 1, slots: 1, freeSlots: 1, blocker: null };
+      },
+    }));
+    driver.pollMs = 1;
+    driver.jobPollMs = 1;
+    const ref = { sha256: TRAJECTORY_SHA, size_bytes: 9, kind: "trajectories", media_type: "application/json", pointer: null };
+    await driver.runSimulationEntry(
+      { where: "cluster", jobType: "simulation.ardupilot", simulationLayer: "gazebo", speedup: 3, summary: "" },
+      {
+        input: { label: "planned", origin: "history", ref, source: { campaign_id: "c1", case_id: 5, step: "trajectory_generation" } },
+        scenarioContent: null,
+        colregsConstraintsContent: "colregs: 1\n",
+        geofence: { latitude: 58.1, longitude: 15.2, radius_meters: 35 },
+      }
+    );
+
+    expect(requested).toContain("simulation.ardupilot");
+    const [body] = created;
+    expect(body).toMatchObject({ kind: "workbench", origin: "simulation", start: true });
+    expect(parse(body.config as string)).toMatchObject({
+      format: 2,
+      steps: ["simulation"],
+      input: { items: [{ name: "planned", ref: { sha256: TRAJECTORY_SHA }, source: { campaign_id: "c1", case_id: 5, step: "trajectory_generation" } }] },
+      execution: { runs: [{ stack: { simulation_layer: "gazebo", mode: "replay", speedup: 3, geofence: { latitude: 58.1, longitude: 15.2, radius_meters: 35 } }, monitor: "live" }] },
+      policy: { keep_frames: true },
+    });
+    expect(useClusterRunStore.getState()).toMatchObject({ status: "done", message: "Finished: 0 frames." });
   });
 
   it("stops a followed workbench entry on the page's Stop, and only leaves a followed campaign", async () => {

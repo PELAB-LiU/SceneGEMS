@@ -112,7 +112,7 @@ flowchart LR
 2. **Generate scenes and trajectories**: jobs on the active cluster (`features/workbench/cluster/`: `WorkbenchJobDriver` submits `scene_generation`, `trajectory_generation` and `monitoring.post_hoc` jobs through the operator API, follows them on the live channel and reports them to the stores as `generated_scene`, `trajectory_generation_preview` and `trajectory_generation_result`). A job type no usable node offers is not submitted; `workbenchResources.ts` says why.
 3. **Load scenario**: `load_scenario_file` -> `preview_trajectory_chunk`(s), then the cluster's post-hoc monitor replaces the preview with monitored frames
    A bare scene loads as its initial scene only (`initial_state` with trajectory length 0); trajectories come from the trajectory generator, and the simulation refuses to run without them.
-4. **Run on the cluster**: a kinematic setup runs as one `simulation.kinematic` job (`simulationJobs.ts`), its frames observed on `instance:<node>/job-<id>-<attempt>`
+4. **Run on the cluster**: a kinematic setup runs as one `simulation.kinematic` job, a replay on ArduPilot SITL or Gazebo as one `simulation.ardupilot` job (`simulationJobs.ts`), each as a workbench entry whose run is the matching stack of the campaign config (`pages/entryConfig.ts` `simulationStack`); the frames are observed on `instance:<node>/job-<id>-<attempt>`
 5. **Live session**: `connect_to_mqtt_broker` (the master's broker by default), `initialize_simulation` -> `initial_state`, `start_simulation` -> `simulation_trajectory_chunk`(s) and live `frame` pushes
 
 `playbackStore.ts` makes one store per page (`createPlaybackStore`): `useScenePlaybackStore` (the

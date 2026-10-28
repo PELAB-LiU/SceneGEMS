@@ -8,6 +8,8 @@ import {
   planOfConfig,
   planResources,
   requiredCapabilities,
+  simulationJobType,
+  simulationJobTypesOf,
   slotsByJobType,
   startBlocker,
 } from "./resourcePlan";
@@ -38,6 +40,44 @@ describe("requiredCapabilities", () => {
     expect(repeated.map((capability) => capability.stage)).toEqual(["generate_scene", "generate_trajectories", "simulate", "monitor", "calibrate"]);
     expect(repeated[3].reason).toBe("The post hoc monitor judges nav and run 2.");
     expect(repeated[4].reason).toBe("The repeats of nav and run 2 are compared.");
+  });
+});
+
+describe("requiredCapabilities of a campaign with ArduPilot runs", () => {
+  const sitl = { name: "sitl", stack: { simulation_layer: "ardupilot_sim" }, monitor: "post_hoc" };
+  const world = { stack: { simulation_layer: "gazebo" }, monitor: "live" };
+
+  it("reads the simulation job type of a run from its stack, as stage_graph does", () => {
+    expect(simulationJobType({ simulation_layer: "ardupilot_sim" })).toBe("simulation.ardupilot");
+    expect(simulationJobType({ simulation_layer: "gazebo" })).toBe("simulation.ardupilot");
+    expect(simulationJobType({ simulation_layer: "kinematic", mode: "replay" })).toBe("simulation.kinematic");
+    expect(simulationJobType({ mode: "usv_navigation" })).toBe("simulation.kinematic");
+    expect(simulationJobType(undefined)).toBe("simulation.kinematic");
+  });
+
+  it("needs the ArduPilot simulation instead of the kinematic one when every run is on ArduPilot", () => {
+    const required = requiredCapabilities(config([sitl]));
+    expect(required.map((capability) => capability.jobType)).toEqual(["scene_generation", "trajectory_generation", "simulation.ardupilot", "monitoring.post_hoc"]);
+    expect(required[2]).toMatchObject({ stage: "simulate", reason: "The run is simulated on ArduPilot SITL or Gazebo." });
+    expect(requiredCapabilities(config([sitl, world]))[2].reason).toBe("Each of the 2 runs is simulated on ArduPilot SITL or Gazebo.");
+  });
+
+  it("needs both simulation jobs for a mix, naming the runs of each", () => {
+    const required = requiredCapabilities(config([{ name: "kinematic" }, sitl, world]));
+    const simulations = required.filter((capability) => capability.stage === "simulate");
+    expect(simulations.map((capability) => [capability.jobType, capability.reason])).toEqual([
+      ["simulation.kinematic", "kinematic is simulated on the kinematic layer."],
+      ["simulation.ardupilot", "sitl and run 3 are simulated on ArduPilot SITL or Gazebo."],
+    ]);
+    expect(capabilityLabel("simulation.ardupilot")).toBe("ArduPilot simulation");
+  });
+
+  it("is missing when no usable node offers the ArduPilot simulation", () => {
+    const nodes = [node("a", PIPELINE), node("b", { "simulation.ardupilot": 2 })];
+    const plan = planOfConfig(config([sitl], {}), [nodes[0]]);
+    expect(plan.missing.map((capability) => capability.jobType)).toEqual(["simulation.ardupilot"]);
+    expect(startBlocker(plan)).toBe("No usable machine of the campaign runs ardupilot simulation.");
+    expect(planOfConfig(config([sitl], {}), nodes).missing).toEqual([]);
   });
 });
 
@@ -150,6 +190,16 @@ describe("full usage", () => {
       generate_scene: 40,
       calibrate: 9,
     });
+  });
+
+  it("sizes the simulate cap to the slots of the simulation jobs the runs use", () => {
+    const slots = { "simulation.kinematic": 12, "simulation.ardupilot": 20 };
+    expect(fullUsageQueueDepth(slots, ["simulation.ardupilot"]).simulate).toBe(32);
+    expect(fullUsageQueueDepth(slots, ["simulation.kinematic", "simulation.ardupilot"]).simulate).toBe(32);
+    expect(fullUsageQueueDepth({ "simulation.ardupilot": 50 }, ["simulation.ardupilot"]).simulate).toBe(50);
+    expect(fullUsageQueueDepth({ "simulation.ardupilot": 50 }).simulate).toBe(QUEUE_DEPTH_DEFAULTS.simulate);
+    expect(simulationJobTypesOf(requiredCapabilities(config([{ stack: { simulation_layer: "gazebo" } }, {}])))).toEqual(["simulation.ardupilot", "simulation.kinematic"]);
+    expect(simulationJobTypesOf([])).toEqual(["simulation.kinematic"]);
   });
 
   it("names capabilities without the comma of the cluster labels", () => {

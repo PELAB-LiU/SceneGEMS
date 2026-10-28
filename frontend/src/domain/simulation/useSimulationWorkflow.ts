@@ -23,7 +23,7 @@ import {
   type TrajectoryEntryRequest,
 } from "../../features/workbench/cluster/workbenchJobDriver";
 import type { SceneGenerationInput } from "../../features/workbench/cluster/workbenchJobs";
-import { KINEMATIC_SIMULATION_JOB, simulationSubmission, type ClusterRunPlan } from "../../features/workbench/cluster/simulationJobs";
+import { simulationSubmission, type ClusterRunPlan } from "../../features/workbench/cluster/simulationJobs";
 import { useSimulationSetupRequestStore } from "../../features/workbench/controls/simulationSetupRequest";
 import type { LoadedRun } from "../../features/workbench/pages/entryLoader";
 import { useSimulationPageStore, type PageInput } from "../../features/workbench/pages/pageStore";
@@ -64,11 +64,18 @@ export interface LoadScenarioOptions {
   replayFrames?: SimulationFrame[];
 }
 
-/** The setup of a loaded run as the simulation controls take it. */
-function setupRequestOf(run: LoadedRun) {
+/** The simulator a recorded simulation layer is selected as (`planSimulationRun` plans these layers on the cluster). */
+const SIMULATOR_OF_LAYER = { ardupilot_sim: "ArduPilot Sim", gazebo: "Gazebo" } as const;
+
+/** The setup of a loaded run as the simulation controls take it: the kinematic layer, or replay on ArduPilot SITL or Gazebo. */
+export function setupRequestOf(run: LoadedRun) {
   const waves = run.setup.waves;
+  const layer = run.setup.simulationLayer;
+  const arduPilot = layer === "ardupilot_sim" || layer === "gazebo";
   return {
-    simulatorType: "Kinematic" as const,
+    simulatorType: arduPilot ? SIMULATOR_OF_LAYER[layer] : ("Kinematic" as const),
+    controlLayer: arduPilot ? ("ardupilot" as const) : ("none" as const),
+    speedup: arduPilot ? run.setup.speedup : null,
     mode: run.setup.mode === "usv_navigation" ? ("usv_navigation" as const) : ("replay" as const),
     windVector: run.setup.windVector,
     wave: waves === null ? null : { amplitude: waves.amplitude, period: waves.period, steepness: waves.steepness, east: waves.direction[0], north: waves.direction[1] },
@@ -605,9 +612,9 @@ export function useSimulationWorkflow() {
       driver.stopTrajectories(true);
     },
     /**
-     * Runs the loaded trajectories on the cluster; the frames fill the simulation stream. A kinematic
-     * run is a workbench entry with the page's input; an ArduPilot run stays a direct job until
-     * campaigns run ArduPilot stacks.
+     * Runs the loaded trajectories on the cluster; the frames fill the simulation stream. A run on
+     * the kinematic layer or on ArduPilot SITL or Gazebo is a workbench entry with the page's input;
+     * trajectories without a page input run as a direct job.
      */
     runSimulationOnCluster: (plan: ClusterRunPlan, colregsConstraintsContent: string) => {
       const trajectories = loadedTrajectoriesRef.current;
@@ -617,11 +624,11 @@ export function useSimulationWorkflow() {
       }
       setFollowLatestPush(false);
       const input = useSimulationPageStore.getState().input;
-      if (plan.jobType === KINEMATIC_SIMULATION_JOB && input !== null) {
-        void driver.runSimulationEntry(plan, { input, scenarioContent: loadedScenarioContentRef.current, colregsConstraintsContent });
+      const geofence = useConnectionStore.getState().geofence;
+      if (input !== null) {
+        void driver.runSimulationEntry(plan, { input, scenarioContent: loadedScenarioContentRef.current, colregsConstraintsContent, geofence });
         return;
       }
-      const geofence = useConnectionStore.getState().geofence;
       void driver.runSimulation(simulationSubmission(plan, { trajectories, colregsConstraintsContent, geofence }), colregsConstraintsContent);
     },
     /** Sets the simulation page's input and loads its trajectories (for a live session and the cluster). */
