@@ -593,7 +593,7 @@ export function useSimulationWorkflow() {
     monitorScene: (requestId: string, scenario: Record<string, unknown>, colregsConstraintsContent: string) =>
       driver.monitorScene(requestId, scenario, colregsConstraintsContent),
     stopSceneGeneration: () => {
-      driver.stopScenes();
+      driver.stopScenes(true);
       useScenePlaybackStore.getState().cancelSceneGeneration();
       useBatchGenerationStore.getState().markAllBatchStopped();
     },
@@ -602,7 +602,7 @@ export function useSimulationWorkflow() {
       void driver.generateTrajectories(requestId, request);
     },
     stopTrajectoryGeneration: () => {
-      driver.stopTrajectories();
+      driver.stopTrajectories(true);
     },
     /**
      * Runs the loaded trajectories on the cluster; the frames fill the simulation stream. A kinematic
@@ -636,7 +636,7 @@ export function useSimulationWorkflow() {
       colregsRef.current = colregsConstraintsContent;
       return driver.loadTarget(target, { quiet: true });
     },
-    stopSimulationOnCluster: () => driver.stopSimulation(),
+    stopSimulationOnCluster: () => driver.stopSimulation(true),
     setClusterRunSpeed: (speed: number) => driver.setSimulationSpeed(speed),
   };
 }

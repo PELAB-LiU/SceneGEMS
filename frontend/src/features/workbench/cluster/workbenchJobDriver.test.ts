@@ -190,6 +190,32 @@ describe("workbench job driver", () => {
     expect(seeds[0]).not.toBe(seeds[1]);
   });
 
+  it("stops a followed workbench entry on the page's Stop, and only leaves a followed campaign", async () => {
+    const stopped: string[] = [];
+    const following = (kind: string) =>
+      ({
+        getCampaign: async () => ({ ...sampleCampaignSummary, kind }),
+        listCases: async () => ({ items: [], total: 0 }),
+        // The case waits for its job until the follow is stopped.
+        getCase: async () =>
+          caseDetailSchema.parse({ ...sampleCase, campaign_id: "wb7", case_id: 1, state: "active", stage: "simulate", progress: {}, jobs: [], run_records: [], verdicts: [] }),
+        controlCampaign: async (id: string) => {
+          stopped.push(`${kind}:${id}`);
+          return {};
+        },
+        artifactUrl: (sha256: string) => sha256,
+      }) as unknown as OperatorClient;
+    for (const kind of ["workbench", "campaign"]) {
+      const driver = new WorkbenchJobDriver(() => access(following(kind)));
+      driver.pollMs = 1;
+      const follow = driver.openTarget({ page: "simulation", campaignId: "wb7", caseId: 1, step: "simulation", live: true });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      driver.stopSimulation(true);
+      await follow;
+    }
+    expect(stopped).toEqual(["workbench:wb7"]);
+  });
+
   it("clears a page whose loaded entry was deleted", async () => {
     const client = {
       getCase: async () => {

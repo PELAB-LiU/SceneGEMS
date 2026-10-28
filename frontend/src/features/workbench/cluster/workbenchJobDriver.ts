@@ -139,11 +139,16 @@ const NO_HOOKS: SimulationPageHooks = {
   fillSetup: () => undefined,
 };
 
-/** A run or a follow of one page: aborting it stops following, and stops the entry when the page created it. */
+/**
+ * A run or a follow of one page: aborting it stops following, and stops the entry when the page
+ * created it. The user's Stop also stops a followed workbench entry (a campaign is only left).
+ */
 interface PageTask {
   controller: AbortController;
   entryId: string | null;
   ownEntry: boolean;
+  /** A followed entry of kind workbench, which the page's Stop stops too. */
+  workbenchEntry: boolean;
 }
 
 export class WorkbenchJobDriver {
@@ -204,24 +209,24 @@ export class WorkbenchJobDriver {
     return entry.campaign_id;
   }
 
-  /** Stops the entry a page created; the engine cancels its jobs. */
-  private stopEntry(task: PageTask): void {
+  /** Stops the entry a page created (or, on the user's Stop, a followed workbench entry); the engine cancels its jobs. */
+  private stopEntry(task: PageTask, byUser = false): void {
     const cluster = this.access().cluster;
-    if (cluster !== null && task.ownEntry && task.entryId !== null) {
+    if (cluster !== null && task.entryId !== null && (task.ownEntry || (byUser && task.workbenchEntry))) {
       void cluster.client.controlCampaign(task.entryId, "stop").catch(() => undefined);
     }
   }
 
-  private abortTask(task: PageTask | null): void {
+  private abortTask(task: PageTask | null, byUser = false): void {
     if (task === null) {
       return;
     }
     task.controller.abort();
-    this.stopEntry(task);
+    this.stopEntry(task, byUser);
   }
 
   private newTask(ownEntry: boolean, entryId: string | null = null): PageTask {
-    return { controller: new AbortController(), entryId, ownEntry };
+    return { controller: new AbortController(), entryId, ownEntry, workbenchEntry: false };
   }
 
   // Scene generation
@@ -417,10 +422,11 @@ export class WorkbenchJobDriver {
     }
   }
 
-  stopScenes(): void {
+  /** Stops the scene page's runs and follows; `byUser` for the page's Stop button. */
+  stopScenes(byUser = false): void {
     const tasks = new Set(this.sceneJobs.values());
     for (const task of tasks) {
-      this.abortTask(task);
+      this.abortTask(task, byUser);
     }
     this.sceneJobs.clear();
   }
@@ -605,8 +611,8 @@ export class WorkbenchJobDriver {
     await this.finishEntry(target, task, "Monitoring the planned trajectories on the cluster...");
   }
 
-  stopTrajectories(): void {
-    this.abortTask(this.trajectoryJob);
+  stopTrajectories(byUser = false): void {
+    this.abortTask(this.trajectoryJob, byUser);
     this.trajectoryJob = null;
     useTrajectoryGenerationStore.getState().markStopped();
   }
@@ -823,9 +829,9 @@ export class WorkbenchJobDriver {
     this.simulationWatcher?.configure({ speed });
   }
 
-  stopSimulation(): void {
+  stopSimulation(byUser = false): void {
     if (this.simulationJob !== null) {
-      this.abortTask(this.simulationJob);
+      this.abortTask(this.simulationJob, byUser);
       useClusterRunStore.getState().update({ status: "stopped", message: "Stopped." });
       PAGE_STORES.simulation.getState().setStatus("idle", null, null);
     }
@@ -856,6 +862,12 @@ export class WorkbenchJobDriver {
     const entry = { campaignId: target.campaignId, caseId: target.caseId };
     const page = PAGE_STORES[target.page].getState();
     const task = this.newTask(false, target.campaignId);
+    void cluster.client
+      .getCampaign(target.campaignId, task.controller.signal)
+      .then((campaign) => {
+        task.workbenchEntry = campaign.kind === "workbench";
+      })
+      .catch(() => undefined);
     page.setStatus("following", "Following the running entry...", target.campaignId);
     switch (target.page) {
       case "sceneGeneration": {
