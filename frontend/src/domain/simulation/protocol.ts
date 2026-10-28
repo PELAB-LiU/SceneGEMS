@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { EvaluationData, SimulationFrame } from "./types";
-import type { StackOptionsPayload } from "./wireTypes";
+import type { RunRecordingStatus, StackOptionsPayload } from "./wireTypes";
 
 const stateSchema = z
   .object({
@@ -479,6 +479,14 @@ export type ParsedServerMessage =
   | { kind: "mqtt_broker_status"; status: "connected" | "disconnected"; masterBroker: string | null }
   | { kind: "monitor_status"; status: "connected" | "disconnected" }
   | {
+      kind: "run_recording";
+      status: RunRecordingStatus;
+      /** The workbench entry the live run is recorded as; null before it exists (and when unavailable). */
+      campaignId: string | null;
+      caseId: number | null;
+      message: string | null;
+    }
+  | {
       kind: "simulation_models";
       /** Per-vessel SDF model content keyed by the same id used in connectionsByAgentId. */
       vesselModelsByAgentId: Record<string, string | null>;
@@ -535,6 +543,14 @@ const mqttBrokerStatusSchema = z.object({
 const monitorStatusSchema = z.object({
   type: z.literal("monitor_status"),
   status: z.enum(["connected", "disconnected"]),
+});
+
+const runRecordingSchema = z.object({
+  type: z.literal("run_recording"),
+  status: z.enum(["recording", "saved", "failed", "unavailable"]),
+  campaignId: z.string().nullable(),
+  caseId: z.number().int().nullable(),
+  message: z.string().nullable(),
 });
 
 const simulationModelsConnectionSchema = z
@@ -750,6 +766,22 @@ export function parseServerMessage(raw: unknown): ParsedServerMessage {
     return {
       kind: "monitor_status",
       status: monitorStatusSchema.parse(raw).status,
+    };
+  }
+  if (msgType === "run_recording") {
+    const parsed = runRecordingSchema.parse({
+      type: "run_recording",
+      status: payload.status,
+      campaignId: payload.campaignId ?? payload.campaign_id ?? null,
+      caseId: payload.caseId ?? payload.case_id ?? null,
+      message: payload.message ?? null,
+    });
+    return {
+      kind: "run_recording",
+      status: parsed.status,
+      campaignId: parsed.campaignId,
+      caseId: parsed.caseId,
+      message: parsed.message,
     };
   }
   if (msgType === "simulation_models") {

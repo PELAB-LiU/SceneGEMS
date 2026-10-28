@@ -171,6 +171,8 @@ export type ClientToServerMessage =
     }
   | { type: "disconnect_from_mqtt_broker" };
 
+export type RunRecordingStatus = "recording" | "saved" | "failed" | "unavailable";
+
 export type ServerToClientMessage =
   | {
       type: "initial_state";
@@ -242,6 +244,18 @@ export type ServerToClientMessage =
       masterBroker?: string | null;
     }
   | { type: "monitor_status"; status: "connected" | "disconnected" }
+  /**
+   * Whether the gateway records a live simulation as a workbench entry on the master
+   * (`LiveRunRecorder`): `recording` while it runs, `saved` or `failed` after, `unavailable`
+   * when the gateway runs on its own. `campaignId` and `caseId` name the entry once it exists.
+   */
+  | {
+      type: "run_recording";
+      status: RunRecordingStatus;
+      campaignId?: string | null;
+      caseId?: number | null;
+      message?: string | null;
+    }
   /**
    * Response to `generate_simulation_models`. Same fields as the request, but with
    * per-vessel `gazeboVesselModel` attributes filled in.

@@ -72,7 +72,7 @@ export function AppShell() {
         {section === "cluster" && <ClusterSection />}
         {section === "capabilities" && <CapabilitiesSection />}
         {section === "campaigns" && <CampaignsSection />}
-        {section === "observe" && <ObserveSection />}
+        {section === "history" && <ObserveSection />}
         {section === "results" && <ResultsSection />}
       </div>
       <div ref={setErrorSlot} className="app-error-slot" />

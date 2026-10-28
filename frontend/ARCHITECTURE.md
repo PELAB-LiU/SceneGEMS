@@ -11,7 +11,7 @@ src/
   domain/        Simulation protocol, WebSocket client, playback store; cluster/ has the
                  cluster list, the operator API client, the live channel client and stores
   features/      React UI by section: workbench/ (connection, controls, metrics, monitor,
-                 scene), cluster/, capabilities/, campaigns/, observe/, results/
+                 scene), cluster/, capabilities/, campaigns/, observe/ (becoming history/), results/
   language/      Lezer grammar for .problem files
 ```
 
@@ -33,8 +33,11 @@ control panel.
 
 The left pane has six sections: Workbench (with the views Domain Configuration, Scene
 Generation, Trajectory Generation, Simulation and Connections), Cluster, Capabilities, Campaigns,
-Observe and Results. `uiStore` keeps `section` and `workbenchView` (persisted, v4). The workbench
-stays mounted while another section is shown, so its gateway socket and state carry on. The left
+Campaign History (section id `history`, until its page replaces Observe it still shows the Observe
+section) and Results. `uiStore` keeps `section` and `workbenchView` (persisted, v6). Other sections
+open an output on a workbench page through `openInWorkbench(target)` in
+`features/workbench/pages/workbenchTarget.ts`, which shows the page and queues the target for it
+(`takeTarget(page)`). The workbench stays mounted while another section is shown, so its gateway socket and state carry on. The left
 pane is 280px with a plain-language hint per destination, an icon rail of 72px when collapsed (the
 choice is kept per browser) and a bar at the top below 800px. Below 1100px the workbench panes stack
 and scroll as one page.
