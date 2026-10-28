@@ -80,8 +80,9 @@ def test_unavailable_stack_fails_for_good(instances_folder, node, make_job, head
     assert not failure.value.retryable
 
 
-def test_an_observed_run_forwards_its_lockstep_states_at_the_stacks_own_pace(monkeypatch, make_job, head_on_trajectories):
-    """SITL runs free, so the run is not slowed down; its frames are decimated by its speedup and the result is unchanged."""
+@pytest.fixture
+def fake_sitl(monkeypatch, head_on_trajectories):
+    """run_mavlink_stack replaced by a replay of the head-on trajectories, observed exactly; returns the replayed columns."""
     from scenegems_tool.vessel_stack.control_layers.ardupilot import mavlink_lockstep_runner
 
     vessels = head_on_trajectories.initial_scene.vessels
@@ -97,17 +98,96 @@ def test_an_observed_run_forwards_its_lockstep_states_at_the_stacks_own_pace(mon
         return MavlinkRunResult((0, 1), 1.0, 0, (), (100_000, 100_000), tuple(recorded), (), 12.0, {"steps": len(recorded) - 1})
 
     monkeypatch.setattr(mavlink_lockstep_runner, "run_mavlink_stack", replay)
-    job = make_job(JobType.SIMULATION_ARDUPILOT, {"simulation_layer": "ardupilot_sim", "trajectories": head_on_trajectories.to_dict(), "geofence": GEOFENCE, "speedup": 50})
-    plain = execute(job, lambda message, progress=None: None)
+    return columns
+
+
+def _quiet(message, progress=None):
+    pass
+
+
+def _observe(job, speed=10.0):
+    frames = []
+
+    class Observation:
+        def observer(self, build_frame, dt, **options):
+            return RunObserver(lambda: ObservationControl(active=True, speed=speed, revision=1), frames.append, build_frame, dt, sleep=lambda seconds: None, **options)
+
+    return execute(job, _quiet, observation=Observation()), frames
+
+
+def ardupilot_job(make_job, head_on_trajectories, **fields):
+    return make_job(JobType.SIMULATION_ARDUPILOT, {"simulation_layer": "ardupilot_sim", "trajectories": head_on_trajectories.to_dict(), "geofence": GEOFENCE, **fields})
+
+
+def test_an_observed_run_forwards_its_lockstep_states_at_the_stacks_own_pace(fake_sitl, make_job, head_on_trajectories):
+    """SITL runs free, so the run is not slowed down; its frames are decimated by its speedup and the result is unchanged."""
+    columns = fake_sitl
+    job = ardupilot_job(make_job, head_on_trajectories, speedup=50)
+    plain = execute(job, _quiet)
     frames, sleeps = [], []
 
     class Observation:
         def observer(self, build_frame, dt, **options):
             return RunObserver(lambda: ObservationControl(active=True, speed=10.0, revision=1), frames.append, build_frame, dt, sleep=sleeps.append, **options)
 
-    assert execute(job, lambda message, progress=None: None, observation=Observation()) == plain
+    assert execute(job, _quiet, observation=Observation()) == plain
     assert sleeps == []  # not paced
     assert [frame["timestamp"] for frame in frames] == list(range(0, 121, 3))  # 50 steps a second at speedup 50: every third step
     last = frames[-1]
     assert last["scenarioId"] == job.job_id and set(last["statesByActorId"]) == {"0", "1"}
     assert last["statesByActorId"]["1"]["x"] == columns[1][120].x
+
+
+def test_a_run_without_the_monitor_has_no_verdicts_or_trajectories(fake_sitl, make_job, head_on_trajectories):
+    result, frames = _observe(ardupilot_job(make_job, head_on_trajectories))
+    assert "monitor" not in result and "trajectories" not in result
+    assert frames and all(frame["ruleResults"] == [] for frame in frames)
+
+
+def test_the_live_monitor_gives_the_post_hoc_result_of_the_observed_run(fake_sitl, make_job, head_on_trajectories):
+    """The monitor judges every lockstep step, observed or not, as monitoring.post_hoc judges the run's trajectories."""
+    from scenegems_tool.cluster.node.jobs import monitoring_post_hoc_job
+
+    job = ardupilot_job(make_job, head_on_trajectories, monitor="live", include_trajectories=True)
+    result = execute(job, _quiet)
+    post_hoc = monitoring_post_hoc_job.execute(make_job(JobType.MONITORING_POST_HOC, {"trajectories": result["trajectories"]}), _quiet)
+    summary_keys = ("scenes", "monitored_scenes", "time_step", "rules", "failed_rules", "passed")
+    assert {key: result["monitor"][key] for key in summary_keys} == {key: post_hoc[key] for key in summary_keys}
+    assert result["monitor"]["scenes"] == 121 and result["monitor"]["stopped_early_at"] is None
+    observed, _ = _observe(job, speed=1.0)
+    assert observed == result  # the observation changes nothing in the result
+
+
+def test_frames_of_judged_steps_carry_the_monitors_outcomes(fake_sitl, make_job, head_on_trajectories):
+    columns = fake_sitl
+    _, frames = _observe(ardupilot_job(make_job, head_on_trajectories, monitor="live"))
+    assert [frame["timestamp"] for frame in frames] == list(range(121))  # speedup 1: a frame per step
+    for index in (0, 61, 120):
+        frame = frames[index]
+        assert frame["ruleResults"] and frame["situationContexts"] and frame["metrics"]
+        assert frame["statesByActorId"]["0"]["x"] == columns[0][index].x and frame["statesByActorId"]["1"]["x"] == columns[1][index].x
+
+
+def test_the_trajectories_hold_the_observed_states(fake_sitl, make_job, head_on_trajectories):
+    from concrete_level.models.trajectories import Trajectories
+
+    result = execute(ardupilot_job(make_job, head_on_trajectories, include_trajectories=True), _quiet)
+    run = Trajectories.from_dict(result["trajectories"])
+    assert run.time_step == 1 and len(run.scene_list) == 121
+    for vessel in head_on_trajectories.initial_scene.vessels:
+        observed = run.state_list(next(actor for actor in run.initial_scene.vessels if actor.id == vessel.id))
+        assert [(state.x, state.y) for state in observed] == [(state.x, state.y) for state in fake_sitl[vessel.id]]
+
+
+def test_static_obstacles_stay_in_every_step_scene(head_on_trajectories):
+    from concrete_level.models.actor_state import ActorState
+    from concrete_level.models.concrete_actors import ConcreteStaticObstacle
+    from concrete_level.models.concrete_scene import ConcreteScene
+    from scenegems_tool.cluster.node.jobs.simulation_ardupilot_job import step_scene
+
+    vessels = head_on_trajectories.initial_scene.vessels
+    obstacle = ConcreteStaticObstacle(id=2, type="Buoy", length=10.0, breadth=10.0, height=1.0, draft=1.0, mass=100.0, safety_radius=20.0)
+    scene = ConcreteScene({**{vessel: head_on_trajectories.initial_scene[vessel] for vessel in vessels}, obstacle: ActorState(1500.0, 50.0, 0.0, 0.0)})
+    moved = ActorState(1.0, 2.0, 8.0, 0.0)
+    states = step_scene(scene)({0: StampedState(boot_ms=0, state=moved)})
+    assert states[vessels[0]] == moved and states[obstacle] == ActorState(1500.0, 50.0, 0.0, 0.0)

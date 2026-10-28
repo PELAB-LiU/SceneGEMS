@@ -334,8 +334,9 @@ export const SimulationInitControls = forwardRef<SimulationInitControlsHandle, P
       })),
       windVector: [round2(windEast), round2(windNorth), round2(windUp)],
       waveAmplitude: round2(wave.amplitude),
+      speedup: Math.round(clamp(simulationSpeed, SIMULATION_SPEED_MIN, SIMULATION_SPEED_MAX)),
     });
-  }, [onSetupChange, ownShipIds, simulatorType, stackDrafts, wave.amplitude, windEast, windNorth, windUp]);
+  }, [onSetupChange, ownShipIds, simulationSpeed, simulatorType, stackDrafts, wave.amplitude, windEast, windNorth, windUp]);
 
   useEffect(() => {
     const mergeWithExistingDrafts = (vessels: { id: string; isOwnShip: boolean }[]) => {
@@ -500,7 +501,7 @@ export const SimulationInitControls = forwardRef<SimulationInitControlsHandle, P
         className="sim-init-subpanel"
       >
         <PreciseParam
-          label="Real-time factor of a live session"
+          label="Real-time factor of a live session or an ArduPilot run"
           value={simulationSpeed}
           min={SIMULATION_SPEED_MIN}
           max={SIMULATION_SPEED_MAX}

@@ -4,7 +4,7 @@ import { useUiStore } from "../../../app/uiStore";
 import { Disclosure } from "../../../components/Disclosure";
 import { usePlaybackStore } from "../../../domain/playback/playbackStore";
 import { isClusterRunActive, useClusterRunStore, type ClusterRunStatus } from "../cluster/clusterRunStore";
-import { KINEMATIC_SIMULATION_JOB, planSimulationRun, type SimulationSetup } from "../cluster/simulationJobs";
+import { describeClusterPlan, isPacedByWatchSpeed, KINEMATIC_SIMULATION_JOB, planSimulationRun, type SimulationSetup } from "../cluster/simulationJobs";
 import { describeResources } from "../cluster/workbenchResources";
 import { activateLiveMode, getLatestSimulationTimestamp } from "./livePlayback";
 import { RecordingControls } from "./RecordingControls";
@@ -63,7 +63,7 @@ export function SimulationRunPanel({ streamControls, colregsConstraintsContent }
 
   const plan = setup ? planSimulationRun(setup) : null;
   const onCluster = plan?.where === "cluster";
-  const resources = streamControls.clusterResources(KINEMATIC_SIMULATION_JOB);
+  const resources = streamControls.clusterResources(plan?.where === "cluster" ? plan.jobType : KINEMATIC_SIMULATION_JOB);
   const clusterActive = isClusterRunActive(run.status);
   const sessionStatus = SESSION_STATUS[simulationStatus] ?? { label: simulationStatus, tone: "not-initialized" as Tone };
   const status = onCluster ? CLUSTER_STATUS[run.status] : sessionStatus;
@@ -145,7 +145,7 @@ export function SimulationRunPanel({ streamControls, colregsConstraintsContent }
         {plan === null
           ? "Set up the vessels below."
           : plan.where === "cluster"
-            ? `Runs on the cluster as one kinematic job (${plan.summary}), judged by the COLREGS monitor as it runs. Cluster: ${describeResources(resources)}.`
+            ? `${describeClusterPlan(plan)} Cluster: ${describeResources(resources)}.`
             : `Runs as a live session on the master over the MQTT broker. ${plan.reason}`}
       </p>
       {onCluster && run.message && run.status !== "idle" ? <p className="meta sim-run-message">{run.message}</p> : null}
@@ -178,7 +178,7 @@ export function SimulationRunPanel({ streamControls, colregsConstraintsContent }
         </ul>
       ) : null}
 
-      {onCluster && clusterActive ? (
+      {plan?.where === "cluster" && clusterActive && isPacedByWatchSpeed(plan) ? (
         <label className="field sim-run-speed">
           <span>Watch at</span>
           <select value={run.speed} onChange={(e) => streamControls.setClusterRunSpeed(Number(e.target.value))}>

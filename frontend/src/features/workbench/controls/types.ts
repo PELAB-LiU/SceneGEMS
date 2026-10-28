@@ -1,7 +1,7 @@
 import type { LoadScenarioOptions } from "../../../domain/simulation/useSimulationWorkflow";
 import type { ClientToServerMessage, TrajectoryGenerationParamsWire } from "../../../domain/simulation/wireTypes";
 import type { JobTypeResources } from "../cluster/workbenchResources";
-import type { SimulationRunPlan } from "../cluster/simulationJobs";
+import type { ClusterRunPlan } from "../cluster/simulationJobs";
 
 export interface SimulationStreamControls {
   loadScenarioFromFile: (file: File | null, options?: LoadScenarioOptions) => Promise<void>;
@@ -16,7 +16,7 @@ export interface SimulationStreamControls {
   clusterResources: (jobType: string) => JobTypeResources;
   generateTrajectories: (requestId: string, scenarioContent: string, colregsConstraintsContent: string, params: TrajectoryGenerationParamsWire) => void;
   stopTrajectoryGeneration: () => void;
-  runSimulationOnCluster: (plan: Extract<SimulationRunPlan, { where: "cluster" }>, colregsConstraintsContent: string) => void;
+  runSimulationOnCluster: (plan: ClusterRunPlan, colregsConstraintsContent: string) => void;
   stopSimulationOnCluster: () => void;
   setClusterRunSpeed: (speed: number) => void;
 }

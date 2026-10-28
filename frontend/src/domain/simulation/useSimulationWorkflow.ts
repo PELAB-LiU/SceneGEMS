@@ -18,7 +18,7 @@ import { useConnectionStore } from "../../features/workbench/connection/connecti
 import { useWorkbenchCluster } from "../../features/workbench/cluster/useWorkbenchCluster";
 import { WorkbenchJobDriver } from "../../features/workbench/cluster/workbenchJobDriver";
 import type { SceneGenerationInput } from "../../features/workbench/cluster/workbenchJobs";
-import { kinematicSimulationSubmission, type SimulationRunPlan } from "../../features/workbench/cluster/simulationJobs";
+import { simulationSubmission, type ClusterRunPlan } from "../../features/workbench/cluster/simulationJobs";
 import { isFullTrajectoryScenario } from "../sceneGeneration/parseEvaluationDataFile";
 import type { TrajectoryGenerationParamsWire } from "./wireTypes";
 import { missingTrajectoriesReason, NO_TRAJECTORIES_MESSAGE } from "./trajectoryGuard";
@@ -543,14 +543,15 @@ export function useSimulationWorkflow() {
       driver.stopTrajectories();
     },
     /** Runs the loaded scenario as a simulation job on the cluster; its frames fill the simulation stream. */
-    runSimulationOnCluster: (plan: Extract<SimulationRunPlan, { where: "cluster" }>, colregsConstraintsContent: string) => {
+    runSimulationOnCluster: (plan: ClusterRunPlan, colregsConstraintsContent: string) => {
       const trajectories = loadedTrajectoriesRef.current;
       if (trajectories === null) {
         setError(NO_TRAJECTORIES_MESSAGE);
         return;
       }
       setFollowLatestPush(false);
-      void driver.runSimulation(kinematicSimulationSubmission(plan, trajectories, colregsConstraintsContent), colregsConstraintsContent);
+      const geofence = useConnectionStore.getState().geofence;
+      void driver.runSimulation(simulationSubmission(plan, { trajectories, colregsConstraintsContent, geofence }), colregsConstraintsContent);
     },
     stopSimulationOnCluster: () => driver.stopSimulation(),
     setClusterRunSpeed: (speed: number) => driver.setSimulationSpeed(speed),

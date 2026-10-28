@@ -330,8 +330,9 @@ export class WorkbenchJobDriver {
 
   /**
    * Runs a simulation as one job and shows its frames in the simulation stream as the node
-   * sends them, paced to the run store's speed. A kinematic run may end before the observation
-   * reaches its node; its frames then come from the cluster's monitor over the run's result.
+   * sends them: a kinematic run paced to the run store's speed, an ArduPilot run at its SITL
+   * speedup. A run may end before the observation reaches its node; its frames then come from
+   * the cluster's monitor over the run's result trajectories.
    */
   async runSimulation(submission: JobSubmission, colregsConstraintsContent: string): Promise<void> {
     this.simulationJob?.abort();
@@ -421,7 +422,7 @@ export class WorkbenchJobDriver {
     }
   }
 
-  /** Changes the pace the running simulation is watched (and, for a kinematic run, run) at. */
+  /** Changes the pace a running kinematic simulation is watched and run at; an ArduPilot run keeps its speedup. */
   setSimulationSpeed(speed: number): void {
     useClusterRunStore.getState().update({ speed });
     this.simulationWatcher?.configure({ speed });
