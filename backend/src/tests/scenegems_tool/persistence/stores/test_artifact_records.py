@@ -1,7 +1,9 @@
+from datetime import timedelta
+
 import pytest
 
 from scenegems_tool.persistence.schema import ArtifactHolderKind
-from scenegems_tool.persistence.stores import ArtifactMismatch, UnknownArtifact
+from scenegems_tool.persistence.stores import UPLOAD_ROLE, ArtifactMismatch, UnknownArtifact
 from tests.scenegems_tool.persistence.stores.builders import START, sha256_of
 
 pytestmark = pytest.mark.postgres
@@ -103,3 +105,57 @@ def test_a_read_marks_the_artifact_used(stores, clock):
     assert stores.artifacts.list_unreferenced(UNUSED_S) == []
     assert stores.artifacts.delete_unreferenced([SCENE], UNUSED_S) == []
     assert stores.artifacts.mark_used(TRAJECTORIES) is None
+
+
+# Upload references and deleted holders (Phase 6)
+
+UPLOAD = ArtifactHolderKind.UPLOAD
+
+
+def test_an_upload_holds_its_artifact_until_it_expires(stores, clock):
+    _record(stores)
+    first = stores.artifacts.add_upload_reference(SCENE, START + timedelta(hours=24))
+    assert (first.holder_kind, first.holder_id, first.role, first.expires_at, first.campaign_id) == (UPLOAD, SCENE, UPLOAD_ROLE, START + timedelta(hours=24), None)
+    # the same content uploaded again keeps the later expiry
+    assert stores.artifacts.add_upload_reference(SCENE, START + timedelta(hours=2)).expires_at == START + timedelta(hours=24)
+    assert stores.artifacts.add_upload_reference(SCENE, START + timedelta(hours=30)).expires_at == START + timedelta(hours=30)
+    assert [reference.expires_at for reference in stores.artifacts.references(SCENE)] == [START + timedelta(hours=30)]
+    clock.advance(29 * 3600)
+    assert stores.artifacts.remove_expired_uploads() == []
+    assert stores.artifacts.list_unreferenced(0) == []
+    clock.advance(3600)
+    assert stores.artifacts.remove_expired_uploads() == [SCENE]
+    assert stores.artifacts.references(SCENE) == []
+    # unreferenced now, and used now: the sweep's grace period starts at the expiry
+    assert stores.artifacts.list_unreferenced(UNUSED_S) == []
+    clock.advance(UNUSED_S)
+    assert [record.artifact_hash for record in stores.artifacts.list_unreferenced(UNUSED_S)] == [SCENE]
+
+
+def test_a_campaign_reference_outlives_the_upload(stores, campaign, clock):
+    _record(stores)
+    stores.artifacts.add_upload_reference(SCENE, START + timedelta(hours=24))
+    stores.artifacts.add_reference(SCENE, ArtifactHolderKind.CAMPAIGN, campaign.campaign_id, "input:0", campaign_id=campaign.campaign_id)
+    clock.advance(25 * 3600)
+    assert stores.artifacts.remove_expired_uploads() == [SCENE]
+    assert [(reference.holder_kind, reference.role) for reference in stores.artifacts.references(SCENE)] == [(ArtifactHolderKind.CAMPAIGN, "input:0")]
+
+
+def test_upload_references_are_added_as_uploads_only(stores):
+    _record(stores)
+    with pytest.raises(ValueError, match="add_upload_reference"):
+        stores.artifacts.add_reference(SCENE, UPLOAD, SCENE, UPLOAD_ROLE)
+    with pytest.raises(UnknownArtifact):
+        stores.artifacts.add_upload_reference(TRAJECTORIES, START)
+
+
+def test_removing_the_references_of_deleted_holders(stores):
+    _record(stores)
+    _record(stores, TRAJECTORIES, kind="trajectories")
+    stores.artifacts.add_reference(SCENE, CASE, "1", "scene")
+    stores.artifacts.add_reference(TRAJECTORIES, CASE, "2", "trajectory_data")
+    stores.artifacts.add_reference(TRAJECTORIES, CASE, "3", "trajectory_data")
+    stores.artifacts.add_reference(SCENE, ArtifactHolderKind.RUN, "1", "state_log")
+    assert stores.artifacts.remove_references_of_holders(CASE, [1, "2", 2]) == sorted([SCENE, TRAJECTORIES])
+    assert stores.artifacts.remove_references_of_holders(CASE, []) == []
+    assert {(reference.holder_kind, reference.holder_id) for name in (SCENE, TRAJECTORIES) for reference in stores.artifacts.references(name)} == {(CASE, "3"), (ArtifactHolderKind.RUN, "1")}

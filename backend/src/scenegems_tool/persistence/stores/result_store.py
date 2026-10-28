@@ -1,25 +1,48 @@
-"""Run records and verdicts of the cases, and the coverage summary per class.
+"""Run records and verdicts of the cases, the coverage summary per class and the findings per step.
 
 Writes are idempotent per key, so the engine may process an event twice: a second run
-record for the same case, run and repeat, or a second verdict for the same case and run,
-returns the stored one unchanged. The campaign and class of a result are copied from its
-case, for the API's queries.
+record for the same case, run and repeat, or a second verdict for the same case, step and
+run, returns the stored one unchanged. The campaign and class of a result are copied from
+its case, for the API's queries. A verdict judges one step: the scene and the trajectories
+once per case (run index 0), the simulation once per run.
 
 Every method takes an optional session (see store_session).
 """
 
-from typing import Any, List, Optional, Tuple, Type
+import statistics
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Type
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, case, distinct, extract, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, sessionmaker
 
 from scenegems_tool.persistence.clock import Clock, utc_now
-from scenegems_tool.persistence.schema import CampaignClassRow, MonitorImplementation, RunRecordRow, ScenarioCaseRow, VerdictRow, VerdictState
+from scenegems_tool.persistence.schema import (
+    CampaignClassRow,
+    JobRow,
+    MonitorImplementation,
+    PipelineJobRow,
+    RunRecordRow,
+    ScenarioCaseRow,
+    StepKind,
+    VerdictRow,
+    VerdictState,
+)
 from scenegems_tool.persistence.schema.artifact_tables import require_sha256_hex
-from scenegems_tool.persistence.stores.case_store import UnknownCase
-from scenegems_tool.persistence.stores.result_records import ClassCoverage, NewRunRecord, NewVerdict, RunRecord, VerdictRecord
+from scenegems_tool.persistence.stores.case_store import FIRST_STAGE_OF_STEP, UnknownCase, dropped_at_step, output_hash_of, step_outputs_query
+from scenegems_tool.persistence.stores.result_records import (
+    ClassCoverage,
+    ClassFindings,
+    NewRunRecord,
+    NewVerdict,
+    RuleFindings,
+    RunRecord,
+    StepFindings,
+    VerdictRecord,
+)
 from scenegems_tool.persistence.stores.store_session import session_scope
+
+FAILED_RULE_SEPARATOR = ": "  # a verdict's failed rule reads "<relation>: <rule>"
 
 
 def check_verdict(verdict: NewVerdict) -> None:
@@ -32,6 +55,43 @@ def check_verdict(verdict: NewVerdict) -> None:
         raise ValueError("a first failure time belongs to a failed verdict")
     if verdict.state == VerdictState.PASSED and verdict.failed_rules:
         raise ValueError(f"a passed verdict has no failed rules, got {list(verdict.failed_rules)}")
+    if verdict.step != StepKind.SIMULATION:
+        if verdict.run_index != 0:
+            raise ValueError(f"the {verdict.step.value} step has one verdict per case, at run index 0, not {verdict.run_index}")
+        if verdict.monitor == MonitorImplementation.LIVE:
+            raise ValueError("the live monitor judges simulated runs only")
+
+
+def rule_findings(failed_verdicts: Sequence[Tuple[Sequence[str], Mapping[str, Any]]]) -> Tuple[RuleFindings, ...]:
+    """Per rule: in how many failed verdicts it failed, and the min and median of its first failure time over them.
+
+    A verdict's failed rules read "<relation>: <rule>"; its rule outcomes map relation to
+    rule to the first time of each outcome. A rule failing for several relations of one run
+    counts once, with its earliest failure. Rules sort by count (most first), then name.
+    """
+    counts: Dict[str, int] = {}
+    times: Dict[str, List[float]] = {}
+    for failed_rules, rule_outcomes in failed_verdicts:
+        earliest: Dict[str, Optional[float]] = {}
+        for entry in failed_rules:
+            relation, separator, rule = str(entry).partition(FAILED_RULE_SEPARATOR)
+            if not separator:
+                relation, rule = "", relation
+            outcome = ((rule_outcomes or {}).get(relation) or {}).get(rule) or {}
+            failed_at = outcome.get("failed") if isinstance(outcome, Mapping) else None
+            known = earliest.get(rule)
+            if rule not in earliest or (failed_at is not None and (known is None or float(failed_at) < known)):
+                earliest[rule] = None if failed_at is None else float(failed_at)
+        for rule, failed_at in earliest.items():
+            counts[rule] = counts.get(rule, 0) + 1
+            if failed_at is not None:
+                times.setdefault(rule, []).append(failed_at)
+    return tuple(
+        RuleFindings(
+            rule=rule, count=count, first_failure_time_min_s=min(times[rule]) if rule in times else None, first_failure_time_median_s=statistics.median(times[rule]) if rule in times else None
+        )
+        for rule, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    )
 
 
 class ResultStore:
@@ -87,9 +147,10 @@ class ResultStore:
         values = dict(verdict.__dict__, failed_rules=list(verdict.failed_rules))
         with session_scope(self._sessions, session) as scope:
             campaign_id, class_id = self._case_of(scope, verdict.case_id)
-            row_id = self._insert_once(scope, VerdictRow, ["case_id", "run_index"], dict(values, campaign_id=campaign_id, class_id=class_id, created_at=self._clock()))
+            row_id = self._insert_once(scope, VerdictRow, ["case_id", "step", "run_index"], dict(values, campaign_id=campaign_id, class_id=class_id, created_at=self._clock()))
             if row_id is None:
-                row = scope.execute(select(VerdictRow).where(VerdictRow.case_id == verdict.case_id, VerdictRow.run_index == verdict.run_index)).scalar_one()
+                query = select(VerdictRow).where(VerdictRow.case_id == verdict.case_id, VerdictRow.step == verdict.step, VerdictRow.run_index == verdict.run_index)
+                row = scope.execute(query).scalar_one()
             else:
                 row = scope.get(VerdictRow, row_id)
             return VerdictRecord.from_row(row, self._case_index(scope, row.case_id))
@@ -105,13 +166,15 @@ class ResultStore:
         limit: Optional[int] = 100,
         offset: int = 0,
         *,
+        step: Optional[StepKind] = None,
         session: Optional[Session] = None,
     ) -> List[VerdictRecord]:
-        """Verdicts of the campaign ordered by class, case and run, each with its case index; filter on class, case, state (passed or failed), run, sensitivity."""
+        """Verdicts of the campaign ordered by class, case, step and run, each with its case index; filter on class, case, state, run, sensitivity, step."""
         with session_scope(self._sessions, session) as scope:
             query = select(VerdictRow, ScenarioCaseRow.case_index).join(ScenarioCaseRow, ScenarioCaseRow.id == VerdictRow.case_id)
-            query = self._verdict_filtered(query, campaign_id, class_id, case_id, state, run_index, sensitive)
-            query = query.order_by(VerdictRow.class_id, ScenarioCaseRow.case_index, VerdictRow.run_index).offset(offset).limit(limit)
+            query = self._verdict_filtered(query, campaign_id, class_id, case_id, state, run_index, sensitive, step)
+            step_order = case({StepKind.SCENE.value: 0, StepKind.TRAJECTORIES.value: 1}, value=VerdictRow.step, else_=2)
+            query = query.order_by(VerdictRow.class_id, ScenarioCaseRow.case_index, step_order, VerdictRow.run_index).offset(offset).limit(limit)
             return [VerdictRecord.from_row(row, case_index) for row, case_index in scope.execute(query)]
 
     def count_verdicts(
@@ -123,17 +186,21 @@ class ResultStore:
         case_id: Optional[int] = None,
         run_index: Optional[int] = None,
         sensitive: Optional[bool] = None,
+        step: Optional[StepKind] = None,
         session: Optional[Session] = None,
     ) -> int:
         """How many verdicts list_verdicts would return for the same filters without a page."""
         with session_scope(self._sessions, session) as scope:
-            query = self._verdict_filtered(select(func.count()).select_from(VerdictRow), campaign_id, class_id, case_id, state, run_index, sensitive)
+            query = self._verdict_filtered(select(func.count()).select_from(VerdictRow), campaign_id, class_id, case_id, state, run_index, sensitive, step)
             return scope.execute(query).scalar_one()
 
     # Coverage
 
-    def coverage(self, campaign_id: str, *, session: Optional[Session] = None) -> List[ClassCoverage]:
-        """Per class of the campaign, ordered by class id: state, quota, case counts and verdicts per run and state."""
+    def coverage(self, campaign_id: str, step: Optional[StepKind] = StepKind.SIMULATION, *, session: Optional[Session] = None) -> List[ClassCoverage]:
+        """Per class of the campaign, ordered by class id: state, quota, case counts and verdicts per run and state.
+
+        The verdicts are those of one step, the simulation's by default (None counts every step's).
+        """
         with session_scope(self._sessions, session) as scope:
             classes = (
                 scope.execute(select(CampaignClassRow).where(CampaignClassRow.campaign_id == campaign_id).order_by(CampaignClassRow.class_id).execution_options(populate_existing=True)).scalars().all()
@@ -144,6 +211,8 @@ class ResultStore:
                 .where(VerdictRow.campaign_id == campaign_id)
                 .group_by(VerdictRow.class_id, VerdictRow.run_index, VerdictRow.state)
             )
+            if step is not None:
+                query = query.where(VerdictRow.step == step)
             for class_id, run_index, state, count in scope.execute(query):
                 verdicts[class_id].setdefault(run_index, {})[state] = count
             return [
@@ -160,6 +229,91 @@ class ResultStore:
                 for row in classes
             ]
 
+    # Findings
+
+    def findings(self, campaign_id: str, step: StepKind, monitored: Optional[bool] = None, *, session: Optional[Session] = None) -> StepFindings:
+        """The summary of one step: its cases by state, outputs, verdicts, failed rules, classes and job durations.
+
+        The cases are those that reached the step (as in CaseStore.list_outputs). monitored
+        comes from the campaign's config; when None, a step counts as monitored once it has a
+        verdict of a monitor other than empty. An unmonitored step gets no verdicts and no
+        failed rules (statistics only).
+        """
+        with session_scope(self._sessions, session) as scope:
+            if monitored is None:
+                query = select(func.count()).select_from(VerdictRow).where(VerdictRow.campaign_id == campaign_id, VerdictRow.step == step, VerdictRow.monitor != MonitorImplementation.EMPTY)
+                monitored = scope.execute(query).scalar_one() > 0
+            cases = {
+                state: count for state, count in scope.execute(step_outputs_query([ScenarioCaseRow.state, func.count(distinct(ScenarioCaseRow.id))], campaign_id, step).group_by(ScenarioCaseRow.state))
+            }
+            count, valid, complete = scope.execute(step_outputs_query(self._output_counts(step), campaign_id, step)).one()
+            verdicts: Dict[VerdictState, int] = {}
+            failed_rules: Tuple[RuleFindings, ...] = ()
+            if monitored:
+                query = select(VerdictRow.state, func.count()).where(VerdictRow.campaign_id == campaign_id, VerdictRow.step == step).group_by(VerdictRow.state)
+                verdicts = {state: number for state, number in scope.execute(query)}
+                query = select(VerdictRow.failed_rules, VerdictRow.rule_outcomes).where(VerdictRow.campaign_id == campaign_id, VerdictRow.step == step, VerdictRow.state == VerdictState.FAILED)
+                failed_rules = rule_findings([(rules, outcomes) for rules, outcomes in scope.execute(query)])
+            median, p90 = self._durations(scope, campaign_id, step)
+            return StepFindings(
+                step=step,
+                monitored=monitored,
+                cases=cases,
+                outputs_count=count or 0,
+                outputs_valid=valid or 0,
+                outputs_complete=complete or 0,
+                verdicts=verdicts,
+                failed_rules=failed_rules,
+                classes=self._class_findings(scope, campaign_id, step, monitored),
+                duration_median_s=median,
+                duration_p90_s=p90,
+            )
+
+    @staticmethod
+    def _output_counts(step: StepKind) -> list:
+        """count, valid and complete over a step's output rows; a valid scene counts as complete."""
+        output_hash = output_hash_of(step)
+        if step == StepKind.SIMULATION:
+            valid = output_hash.is_not(None)
+            complete = and_(valid, RunRecordRow.trajectories_complete.is_(True))
+        else:
+            valid = and_(output_hash.is_not(None), ~dropped_at_step(step))
+            complete = valid if step == StepKind.SCENE else and_(valid, ScenarioCaseRow.trajectories_complete.is_(True))
+        return [func.count(output_hash), func.sum(case((valid, 1), else_=0)), func.sum(case((complete, 1), else_=0))]
+
+    @staticmethod
+    def _class_findings(session: Session, campaign_id: str, step: StepKind, monitored: bool) -> Tuple[ClassFindings, ...]:
+        class_ids = session.execute(select(CampaignClassRow.class_id).where(CampaignClassRow.campaign_id == campaign_id).order_by(CampaignClassRow.class_id)).scalars().all()
+        query = step_outputs_query([ScenarioCaseRow.class_id, func.count(distinct(ScenarioCaseRow.id))], campaign_id, step).group_by(ScenarioCaseRow.class_id)
+        cases = {class_id: count for class_id, count in session.execute(query)}
+        verdicts: Dict[str, Dict[VerdictState, int]] = {}
+        if monitored:
+            query = select(VerdictRow.class_id, VerdictRow.state, func.count()).where(VerdictRow.campaign_id == campaign_id, VerdictRow.step == step).group_by(VerdictRow.class_id, VerdictRow.state)
+            for class_id, state, count in session.execute(query):
+                verdicts.setdefault(class_id, {})[state] = count
+        return tuple(
+            ClassFindings(
+                class_id=class_id,
+                cases=cases.get(class_id, 0),
+                passed=verdicts.get(class_id, {}).get(VerdictState.PASSED, 0),
+                failed=verdicts.get(class_id, {}).get(VerdictState.FAILED, 0),
+            )
+            for class_id in class_ids
+        )
+
+    @staticmethod
+    def _durations(session: Session, campaign_id: str, step: StepKind) -> Tuple[Optional[float], Optional[float]]:
+        """Median and 90th percentile of the running time (first accept to end) of the step's finished jobs."""
+        running_s = extract("epoch", JobRow.finished_at - JobRow.started_at)
+        query = (
+            select(func.percentile_cont(0.5).within_group(running_s), func.percentile_cont(0.9).within_group(running_s))
+            .select_from(PipelineJobRow)
+            .join(JobRow, JobRow.id == PipelineJobRow.job_id)
+            .where(PipelineJobRow.campaign_id == campaign_id, PipelineJobRow.stage == FIRST_STAGE_OF_STEP[step], JobRow.started_at.is_not(None), JobRow.finished_at.is_not(None))
+        )
+        median, p90 = session.execute(query).one()
+        return (None if median is None else float(median)), (None if p90 is None else float(p90))
+
     # Helpers
 
     @staticmethod
@@ -174,8 +328,20 @@ class ResultStore:
         return session.execute(select(ScenarioCaseRow.case_index).where(ScenarioCaseRow.id == case_id)).scalar_one_or_none()
 
     @classmethod
-    def _verdict_filtered(cls, query, campaign_id: str, class_id: Optional[str], case_id: Optional[int], state: Optional[VerdictState], run_index: Optional[int], sensitive: Optional[bool]):
+    def _verdict_filtered(
+        cls,
+        query,
+        campaign_id: str,
+        class_id: Optional[str],
+        case_id: Optional[int],
+        state: Optional[VerdictState],
+        run_index: Optional[int],
+        sensitive: Optional[bool],
+        step: Optional[StepKind] = None,
+    ):
         query = cls._filtered(query, VerdictRow, campaign_id, class_id, case_id, run_index)
+        if step is not None:
+            query = query.where(VerdictRow.step == step)
         if state is not None:
             query = query.where(VerdictRow.state == state)
         if sensitive is not None:

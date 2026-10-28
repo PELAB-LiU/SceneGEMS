@@ -2,7 +2,8 @@
 
 An artifact is a content-addressed file in the master's artifact store (P4.3); its row
 records what the store holds. A reference names who needs the artifact (a case, a run, a
-job, a calibration), so retention can delete what nothing references any more. Hashes are
+job, a calibration, an upload that expires), so retention can delete what nothing references
+any more. Hashes are
 sha256 as 64 lowercase hex characters everywhere, also in the columns of other tables.
 """
 
@@ -11,7 +12,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, Optional
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, Float, ForeignKey, Identity, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Float, ForeignKey, Identity, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -40,6 +41,7 @@ class ArtifactHolderKind(str, Enum):
     RUN = "run"  # holder_id is the run_record id
     JOB = "job"  # holder_id is the job id, for inputs and outputs of a job in flight
     CALIBRATION = "calibration"  # holder_id is the calibration_result id
+    UPLOAD = "upload"  # holder_id is the artifact's hash: a file the operator uploaded, kept until expires_at
 
 
 class ArtifactRow(Base):
@@ -69,8 +71,10 @@ class ArtifactReferenceRow(Base):
     __tablename__ = "artifact_reference"
     __table_args__ = (
         UniqueConstraint("artifact_hash", "holder_kind", "holder_id", "role"),
+        CheckConstraint("(holder_kind = 'upload') = (expires_at IS NOT NULL)", name="uploads_expire"),
         Index("ix_artifact_reference_holder_kind_holder_id", "holder_kind", "holder_id"),
         Index("ix_artifact_reference_campaign_id", "campaign_id"),
+        Index("ix_artifact_reference_expires_at", "expires_at", postgresql_where=text("expires_at IS NOT NULL")),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
@@ -80,6 +84,7 @@ class ArtifactReferenceRow(Base):
     role: Mapped[str] = mapped_column(String(64))  # scene, trajectories, state_log, frames, input, output, ...
     campaign_id: Mapped[Optional[str]] = mapped_column(ForeignKey("campaign.id", ondelete="CASCADE"))  # for retention per campaign
     created_at: Mapped[datetime] = mapped_column(utc_timestamp())
+    expires_at: Mapped[Optional[datetime]] = mapped_column(utc_timestamp())  # upload references only; the sweep drops them after it
 
 
 class CalibrationResultRow(Base):

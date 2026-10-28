@@ -6,7 +6,7 @@ The migrations create exactly these tables; a test compares them.
     node_tables.py      node, node_capability, node_fingerprint and the node status
     job_tables.py       job, job_event and the job event kinds
     campaign_tables.py  campaign, campaign_config_version, campaign_class, scenario_case, pipeline_job,
-                        pipeline_cursor, run_record, verdict, campaign_event and their states
+                        pipeline_cursor, run_record, verdict, campaign_event, their states, kinds and steps
     artifact_tables.py  artifact, artifact_reference, calibration_result and the sha256 hex format
 """
 
@@ -20,6 +20,8 @@ from scenegems_tool.persistence.schema.campaign_tables import (
     CampaignDesiredState,
     CampaignEventKind,
     CampaignEventRow,
+    CampaignKind,
+    CampaignOrigin,
     CampaignRow,
     CaseState,
     MonitorImplementation,
@@ -27,7 +29,9 @@ from scenegems_tool.persistence.schema.campaign_tables import (
     PipelineJobRow,
     PipelineStage,
     RunRecordRow,
+    RunSource,
     ScenarioCaseRow,
+    StepKind,
     TrajectoryGeneratorImplementation,
     VerdictRow,
     VerdictState,
@@ -49,6 +53,8 @@ __all__ = [
     "CampaignDesiredState",
     "CampaignEventKind",
     "CampaignEventRow",
+    "CampaignKind",
+    "CampaignOrigin",
     "CampaignRow",
     "CaseState",
     "JobEventKind",
@@ -63,7 +69,9 @@ __all__ = [
     "PipelineJobRow",
     "PipelineStage",
     "RunRecordRow",
+    "RunSource",
     "ScenarioCaseRow",
+    "StepKind",
     "TrajectoryGeneratorImplementation",
     "VerdictRow",
     "VerdictState",

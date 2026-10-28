@@ -3,10 +3,10 @@ from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 
 from scenegems_tool.persistence.database import transaction
-from scenegems_tool.persistence.schema import CampaignClassRow, CampaignClassState, CaseState, PipelineStage
-from scenegems_tool.persistence.stores import CaseConflict, ClassCounts, ClassStateConflict, NewCase, UnknownCase, UnknownClass
+from scenegems_tool.persistence.schema import CampaignClassRow, CampaignClassState, CaseState, PipelineStage, StepKind, VerdictState
+from scenegems_tool.persistence.stores import CaseConflict, ClassCounts, ClassStateConflict, NewCase, OutputArtifact, UnknownCase, UnknownClass
 from tests.scenegems_tool.persistence.stores.builders import sha256_of
-from tests.scenegems_tool.persistence.stores.conftest import CLASS_A, CLASS_B
+from tests.scenegems_tool.persistence.stores.conftest import CLASS_A, CLASS_B, SCENE_0, SCENE_1, STATE_LOG_0, STATE_LOG_1, TRAJECTORY_DATA_0, TRAJECTORY_DATA_1, TRAJECTORY_FAILURES
 
 pytestmark = pytest.mark.postgres
 
@@ -195,3 +195,88 @@ def test_several_moves_commit_together(stores, campaign):
             stores.cases.move_case(second.case_id, second.version + 1, state=CaseState.COMPLETE, session=session)
     assert stores.cases.get_case(first.case_id).state == CaseState.ACTIVE
     assert _counts(stores, campaign.campaign_id, CLASS_A) == ClassCounts(in_flight=2)
+
+
+# Case inputs and step outputs (Phase 6)
+
+
+def test_a_case_keeps_the_input_of_its_first_step(stores, campaign):
+    source = {"campaign_id": "c-0", "case_id": 4, "step": "scene_generation"}
+    (case,) = stores.cases.create_cases(
+        campaign.campaign_id, [NewCase(class_id=CLASS_A, case_index=0, seed=1, stage=PipelineStage.GENERATE_TRAJECTORIES, input_artifact=sha256_of("scene"), input_source=source)]
+    )
+    assert (case.stage, case.input_artifact, case.input_source) == (PipelineStage.GENERATE_TRAJECTORIES, sha256_of("scene"), source)
+    assert stores.cases.get_case(case.case_id) == case
+    (plain,) = _create(stores, campaign, CLASS_B)
+    assert (plain.input_artifact, plain.input_source) == (None, None)
+    with pytest.raises(ValueError):
+        stores.cases.create_cases(campaign.campaign_id, [NewCase(class_id=CLASS_A, case_index=1, seed=1, input_artifact="not a hash")])
+
+
+def _rows(outputs):
+    return [(output.case_id, output.state, None if output.artifact is None else output.artifact.sha256, output.valid, output.complete, output.verdict_state) for output in outputs]
+
+
+def test_scene_outputs_are_one_row_per_case_that_reached_scene_generation(stores, step_outputs):
+    outputs = stores.cases.list_outputs(step_outputs.campaign_id, StepKind.SCENE)
+    a0, a1, a2, b0 = step_outputs.a0, step_outputs.a1, step_outputs.a2, step_outputs.b0
+    assert _rows(outputs) == [
+        (a0.case_id, CaseState.COMPLETE, SCENE_0, True, None, VerdictState.PASSED),
+        (a1.case_id, CaseState.DROPPED, SCENE_1, False, None, None),  # dropped at scene generation: invalid
+        (a2.case_id, CaseState.ACTIVE, None, False, None, None),
+        (b0.case_id, CaseState.DROPPED, SCENE_0, True, None, None),  # dropped later: its scene is valid
+    ]
+    first = outputs[0]
+    assert first.artifact == OutputArtifact(sha256=SCENE_0, size_bytes=100, kind="scene", media_type="application/json", pointer=None)
+    assert (first.step, first.case_index, first.class_id, first.run_index, first.repeat_index, first.run_record_id, first.failed_rules) == (StepKind.SCENE, 0, CLASS_A, None, None, None, ())
+    assert outputs[1].artifact == OutputArtifact(sha256=SCENE_1, size_bytes=None, kind=None, media_type=None)  # no artifact record any more
+    assert outputs[1].reason == "the scene generation found no valid scene"
+
+
+def test_trajectory_outputs_point_at_the_trajectories(stores, step_outputs):
+    outputs = stores.cases.list_outputs(step_outputs.campaign_id, StepKind.TRAJECTORIES)
+    assert _rows(outputs) == [
+        (step_outputs.a0.case_id, CaseState.COMPLETE, TRAJECTORY_DATA_0, True, True, VerdictState.FAILED),
+        (step_outputs.b0.case_id, CaseState.DROPPED, TRAJECTORY_DATA_1, False, False, None),
+    ]
+    assert outputs[0].artifact.pointer == "/trajectories" and outputs[0].artifact.kind == "trajectory_data"
+    assert outputs[0].failed_rules == TRAJECTORY_FAILURES
+
+
+def test_simulation_outputs_are_one_row_per_run_record(stores, step_outputs):
+    outputs = stores.cases.list_outputs(step_outputs.campaign_id, StepKind.SIMULATION)
+    runs = step_outputs.runs
+    assert [(output.run_index, output.repeat_index, output.run_record_id) for output in outputs] == [
+        (0, 0, runs[(0, 0)].run_record_id),
+        (0, 1, runs[(0, 1)].run_record_id),
+        (1, 0, runs[(1, 0)].run_record_id),
+    ]
+    case_id = step_outputs.a0.case_id
+    assert _rows(outputs) == [
+        (case_id, CaseState.COMPLETE, STATE_LOG_0, True, True, VerdictState.FAILED),
+        (case_id, CaseState.COMPLETE, STATE_LOG_1, True, False, VerdictState.FAILED),  # the repeat of run 0 shows the run's verdict
+        (case_id, CaseState.COMPLETE, None, False, True, VerdictState.PASSED),
+    ]
+    assert outputs[0].artifact.kind == "trajectories" and outputs[0].failed_rules == ("OS_0 - TS_1: rule_8",)
+
+
+def test_a_case_at_simulation_without_runs_has_a_row(stores, campaign, step_outputs):
+    (waiting,) = stores.cases.create_cases(campaign.campaign_id, [NewCase(class_id=CLASS_B, case_index=1, seed=1, stage=PipelineStage.SIMULATE)])
+    (row,) = stores.cases.list_outputs(campaign.campaign_id, StepKind.SIMULATION, class_id=CLASS_B)
+    assert (row.case_id, row.run_record_id, row.artifact, row.valid, row.complete, row.verdict_state) == (waiting.case_id, None, None, False, None, None)
+
+
+def test_outputs_carry_the_input_source(stores, campaign):
+    source = {"file": "head_on.json"}
+    stores.cases.create_cases(campaign.campaign_id, [NewCase(class_id=CLASS_A, case_index=0, seed=1, stage=PipelineStage.GENERATE_TRAJECTORIES, input_artifact=sha256_of("x"), input_source=source)])
+    (row,) = stores.cases.list_outputs(campaign.campaign_id, StepKind.TRAJECTORIES)
+    assert row.input_source == source
+
+
+def test_count_outputs_takes_the_filters_of_list_outputs(stores, step_outputs):
+    campaign_id = step_outputs.campaign_id
+    for step in StepKind:
+        for keywords in ({}, {"states": [CaseState.DROPPED]}, {"states": [CaseState.COMPLETE, CaseState.ACTIVE]}, {"class_id": CLASS_A}, {"class_id": CLASS_B, "states": [CaseState.DROPPED]}):
+            assert stores.cases.count_outputs(campaign_id, step, **keywords) == len(stores.cases.list_outputs(campaign_id, step, **keywords)), (step, keywords)
+    assert [stores.cases.count_outputs(campaign_id, step) for step in StepKind] == [4, 2, 3]
+    assert [output.case_id for output in stores.cases.list_outputs(campaign_id, StepKind.SCENE, limit=2, offset=1)] == [step_outputs.a1.case_id, step_outputs.a2.case_id]

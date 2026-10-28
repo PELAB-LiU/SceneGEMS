@@ -1,20 +1,26 @@
-"""Validation of a campaign config against the class catalog and the vessel stack resolver.
+"""Validation of a campaign config against the class catalog, the artifact store and the vessel stack resolver.
 
-A config is accepted only as a whole: every scope entry must name classes the catalog has
-(a pattern must match at least one), no class may be named by two entries, and every run's
-stack must be available on the resolver for an unattended run in its environment. Every
-problem is reported with its reason; nothing is dropped silently.
+A config is accepted only as a whole: the input must match the first step it runs (catalog
+classes or functional scenarios given as content for scene generation, scene items for
+trajectory generation, trajectory items for simulation), every scope entry must name
+classes the catalog has (a pattern must match at least one), no class may be named by two
+entries, every input reference must name an artifact the store has, and every run's stack
+must be available on the resolver for an unattended run in its environment. Sections of
+steps the campaign does not run are not checked (no runs are resolved without the
+simulation step). Every problem is reported with its reason; nothing is dropped silently.
 
 The result carries what creating the campaign needs: the config as JSON and its hash, and
-the classes with their pinned content hashes, quotas and failure budgets.
+the classes with their pinned content hashes, quotas and failure budgets: catalog classes
+in scope order, then the functional scenarios given as content, then the items.
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from scenegems_tool.assurance.campaign.campaign_config import CampaignConfig, CampaignConfigError, RunConfig, StackConfig
+from scenegems_tool.assurance.campaign.campaign_config import CampaignConfig, CampaignConfigError, CampaignStep, InputArtifactKind, InputRef, RunConfig, StackConfig
+from scenegems_tool.assurance.campaign.campaign_inputs import InputContentError, item_class_spec, scenario_class_spec
 from scenegems_tool.assurance.campaign.class_catalog import ClassCatalog
 from scenegems_tool.cluster.node.jobs.simulation_kinematic_job import KinematicMode
 from scenegems_tool.persistence.stores import ClassSpec
@@ -24,6 +30,15 @@ from scenegems_tool.vessel_stack.registry.catalog import default_resolver
 from scenegems_tool.vessel_stack.registry.resolver import StackResolver
 
 OWN_SHIP, TARGET_SHIP = "own_ship", "target_ship"
+
+ArtifactExists = Callable[[str], bool]  # whether the artifact store has the artifact with this sha256
+ReadArtifact = Callable[[str], bytes]  # the content of the artifact with this sha256
+
+# The item kinds a campaign takes by its first step; one that starts with scene generation takes no items
+ITEM_KINDS_OF_FIRST_STEP = {
+    CampaignStep.TRAJECTORY_GENERATION: (InputArtifactKind.SCENE,),
+    CampaignStep.SIMULATION: (InputArtifactKind.TRAJECTORY_DATA, InputArtifactKind.TRAJECTORIES),
+}
 
 
 class CampaignConfigRejected(CampaignConfigError):
@@ -46,8 +61,8 @@ class ValidatedCampaign:
     config: CampaignConfig
     config_json: Dict
     config_hash: str
-    classes: Tuple[ClassSpec, ...]  # in scope order, each class once
-    runs: Tuple[RunStacks, ...]
+    classes: Tuple[ClassSpec, ...]  # catalog classes in scope order (each once), then scenario classes, then item classes
+    runs: Tuple[RunStacks, ...]  # empty when the campaign does not simulate
 
     @property
     def total_quota(self) -> int:
@@ -121,18 +136,78 @@ def resolve_scope(config: CampaignConfig, catalog: ClassCatalog) -> Tuple[Tuple[
     return tuple(spec for _, spec in chosen.values()), reasons
 
 
-def validate_campaign_config(config: CampaignConfig, catalog: Optional[ClassCatalog] = None, resolver: Optional[StackResolver] = None) -> ValidatedCampaign:
-    """Checks the config against the catalog and the resolver; raises CampaignConfigRejected with every reason."""
+def check_input(config: CampaignConfig) -> List[str]:
+    """The input matches the first step: catalog classes or functional scenarios for scene generation, items of the right kind after it."""
+    first, reasons = config.first_step, []
+    scenarios, items = config.input.functional_scenarios, config.input.items
+    if first == CampaignStep.SCENE_GENERATION:
+        if not config.scope and not scenarios:
+            reasons.append("input: a campaign that starts with scene_generation needs scope entries or input.functional_scenarios")
+        if items:
+            reasons.append("input.items: a campaign that starts with scene_generation takes catalog classes or functional scenarios, not items")
+        return reasons
+    if config.scope:
+        reasons.append(f"scope: a campaign that starts with {first.value} takes input.items, not catalog classes")
+    if scenarios:
+        reasons.append(f"input.functional_scenarios: a campaign that starts with {first.value} takes input.items, not functional scenarios")
+    if not items:
+        reasons.append(f"input.items: a campaign that starts with {first.value} needs at least one item")
+    kinds = ITEM_KINDS_OF_FIRST_STEP[first]
+    for index, item in enumerate(items):
+        if item.ref.kind not in kinds:
+            reasons.append(f"input.items.{index} ({item.name}): a campaign that starts with {first.value} takes {' or '.join(kind.value for kind in kinds)} items, not {item.ref.kind.value}")
+    return reasons
+
+
+def resolve_input(config: CampaignConfig, artifact_exists: Optional[ArtifactExists], read_artifact: Optional[ReadArtifact]) -> Tuple[Tuple[ClassSpec, ...], List[str]]:
+    """The classes of the functional scenarios given as content and of the items, read from the artifact store."""
+    entries: List[Tuple[str, InputRef, Callable[[bytes], ClassSpec]]] = []
+    for index, scenario in enumerate(config.input.functional_scenarios):
+        entries.append((f"input.functional_scenarios.{index} ({scenario.name})", scenario.ref, lambda content, scenario=scenario: scenario_class_spec(scenario, content)))
+    for index, item in enumerate(config.input.items):
+        entries.append((f"input.items.{index} ({item.name})", item.ref, lambda content, index=index, item=item: item_class_spec(index, item, content)))
+    if not entries:
+        return (), []
+    if artifact_exists is None or read_artifact is None:
+        return (), ["input: there is no artifact store to check the input references against"]
+    classes, reasons = [], []
+    for label, ref, make_class in entries:
+        if not artifact_exists(ref.sha256):
+            reasons.append(f"{label}: no artifact {ref.sha256} in the artifact store")
+            continue
+        try:
+            classes.append(make_class(read_artifact(ref.sha256)))
+        except InputContentError as error:
+            reasons.append(f"{label}: {error}")
+    return tuple(classes), reasons
+
+
+def validate_campaign_config(
+    config: CampaignConfig,
+    catalog: Optional[ClassCatalog] = None,
+    resolver: Optional[StackResolver] = None,
+    artifact_exists: Optional[ArtifactExists] = None,
+    read_artifact: Optional[ReadArtifact] = None,
+) -> ValidatedCampaign:
+    """Checks the config against the catalog, the artifact store and the resolver; raises CampaignConfigRejected with every reason.
+
+    artifact_exists and read_artifact reach the master's artifact store; a config with
+    functional scenarios or items given is rejected without them.
+    """
     catalog = catalog or ClassCatalog.default()
-    resolver = resolver or default_resolver()
-    classes, reasons = resolve_scope(config, catalog)
+    reasons = check_input(config)
+    scope_classes, scope_reasons = resolve_scope(config, catalog)
+    input_classes, input_reasons = resolve_input(config, artifact_exists, read_artifact)
+    reasons += scope_reasons + input_reasons
     runs = []
-    for run_index, run in enumerate(config.execution.runs):
-        resolved, run_reasons = resolve_run(run, run_index, resolver)
-        reasons.extend(run_reasons)
-        if resolved is not None:
-            runs.append(resolved)
+    if config.runs_step(CampaignStep.SIMULATION):
+        resolver = resolver or default_resolver()
+        for run_index, run in enumerate(config.execution.runs):
+            resolved, run_reasons = resolve_run(run, run_index, resolver)
+            reasons.extend(run_reasons)
+            if resolved is not None:
+                runs.append(resolved)
     if reasons:
         raise CampaignConfigRejected(reasons)
     config_json = config.to_json()
-    return ValidatedCampaign(config=config, config_json=config_json, config_hash=config.config_hash(), classes=classes, runs=tuple(runs))
+    return ValidatedCampaign(config=config, config_json=config_json, config_hash=config.config_hash(), classes=scope_classes + input_classes, runs=tuple(runs))

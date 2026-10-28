@@ -6,6 +6,11 @@ scenario of one class, numbered per class, with a seed derived from the campaign
 pipeline engine moves each case through its stages; pipeline_job links a case to the jobs
 it submitted, and pipeline_cursor is how far the engine has read the job events. Run
 records and verdicts are the results, one per case and run (and repeat, for run records).
+
+A campaign runs a consecutive part of the chain scene generation, trajectory generation,
+simulation (Phase 6). Its kind says whether it is a campaign or a workbench entry (a run
+of one step) and its origin who made it. A case's input is the content its first step
+takes (a functional scenario, a scene or trajectories); verdicts carry the step they judge.
 """
 
 from datetime import datetime
@@ -18,6 +23,39 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from scenegems_tool.persistence.schema.artifact_tables import SHA256_HEX_LENGTH, sha256_hex_check
 from scenegems_tool.persistence.schema.base import Base, enum_column, utc_timestamp
+
+
+class CampaignKind(str, Enum):
+    CAMPAIGN = "campaign"  # defined in the wizard or the CLI
+    WORKBENCH = "workbench"  # one workbench run or a recorded live session
+
+
+class CampaignOrigin(str, Enum):
+    """Who made the campaign: the wizard or the CLI for campaigns, a workbench page or a live session for workbench entries."""
+
+    WIZARD = "wizard"
+    CLI = "cli"
+    SCENE_GENERATION = "scene_generation"
+    TRAJECTORY_GENERATION = "trajectory_generation"
+    SIMULATION = "simulation"
+    LIVE_SESSION = "live_session"
+
+    @property
+    def kind(self) -> "CampaignKind":
+        return CampaignKind.CAMPAIGN if self in (CampaignOrigin.WIZARD, CampaignOrigin.CLI) else CampaignKind.WORKBENCH
+
+
+class StepKind(str, Enum):
+    """The step a verdict judges or an output belongs to: the generated scene, the planned trajectories or a simulated run."""
+
+    SCENE = "scene"
+    TRAJECTORIES = "trajectories"
+    SIMULATION = "simulation"
+
+
+class RunSource(str, Enum):
+    JOB = "job"  # a simulation job of the cluster
+    LIVE_SESSION = "live_session"  # a live session the gateway recorded
 
 
 class CampaignDesiredState(str, Enum):
@@ -53,7 +91,9 @@ class PipelineStage(str, Enum):
     """The stages of a case. Every stage but verdict runs as a job; verdict is written by the engine."""
 
     GENERATE_SCENE = "generate_scene"
+    MONITOR_SCENE = "monitor_scene"  # post_hoc monitor over the scene as a one-scene log
     GENERATE_TRAJECTORIES = "generate_trajectories"
+    MONITOR_TRAJECTORIES = "monitor_trajectories"  # post_hoc monitor over the planned trajectories
     SIMULATE = "simulate"
     MONITOR = "monitor"  # post_hoc monitor only; live runs inside simulate, empty has no job
     CALIBRATE = "calibrate"  # calibration.deviation over the repeats of one run
@@ -105,16 +145,24 @@ class CampaignEventKind(str, Enum):
     NOTE = "note"
 
 
+# A campaign's origin is the wizard or the CLI, a workbench entry's one of the others
+KIND_OF_ORIGIN_CHECK = "origin IS NULL OR (kind = 'campaign') = (origin IN ('wizard', 'cli'))"
+
+
 class CampaignRow(Base):
     __tablename__ = "campaign"
     __table_args__ = (
         CheckConstraint("config_version >= 1", name="config_version_positive"),
         CheckConstraint("actual_state NOT IN ('stopped', 'completed') OR finished_at IS NOT NULL", name="finished_when_final"),
+        CheckConstraint(KIND_OF_ORIGIN_CHECK, name="origin_of_the_kind"),
         Index("ix_campaign_created_at", "created_at"),
+        Index("ix_campaign_kind_created_at", "kind", "created_at"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     name: Mapped[str] = mapped_column(String(256))
+    kind: Mapped[CampaignKind] = mapped_column(enum_column(CampaignKind, "kind"))
+    origin: Mapped[Optional[CampaignOrigin]] = mapped_column(enum_column(CampaignOrigin, "origin"))  # None for campaigns made before Phase 6
     desired_state: Mapped[CampaignDesiredState] = mapped_column(enum_column(CampaignDesiredState, "desired_state"))
     actual_state: Mapped[CampaignActualState] = mapped_column(enum_column(CampaignActualState, "actual_state"))
     state_reason: Mapped[Optional[str]] = mapped_column(Text)  # why it is stalled, for example
@@ -188,6 +236,7 @@ class ScenarioCaseRow(Base):
         CheckConstraint("version >= 1", name="version_positive"),
         CheckConstraint(sha256_hex_check("scene_artifact", nullable=True), name="scene_artifact_is_sha256_hex"),
         CheckConstraint(sha256_hex_check("trajectories_artifact", nullable=True), name="trajectories_artifact_is_sha256_hex"),
+        CheckConstraint(sha256_hex_check("input_artifact", nullable=True), name="input_artifact_is_sha256_hex"),
         CheckConstraint("(state = 'active') = (finished_at IS NULL)", name="finished_when_final"),
         Index("ix_scenario_case_campaign_id_state", "campaign_id", "state"),
     )
@@ -201,6 +250,9 @@ class ScenarioCaseRow(Base):
     stage: Mapped[PipelineStage] = mapped_column(enum_column(PipelineStage, "stage"))
     state: Mapped[CaseState] = mapped_column(enum_column(CaseState, "state"))
     version: Mapped[int] = mapped_column(Integer)  # raised by every change, for optimistic updates
+    # What the first configured step takes: a functional scenario given as content, a scene or trajectories; None for catalog classes
+    input_artifact: Mapped[Optional[str]] = mapped_column(String(SHA256_HEX_LENGTH))
+    input_source: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)  # where the input came from: {campaign_id, case_id, step} or {file}
     scene_artifact: Mapped[Optional[str]] = mapped_column(String(SHA256_HEX_LENGTH))
     trajectories_artifact: Mapped[Optional[str]] = mapped_column(String(SHA256_HEX_LENGTH))  # the generator's output, input to every run
     trajectories_complete: Mapped[Optional[bool]] = mapped_column(Boolean)
@@ -277,7 +329,9 @@ class RunRecordRow(Base):
     class_id: Mapped[str] = mapped_column(String(256))  # the case's, for queries
     run_index: Mapped[int] = mapped_column(Integer)  # the run of the config's execution section
     repeat_index: Mapped[int] = mapped_column(Integer)
-    trajectory_generator: Mapped[TrajectoryGeneratorImplementation] = mapped_column(enum_column(TrajectoryGeneratorImplementation, "trajectory_generator"))
+    source: Mapped[RunSource] = mapped_column(enum_column(RunSource, "source"))
+    # None when the trajectories came from an input item or a live session
+    trajectory_generator: Mapped[Optional[TrajectoryGeneratorImplementation]] = mapped_column(enum_column(TrajectoryGeneratorImplementation, "trajectory_generator"))
     trajectories_complete: Mapped[bool] = mapped_column(Boolean)  # whether the generator found complete trajectories
     stack: Mapped[Dict[str, Any]] = mapped_column(JSONB)  # the triple per vessel, adapters and stack parameters
     repeatability_tier: Mapped[Optional[str]] = mapped_column(String(32))  # exact, bounded or none, from the resolver
@@ -295,24 +349,27 @@ class RunRecordRow(Base):
 
 
 class VerdictRow(Base):
-    """The judgement of one run of a case by its monitor."""
+    """The judgement of one step of a case by its monitor: of the scene, of the trajectories, or of one run."""
 
     __tablename__ = "verdict"
     __table_args__ = (
-        UniqueConstraint("case_id", "run_index"),
+        UniqueConstraint("case_id", "step", "run_index"),
         CheckConstraint("run_index >= 0", name="run_index_not_negative"),
+        CheckConstraint("step = 'simulation' OR run_index = 0", name="one_verdict_per_generation_step"),
         CheckConstraint("(state = 'unmonitored') = (monitor = 'empty')", name="unmonitored_by_the_empty_monitor"),
         CheckConstraint("early_stop_time_s IS NULL OR monitor = 'live'", name="early_stop_by_the_live_monitor"),
         CheckConstraint("first_failure_time_s IS NULL OR state = 'failed'", name="failure_time_only_when_failed"),
         Index("ix_verdict_campaign_id_class_id_state", "campaign_id", "class_id", "state"),
         Index("ix_verdict_campaign_id_state", "campaign_id", "state"),
+        Index("ix_verdict_campaign_id_step_state", "campaign_id", "step", "state"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
     case_id: Mapped[int] = mapped_column(ForeignKey("scenario_case.id", ondelete="CASCADE"))
     campaign_id: Mapped[str] = mapped_column(ForeignKey("campaign.id", ondelete="CASCADE"))
     class_id: Mapped[str] = mapped_column(String(256))
-    run_index: Mapped[int] = mapped_column(Integer)
+    step: Mapped[StepKind] = mapped_column(enum_column(StepKind, "step"))
+    run_index: Mapped[int] = mapped_column(Integer)  # 0 for the scene and trajectory steps
     run_record_id: Mapped[Optional[int]] = mapped_column(ForeignKey("run_record.id", ondelete="SET NULL"))  # the run judged
     state: Mapped[VerdictState] = mapped_column(enum_column(VerdictState, "state"))
     monitor: Mapped[MonitorImplementation] = mapped_column(enum_column(MonitorImplementation, "monitor"))
