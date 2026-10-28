@@ -198,5 +198,5 @@ def test_pool_messages_translate():
     assert preview == TrajectoryPreview(request_id="t", trajectories={"a": 1})
     result = translate_pool_message(TRAJECTORY_RESULT_TOPIC, {"request-id": "t", "trajectory-data": None, "valid": False, "complete": False, "error-message": "no path"})
     assert result == TrajectoryPreview(request_id="t", final=True, valid=False, complete=False, error_message="no path")
-    assert translate_pool_message("waraps/service/virtual/real/scenario_generation_service/heartbeat", {"type": "HeartBeat"}) is None
+    assert translate_pool_message("waraps/service/virtual/real/scene_generation_service/heartbeat", {"type": "HeartBeat"}) is None
     assert translate_pool_message(GENERATED_SCENE_TOPIC, {"request-id": "r", "evaluation-data": "not a dict"}) is None

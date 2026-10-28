@@ -24,7 +24,7 @@ def test_free_job_types_can_be_limited():
 
 
 def _compiled_query() -> str:
-    query = next_queued_job_query([SCENE], {"site": "lab"}, {"scenegems-scenario-generation": "f1"}, free_memory_mb=4000, cpus=4.0, now=START, node_id="node-1")
+    query = next_queued_job_query([SCENE], {"site": "lab"}, {"scenegems-scene-generation": "f1"}, free_memory_mb=4000, cpus=4.0, now=START, node_id="node-1")
     return str(query.compile(dialect=postgresql.dialect()))
 
 

@@ -12,14 +12,14 @@ class Subsystem(str, Enum):
 
 
 _DEFAULT_IMAGES = {
-    Subsystem.SCENE_GENERATION: "scenegems-scenario-generation-subsystem:latest",
+    Subsystem.SCENE_GENERATION: "scenegems-scene-generation-subsystem:latest",
     Subsystem.TRAJECTORY_GENERATION: "scenegems-trajectory-generation-subsystem:latest",
     Subsystem.MONITORING: "scenegems-monitoring-subsystem:latest",
     Subsystem.SCENARIO_EXECUTION: "scenegems-scenario-execution-subsystem:latest",
 }
 # Environment variables that replace a default image, for the workbench and the node alike.
 IMAGE_ENVIRONMENT_VARIABLES = {
-    Subsystem.SCENE_GENERATION: "SCENARIO_GENERATION_IMAGE",
+    Subsystem.SCENE_GENERATION: "SCENE_GENERATION_IMAGE",
     Subsystem.TRAJECTORY_GENERATION: "TRAJECTORY_GENERATION_IMAGE",
     Subsystem.MONITORING: "MONITORING_IMAGE",
     Subsystem.SCENARIO_EXECUTION: "SCENARIO_EXECUTION_IMAGE",

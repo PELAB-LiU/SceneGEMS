@@ -45,12 +45,12 @@ def test_scoped_pool_is_sized_by_slots_and_named_by_scope(no_docker, mqtt_connec
     scope = InstanceScope.pooled("m1", "n1", "scene_generation")
     pool = SceneGenerationPool.for_scope(scope, mqtt_connection, geofence, workers=3, broker_network="node_broker_net")
     compose = pool.build_compose()
-    service = compose["services"]["scenario_generation"]
+    service = compose["services"]["scene_generation"]
     assert service["container_name"] == service["hostname"] == "scenegems-m1-n1-scene_generation-0"
     assert service["cpus"] == 4
     assert service["environment"]["WORKER_COUNT"] == "3"
     assert service["environment"]["MQTT_TOPIC_PREFIX"] == "scenegems/m1/n1/scene_generation-0/"
-    assert compose["networks"]["scenario_generation_net"]["name"] == "scenegems-m1-n1-scene_generation-0-net"
+    assert compose["networks"]["scene_generation_net"]["name"] == "scenegems-m1-n1-scene_generation-0-net"
     assert compose["networks"]["scenegems_broker"] == {"external": True, "name": "node_broker_net"}
     assert pool.project.name == scope.compose_project
     assert pool.compose_filename == f"{scope.folder}/docker-compose.yml"
@@ -72,9 +72,9 @@ def test_two_scoped_pools_share_no_docker_name(no_docker, mqtt_connection, geofe
 
 
 def test_image_override_applies_to_pools(no_docker, monkeypatch, mqtt_connection, geofence):
-    monkeypatch.setenv("SCENARIO_GENERATION_IMAGE", "scenegems-scenario-generation-subsystem:branch")
+    monkeypatch.setenv("SCENE_GENERATION_IMAGE", "scenegems-scene-generation-subsystem:branch")
     pool = SceneGenerationPool.for_scope(InstanceScope.pooled("m1", "n1", "scene_generation"), mqtt_connection, geofence, workers=1, broker_network="node_broker_net")
-    assert pool.build_compose()["services"]["scenario_generation"]["image"] == "scenegems-scenario-generation-subsystem:branch"
+    assert pool.build_compose()["services"]["scene_generation"]["image"] == "scenegems-scene-generation-subsystem:branch"
 
 
 def test_workbench_monitor_compose_is_unchanged(no_docker, mqtt_connection, geofence):

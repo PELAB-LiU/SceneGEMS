@@ -2,15 +2,15 @@
 
 import pytest
 
-from scenegems_tool.messaging.mqtt_scenario_generation_client import MqttScenarioGenerationClient
-from scenegems_tool.messaging.mqtt_scenario_generation_service import MqttScenarioGenerationService
-from scenegems_tool.subsystems.scene_generation.scenario_generation_types import SCENARIO_GENERATION_SERVICE_NAME, SCENARIO_GENERATION_SERVICE_TOPIC
+from scenegems_tool.messaging.mqtt_scene_generation_client import MqttSceneGenerationClient
+from scenegems_tool.messaging.mqtt_scene_generation_service import MqttSceneGenerationService
+from scenegems_tool.subsystems.scene_generation.scene_generation_types import SCENE_GENERATION_SERVICE_NAME, SCENE_GENERATION_SERVICE_TOPIC
 from tests.scenegems_tool.messaging.generation_fakes import CONNECTION, GEOFENCE, deliver, offline
 
 
 def _client(**handlers):
     handlers.setdefault("on_generated_scene", lambda *args: None)
-    return offline(MqttScenarioGenerationClient(CONNECTION, SCENARIO_GENERATION_SERVICE_TOPIC, GEOFENCE, SCENARIO_GENERATION_SERVICE_NAME, send_payload=lambda message: None, **handlers))
+    return offline(MqttSceneGenerationClient(CONNECTION, SCENE_GENERATION_SERVICE_TOPIC, GEOFENCE, SCENE_GENERATION_SERVICE_NAME, send_payload=lambda message: None, **handlers))
 
 
 def _command(client, **options):
@@ -27,7 +27,7 @@ def test_the_seed_is_in_the_command_only_when_given():
 
 @pytest.fixture
 def service():
-    return MqttScenarioGenerationService(CONNECTION, GEOFENCE, max_workers=1)
+    return MqttSceneGenerationService(CONNECTION, GEOFENCE, max_workers=1)
 
 
 def test_the_service_puts_the_seed_into_the_task(service):
@@ -51,7 +51,7 @@ def test_generated_scenes_say_whether_they_are_final(service, monkeypatch):
 def test_a_cluster_job_gets_every_scene_with_its_final_flag():
     received, monitored = [], []
     client = _client(on_scene_result=lambda *args: received.append(args), on_generated_scene=lambda *args: monitored.append(args))
-    message = {"task_sender": SCENARIO_GENERATION_SERVICE_NAME, "request-id": "r1", "evaluation-data": {"x": 1}, "valid": True}
+    message = {"task_sender": SCENE_GENERATION_SERVICE_NAME, "request-id": "r1", "evaluation-data": {"x": 1}, "valid": True}
     deliver(client, client.generated_scene_topic, {**message, "final": False})
     deliver(client, client.generated_scene_topic, message)  # a service from before the flag: one scene, final
     deliver(client, client.generated_scene_topic, {**message, "task_sender": "someone else"})
@@ -60,7 +60,7 @@ def test_a_cluster_job_gets_every_scene_with_its_final_flag():
 
 
 def _service_task(service):
-    from scenegems_tool.subsystems.scene_generation.scenario_generation_types import MqttSceneGenerationTask
+    from scenegems_tool.subsystems.scene_generation.scene_generation_types import MqttSceneGenerationTask
 
     return MqttSceneGenerationTask(
         sender=service.name, task_uuid="u", request_id="r1", functional_scenario_content="", colregs_constraints_content="", vessel_types_content="", obstacle_types_content="", timeout=1

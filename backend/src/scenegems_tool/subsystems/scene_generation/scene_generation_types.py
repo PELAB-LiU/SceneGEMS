@@ -4,8 +4,8 @@ from typing import Optional
 # Kept apart from the service module, which imports the generation code, so launchers and
 # clients can name the service without loading it.
 MAX_SCENE_GENERATION_WORKERS = 5  # the workbench pool; a node sizes its pool by its slots
-SCENARIO_GENERATION_SERVICE_NAME = "scenario_generation_service"
-SCENARIO_GENERATION_SERVICE_TOPIC = f"waraps/service/virtual/real/{SCENARIO_GENERATION_SERVICE_NAME}"
+SCENE_GENERATION_SERVICE_NAME = "scene_generation_service"
+SCENE_GENERATION_SERVICE_TOPIC = f"waraps/service/virtual/real/{SCENE_GENERATION_SERVICE_NAME}"
 
 
 @dataclass(frozen=True)

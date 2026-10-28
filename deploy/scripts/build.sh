@@ -28,7 +28,7 @@ Options:
   -h, --help              Show this help and exit
 
   -1, --backend           scenegems-backend and Python subsystems (monitor,
-                          scenario-generation, trajectory-generation,
+                          scene-generation, trajectory-generation,
                           scenario-execution)
 
   -2, --frontend          Frontend only (scenegems-frontend:dev)
@@ -165,10 +165,10 @@ build_backend_stack_images() {
         "$SCRIPT_DIR/deploy/images/scenario_execution/requirements.txt" "$SCRIPT_DIR/deploy/images/scenario_execution/Dockerfile" \
         "$SCRIPT_DIR/backend/pyproject.toml" "$SCRIPT_DIR/backend/setup.py" "$SCRIPT_DIR/backend/README.md" "$SCRIPT_DIR/backend/src" \
         "$SCRIPT_DIR/backend/assets/domain_config"
-    build_subsystem_if_stale "scenegems-scenario-generation-subsystem:latest" "$SCRIPT_DIR/deploy/images/scenario_generation/Dockerfile" \
-        "$SCRIPT_DIR/deploy/images/scenario_generation/requirements.txt" "$SCRIPT_DIR/deploy/images/scenario_generation/Dockerfile" \
+    build_subsystem_if_stale "scenegems-scene-generation-subsystem:latest" "$SCRIPT_DIR/deploy/images/scene_generation/Dockerfile" \
+        "$SCRIPT_DIR/deploy/images/scene_generation/requirements.txt" "$SCRIPT_DIR/deploy/images/scene_generation/Dockerfile" \
         "$SCRIPT_DIR/backend/pyproject.toml" "$SCRIPT_DIR/backend/setup.py" "$SCRIPT_DIR/backend/README.md" "$SCRIPT_DIR/backend/src" \
-        "$SCRIPT_DIR/backend/assets/runtime_assets/scenario_generation"
+        "$SCRIPT_DIR/backend/assets/runtime_assets/scene_generation"
     build_subsystem_if_stale "scenegems-trajectory-generation-subsystem:latest" "$SCRIPT_DIR/deploy/images/trajectory_generation/Dockerfile" \
         "$SCRIPT_DIR/deploy/images/trajectory_generation/requirements.txt" "$SCRIPT_DIR/deploy/images/trajectory_generation/Dockerfile" \
         "$SCRIPT_DIR/backend/pyproject.toml" "$SCRIPT_DIR/backend/setup.py" "$SCRIPT_DIR/backend/README.md" "$SCRIPT_DIR/backend/src" \

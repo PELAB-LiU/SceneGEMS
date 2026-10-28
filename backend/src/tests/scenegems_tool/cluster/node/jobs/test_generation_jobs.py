@@ -12,7 +12,7 @@ from scenegems_tool.cluster.node.jobs import scene_generation_job, trajectory_ge
 from scenegems_tool.cluster.node.jobs.job_payload import validate_structure
 from scenegems_tool.cluster.protocol.artifacts import ArtifactRef, resolve_references
 from scenegems_tool.cluster.protocol.jobs import JobType
-from scenegems_tool.messaging import mqtt_scenario_generation_client, mqtt_trajectory_generation_client
+from scenegems_tool.messaging import mqtt_scene_generation_client, mqtt_trajectory_generation_client
 from tests.scenegems_tool.cluster.payloads import valid_payload
 
 
@@ -73,7 +73,7 @@ def test_the_scene_job_sends_the_seed_and_takes_the_final_scene(pool, node, make
         arguments["on_scene_result"](request_id, {"sample": 3}, True, True)
         arguments["on_scene_result"](request_id, {"sample": 4}, True, True)  # never twice
 
-    client = pool(mqtt_scenario_generation_client, "MqttScenarioGenerationClient", answer)
+    client = pool(mqtt_scene_generation_client, "MqttSceneGenerationClient", answer)
     report = _Report()
     result = scene_generation_job.run(make_job(JobType.SCENE_GENERATION, valid_payload(JobType.SCENE_GENERATION, seed=17)), node, report)
     assert result == {"request_id": "job-1-1", "valid": True, "evaluation_data": {"sample": 3}}
@@ -125,7 +125,7 @@ def test_the_scene_job_takes_the_scenario_as_a_reference_the_node_resolves(pool,
     def answer(arguments, command):
         arguments["on_scene_result"](command[0], {"sample": 1}, True, True)
 
-    client = pool(mqtt_scenario_generation_client, "MqttScenarioGenerationClient", answer)
+    client = pool(mqtt_scene_generation_client, "MqttSceneGenerationClient", answer)
     text = valid_payload(JobType.SCENE_GENERATION)["functional_scenario_content"]
     reference, stored = _scenario_reference(text)
     payload = valid_payload(JobType.SCENE_GENERATION, functional_scenario_content=reference, seed=5)

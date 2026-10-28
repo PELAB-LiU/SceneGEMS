@@ -1,6 +1,6 @@
 """scene_generation: one concrete scene from a functional scenario, by the node's scene generation pool.
 
-The job is dispatched to the pooled scenario generation service over the pool's scoped
+The job is dispatched to the pooled scene generation service over the pool's scoped
 topics with today's generate-scene task, so the daemon only relays it. The pool runs as
 many generations at once as the node has scene_generation slots.
 
@@ -27,7 +27,7 @@ from scenegems_tool.cluster.node.subsystem import Subsystem
 from scenegems_tool.cluster.protocol.artifacts import ArtifactContent, ArtifactField, ArtifactKind, artifact_or, is_reference
 from scenegems_tool.cluster.protocol.jobs import JobSpec
 from scenegems_tool.cluster.protocol.model_base import ProtocolModel
-from scenegems_tool.subsystems.scene_generation.scenario_generation_types import SCENARIO_GENERATION_SERVICE_NAME, SCENARIO_GENERATION_SERVICE_TOPIC
+from scenegems_tool.subsystems.scene_generation.scene_generation_types import SCENE_GENERATION_SERVICE_NAME, SCENE_GENERATION_SERVICE_TOPIC
 
 REPLY_MARGIN_S = 60.0  # time beyond the generation timeout for the worker to start and the reply to arrive
 MAX_SEED = 2**31 - 1
@@ -64,7 +64,7 @@ PAYLOAD_MODEL = SceneGenerationPayload
 
 
 def run(job: JobSpec, node: NodeContext, report: JobReport, cancel: Optional[threading.Event] = None) -> JobResultData:
-    from scenegems_tool.messaging.mqtt_scenario_generation_client import MqttScenarioGenerationClient
+    from scenegems_tool.messaging.mqtt_scene_generation_client import MqttSceneGenerationClient
 
     payload = parse_payload(SceneGenerationPayload, job)
     request_id = f"{job.job_id}-{job.attempt}"  # an earlier attempt's late reply is never taken for this one
@@ -84,11 +84,11 @@ def run(job: JobSpec, node: NodeContext, report: JobReport, cancel: Optional[thr
         replied.set()
 
     pool = node.pools.get(Subsystem.SCENE_GENERATION)
-    client = MqttScenarioGenerationClient(
+    client = MqttSceneGenerationClient(
         mqtt_connection=pool.mqtt_connection,
-        topic=SCENARIO_GENERATION_SERVICE_TOPIC,
+        topic=SCENE_GENERATION_SERVICE_TOPIC,
         reference_geofence=node.reference_geofence,
-        parent_service_name=SCENARIO_GENERATION_SERVICE_NAME,
+        parent_service_name=SCENE_GENERATION_SERVICE_NAME,
         send_payload=lambda message: None,
         on_generated_scene=lambda request_id, scene, evaluation_data, valid: None,
         on_scene_result=on_scene_result,

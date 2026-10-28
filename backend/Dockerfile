@@ -34,7 +34,7 @@ COPY backend/src ./src
 COPY backend/assets ./assets
 RUN rm -rf ./assets/runtime_assets/monitoring/gen_tmp \
     ./assets/runtime_assets/scenario_execution/gen_tmp \
-    ./assets/runtime_assets/scenario_generation/gen_tmp
+    ./assets/runtime_assets/scene_generation/gen_tmp
 RUN pip install --no-cache-dir --no-deps -e .
 
 ENV PYTHONPATH=/app/src

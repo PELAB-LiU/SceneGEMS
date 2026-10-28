@@ -18,7 +18,7 @@ def test_every_job_type_has_its_images():
 
 
 def test_the_subsystem_images_are_the_ones_the_node_launches(monkeypatch):
-    for variable in ("SCENARIO_GENERATION_IMAGE", "TRAJECTORY_GENERATION_IMAGE", "MONITORING_IMAGE", "SCENARIO_EXECUTION_IMAGE"):
+    for variable in ("SCENE_GENERATION_IMAGE", "TRAJECTORY_GENERATION_IMAGE", "MONITORING_IMAGE", "SCENARIO_EXECUTION_IMAGE"):
         monkeypatch.delenv(variable, raising=False)
     assert subsystem_image(Subsystem.SCENE_GENERATION) == SCENE_GENERATION_IMAGE
     assert subsystem_image(Subsystem.TRAJECTORY_GENERATION) == TRAJECTORY_GENERATION_IMAGE

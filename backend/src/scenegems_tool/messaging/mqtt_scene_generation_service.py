@@ -12,10 +12,10 @@ import paho.mqtt.client as mqtt
 from logical_level.constraint_satisfaction.evaluation_data import EvaluationData
 from scenegems_tool.gateway.serialization import serialize_frame
 from scenegems_tool.messaging.mqtt_client import MqttClient, MQttConnectionInfo
-from scenegems_tool.subsystems.scene_generation.scenario_generation_types import (  # noqa: F401 (re-exported names)
+from scenegems_tool.subsystems.scene_generation.scene_generation_types import (  # noqa: F401 (re-exported names)
     MAX_SCENE_GENERATION_WORKERS,
-    SCENARIO_GENERATION_SERVICE_NAME,
-    SCENARIO_GENERATION_SERVICE_TOPIC,
+    SCENE_GENERATION_SERVICE_NAME,
+    SCENE_GENERATION_SERVICE_TOPIC,
     MqttSceneGenerationTask,
 )
 from scenegems_tool.subsystems.scene_generation.scene_generation_worker import run_scene_generation_worker
@@ -24,11 +24,11 @@ from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 _logger = logging.getLogger(__name__)
 
 
-class MqttScenarioGenerationService(MqttClient):
+class MqttSceneGenerationService(MqttClient):
     def __init__(self, mqtt_connection: MQttConnectionInfo, reference_geofence: Geofence, max_workers: int = MAX_SCENE_GENERATION_WORKERS):
         self.info_update_rate = 1.0
         self.max_workers = max_workers
-        super().__init__(SCENARIO_GENERATION_SERVICE_NAME, SCENARIO_GENERATION_SERVICE_TOPIC, mqtt_connection, reference_geofence)
+        super().__init__(SCENE_GENERATION_SERVICE_NAME, SCENE_GENERATION_SERVICE_TOPIC, mqtt_connection, reference_geofence)
         self.scene_generation_task_queue: Queue[MqttSceneGenerationTask] = Queue()
         self.generated_scene_queue: Queue[Tuple[MqttSceneGenerationTask, EvaluationData, bool]] = Queue()  # task, scene, final
         self.terminate_last_generation_event = multiprocessing.Event()
@@ -87,7 +87,7 @@ class MqttScenarioGenerationService(MqttClient):
         heartbeat_command = {
             "name": self.name,
             "agent-type": "virtual",
-            "agent-description": "Scenario Generation Subsystem",
+            "agent-description": "Scene Generation Subsystem",
             "agent-uuid": self.uuid,
             "levels": [
                 "sensor",

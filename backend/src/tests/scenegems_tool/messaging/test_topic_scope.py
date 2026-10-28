@@ -4,7 +4,7 @@ import pytest
 from scenegems_tool.messaging.topic_scope import ScopedPahoClient, TopicScope
 
 PREFIX = "scenegems/m1/n1/scene_generation-0/"
-TOPIC = "waraps/service/virtual/real/scenario_generation_service/exec/command"
+TOPIC = "waraps/service/virtual/real/scene_generation_service/exec/command"
 
 
 def test_apply_and_strip_are_inverse():

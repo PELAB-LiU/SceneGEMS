@@ -25,7 +25,7 @@ from scenegems_tool.cluster.node.subsystem import IMAGE_ENVIRONMENT_VARIABLES, S
 from scenegems_tool.cluster.protocol.jobs import JobType
 from scenegems_tool.cluster.protocol.messages import LogStream
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
-from scenegems_tool.subsystems.scene_generation.scenario_generation_types import SCENARIO_GENERATION_SERVICE_TOPIC
+from scenegems_tool.subsystems.scene_generation.scene_generation_types import SCENE_GENERATION_SERVICE_TOPIC
 from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 from scenegems_tool.vessel_stack.simulation_layers.kinematic.kinematic_runner import run_kinematic_replay
 from utils.file_system_utils import COLREGS_CONSTANTS_FOLDER, FUNCTIONAL_MODELS_FOLDER, STATIC_OBSTACLE_TYPES_FOLDER, VESSEL_TYPES_FOLDER
@@ -192,8 +192,8 @@ def test_two_scene_generation_pools_run_side_by_side(broker, master_id, make_job
     listener = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
     listener.on_message = lambda client, userdata, message: heartbeat_topics.add(message.topic)
     listener.connect("localhost", broker[1])
-    listener.subscribe(f"scenegems/{master_id}/+/+/{SCENARIO_GENERATION_SERVICE_TOPIC}/heartbeat")
-    listener.subscribe(f"{SCENARIO_GENERATION_SERVICE_TOPIC}/heartbeat")
+    listener.subscribe(f"scenegems/{master_id}/+/+/{SCENE_GENERATION_SERVICE_TOPIC}/heartbeat")
+    listener.subscribe(f"{SCENE_GENERATION_SERVICE_TOPIC}/heartbeat")
     listener.loop_start()
     results = {}
 
@@ -223,5 +223,5 @@ def test_two_scene_generation_pools_run_side_by_side(broker, master_id, make_job
         assert result["evaluation_data"]["random_seed"] == 5
     # The job takes the worker's final scene, so the same seed gives both pools the same scene.
     assert results["n1"]["evaluation_data"]["best_scene"] == results["n2"]["evaluation_data"]["best_scene"]
-    assert heartbeat_topics == {f"scenegems/{master_id}/{node_id}/scene_generation-0/{SCENARIO_GENERATION_SERVICE_TOPIC}/heartbeat" for node_id in ("n1", "n2")}
+    assert heartbeat_topics == {f"scenegems/{master_id}/{node_id}/scene_generation-0/{SCENE_GENERATION_SERVICE_TOPIC}/heartbeat" for node_id in ("n1", "n2")}
     assert not any(is_container_running(f"scenegems-{master_id}-{node_id}-scene_generation-0") for node_id in ("n1", "n2"))

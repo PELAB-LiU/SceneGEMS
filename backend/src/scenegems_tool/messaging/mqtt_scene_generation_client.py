@@ -19,7 +19,7 @@ GeneratedSceneHandler = Callable[[str, ConcreteScene, Dict[str, Any], bool], Non
 SceneResultHandler = Callable[[str, Dict[str, Any], bool, bool], None]
 
 
-class MqttScenarioGenerationClient(MqttClient):
+class MqttSceneGenerationClient(MqttClient):
     def __init__(
         self,
         mqtt_connection: MQttConnectionInfo,
@@ -30,7 +30,7 @@ class MqttScenarioGenerationClient(MqttClient):
         on_generated_scene: GeneratedSceneHandler,
         on_scene_result: Optional[SceneResultHandler] = None,
     ):
-        super().__init__(name="scenario_generation_client", topic=topic, mqtt_connection=mqtt_connection, reference_geofence=reference_geofence)
+        super().__init__(name="scene_generation_client", topic=topic, mqtt_connection=mqtt_connection, reference_geofence=reference_geofence)
         self.parent_service_name = parent_service_name
         self.send_payload = send_payload
         self.on_generated_scene = on_generated_scene
@@ -87,7 +87,7 @@ class MqttScenarioGenerationClient(MqttClient):
         while not self.is_heartbeat_valid or not self.is_connected:
             time.sleep(0.1)
             if time.time() - start_time > self.timeout_sec:
-                raise ValueError("Timeout: Failed to connect to scenario generation service")
+                raise ValueError("Timeout: Failed to connect to scene generation service")
 
     def publish_generate_scene_command(
         self,

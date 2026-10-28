@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from scenegems_tool.subsystems.scene_generation.scenario_generation_types import MqttSceneGenerationTask
+from scenegems_tool.subsystems.scene_generation.scene_generation_types import MqttSceneGenerationTask
 from scenegems_tool.subsystems.scene_generation.scene_generation_worker import MAX_SEED, run_scene_generation_worker
 from utils.file_system_utils import COLREGS_CONSTANTS_FOLDER, FUNCTIONAL_MODELS_FOLDER, STATIC_OBSTACLE_TYPES_FOLDER, VESSEL_TYPES_FOLDER
 

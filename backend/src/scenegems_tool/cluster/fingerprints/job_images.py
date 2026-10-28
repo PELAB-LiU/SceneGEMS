@@ -8,7 +8,7 @@ from typing import Any, Collection, Mapping, Set, Tuple
 
 from scenegems_tool.cluster.protocol.jobs import JobType
 
-SCENE_GENERATION_IMAGE = "scenegems-scenario-generation-subsystem:latest"
+SCENE_GENERATION_IMAGE = "scenegems-scene-generation-subsystem:latest"
 TRAJECTORY_GENERATION_IMAGE = "scenegems-trajectory-generation-subsystem:latest"
 SCENARIO_EXECUTION_IMAGE = "scenegems-scenario-execution-subsystem:latest"
 MONITORING_IMAGE = "scenegems-monitoring-subsystem:latest"

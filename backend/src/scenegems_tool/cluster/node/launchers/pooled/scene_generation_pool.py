@@ -1,4 +1,4 @@
-"""The scene generation pool: the scenario generation MQTT service with its generation workers."""
+"""The scene generation pool: the scene generation MQTT service with its generation workers."""
 
 from typing import Optional
 
@@ -8,7 +8,7 @@ from scenegems_tool.cluster.node.subsystem import Subsystem
 from scenegems_tool.messaging.mqtt_client import MQttConnectionInfo
 from scenegems_tool.vessel_stack.contracts.local_frame import Geofence
 
-_SERVICE_KEY = "scenario_generation"
+_SERVICE_KEY = "scene_generation"
 
 
 class SceneGenerationPool(PooledService):

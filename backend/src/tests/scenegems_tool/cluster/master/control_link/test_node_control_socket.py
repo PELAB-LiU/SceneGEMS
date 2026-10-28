@@ -36,7 +36,7 @@ def test_offer_accept_renew_result(make_node, plane, stores, on_loop, schedule, 
     assert schedule() == 1
     offer = node.expect(LeaseOffer)
     assert offer.job.job_id == job.job_id and offer.job.attempt == 1
-    assert offer.job.requirements.fingerprints == {"scenegems-scenario-generation-subsystem:latest": "fp-scene"}
+    assert offer.job.requirements.fingerprints == {"scenegems-scene-generation-subsystem:latest": "fp-scene"}
     assert offer.expires_at == clock.now + timedelta(seconds=10)
 
     renewed = node.accept(offer)
