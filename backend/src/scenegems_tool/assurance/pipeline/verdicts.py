@@ -1,26 +1,32 @@
 """Verdicts, run records, calibration results and artifact references, from the jobs' results.
 
-A run's verdict comes from its monitor:
+A verdict judges one step of a case: a run of the simulation step, or the generated scene or
+trajectory set when the campaign monitors that step (StepKind scene, trajectories; run index
+0). A run's verdict comes from its monitor:
 
     post_hoc  the monitoring.post_hoc result: passed, failed_rules, rules
     live      the simulation result's monitor section (the same shape), with early_stop_time_s
               from its stopped_early_at
     empty     unmonitored, judging nothing
 
-It waits in the case's progress as a pending verdict (JSON) until the coverage controller
-completes the case; new_verdict turns it into the stored one, with its sensitivity then:
-false on an exact stack, and on a bounded one true while no calibration result exists for
-the stack on the run's fingerprints.
+A scene or trajectory verdict always comes from a monitoring.post_hoc result; an unmonitored
+generation step gets no verdict. Each waits in the case's progress as a pending verdict (JSON)
+until the coverage controller completes the case; new_verdict turns it into the stored one,
+with its sensitivity then: false on an exact stack and for the generation steps, and on a
+bounded stack true while no calibration result exists for the stack on the run's
+fingerprints.
 
 A run record describes one simulation (every repeat): the simulation's run_record, steps
 and state digest, its artifacts as {role: sha256} for referenced ones, the job, the node
-that held its lease, its fingerprints and the job's durations.
+that held its lease, its fingerprints and the job's durations. A run recorded from a live
+session has source live_session and no job.
 
 Every reference in a result gets an artifact reference for its holder (the case for the
-scene and the generated trajectories, the run record for the state log and frames), so the
-sweep keeps the file. The artifact store records an upload as held by its job (role
-result:<field>) until then; the engine takes the job's references over in the same
-transaction, so retention decides what stays. Inline results add none.
+scene, the generated trajectories and the frames of the scene and trajectory monitors, the
+run record for the state log and frames), so the sweep keeps the file. The artifact store
+records an upload as held by its job (role result:<field>) until then; the engine takes the
+job's references over in the same transaction, so retention decides what stays. Inline
+results add none.
 """
 
 from typing import Any, Dict, Mapping, Optional
@@ -28,7 +34,7 @@ from typing import Any, Dict, Mapping, Optional
 from sqlalchemy.orm import Session
 
 from scenegems_tool.cluster.protocol.artifacts import find_references
-from scenegems_tool.persistence.schema import ArtifactHolderKind, MonitorImplementation, TrajectoryGeneratorImplementation, VerdictState
+from scenegems_tool.persistence.schema import ArtifactHolderKind, MonitorImplementation, RunSource, StepKind, TrajectoryGeneratorImplementation, VerdictState
 from scenegems_tool.persistence.stores import AssuranceStores, NewCalibrationResult, NewRunRecord, NewVerdict
 
 EXACT_TIER = "exact"
@@ -42,9 +48,16 @@ RESULT_FIELD_ROLES = {
     "frames": "frames",
 }
 RESULT_ROLE_PREFIX = "result:"  # the job's own reference to an uploaded result field (persistence/artifacts/recorded_artifacts.py)
-# Roles retention may remove: the generated trajectories (held by the case) and what the runs produced
+# The frames of the scene and trajectory monitors, held by the case
+STEP_FRAME_ROLES = {StepKind.SCENE: "scene_frames", StepKind.TRAJECTORIES: "trajectory_frames"}
+# Roles retention may remove: the generated trajectories and the generation monitors' frames (held by the case) and what the runs produced
 CASE_TRAJECTORY_ROLES = ("trajectory_data",)
 RUN_LOG_ROLES = ("state_log", "frames")
+
+
+def step_roles(step: StepKind) -> Dict[str, str]:
+    """The roles of a scene or trajectory monitor's result fields: its frames under the step's own role, so the two monitors' frames stay apart."""
+    return {**RESULT_FIELD_ROLES, "frames": STEP_FRAME_ROLES[step]}
 
 
 class ResultError(ValueError):
@@ -86,8 +99,9 @@ def pending_unmonitored() -> Dict[str, Any]:
     return {"state": VerdictState.UNMONITORED.value, "monitor": MonitorImplementation.EMPTY.value, "rule_outcomes": {}, "failed_rules": [], "first_failure_time_s": None, "early_stop_time_s": None}
 
 
-def new_verdict(case_id: int, run_index: int, pending: Mapping[str, Any], run_record_id: Optional[int], sensitive: bool) -> NewVerdict:
+def new_verdict(case_id: int, run_index: int, pending: Mapping[str, Any], run_record_id: Optional[int], sensitive: bool, step: StepKind = StepKind.SIMULATION) -> NewVerdict:
     return NewVerdict(
+        step=step,
         case_id=case_id,
         run_index=run_index,
         state=VerdictState(pending["state"]),
@@ -120,18 +134,19 @@ def new_run_record(
     case_id: int,
     run_index: int,
     repeat_index: int,
-    generator: TrajectoryGeneratorImplementation,
+    generator: Optional[TrajectoryGeneratorImplementation],
     trajectories_complete: bool,
     stack: Mapping[str, Any],
     environment: Mapping[str, Any],
     seed: int,
     simulation_result: Mapping[str, Any],
     input_trajectories_hash: Optional[str],
-    job_id: str,
+    job_id: Optional[str],
     node_id: Optional[str],
     fingerprints: Mapping[str, str],
     durations_s: Mapping[str, float],
     tier: Optional[str],
+    source: RunSource = RunSource.JOB,
 ) -> NewRunRecord:
     record = dict(simulation_result.get("run_record") or {})
     artifacts = {}
@@ -159,6 +174,7 @@ def new_run_record(
         node_id=node_id,
         fingerprints=dict(fingerprints),
         durations_s=dict(durations_s),
+        source=source,
     )
 
 
@@ -187,7 +203,14 @@ def new_calibration_result(result: Mapping[str, Any], stack: Mapping[str, Any], 
 
 
 def record_references(
-    stores: AssuranceStores, session: Session, result: Mapping[str, Any], holder_kind: ArtifactHolderKind, holder_id: Any, campaign_id: str, job_id: Optional[str] = None
+    stores: AssuranceStores,
+    session: Session,
+    result: Mapping[str, Any],
+    holder_kind: ArtifactHolderKind,
+    holder_id: Any,
+    campaign_id: str,
+    job_id: Optional[str] = None,
+    field_roles: Mapping[str, str] = RESULT_FIELD_ROLES,
 ) -> Dict[str, str]:
     """Adds an artifact reference for every reference in the result and drops the job's own; returns {role: sha256}.
 
@@ -197,7 +220,7 @@ def record_references(
     roles: Dict[str, str] = {}
     for path, reference in find_references(result):
         field = str(path[0]) if path else "result"
-        role = RESULT_FIELD_ROLES.get(field, field)
+        role = field_roles.get(field, field)
         if len(path) > 1:
             role = f"{role}:{'/'.join(str(part) for part in path[1:])}"
         stores.artifacts.insert_if_absent(reference.sha256, reference.kind.value, reference.size_bytes, reference.media_type, session=session)

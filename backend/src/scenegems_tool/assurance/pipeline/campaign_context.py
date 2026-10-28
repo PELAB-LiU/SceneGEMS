@@ -1,11 +1,12 @@
-"""What the engine knows of one campaign while it works on it: its record, its config, its stage graph and payload builder."""
+"""What the engine knows of one campaign while it works on it: its record, its config, its stage graph and payload builder, the input per class."""
 
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Union
 
 from sqlalchemy.orm import Session
 
-from scenegems_tool.assurance.campaign.campaign_config import CampaignConfig, campaign_config_from_dict
+from scenegems_tool.assurance.campaign.campaign_config import CampaignConfig, FunctionalScenarioInput, InputItem, campaign_config_from_dict
+from scenegems_tool.assurance.campaign.campaign_inputs import input_of_class, input_source_of
 from scenegems_tool.assurance.campaign.class_catalog import ClassCatalog
 from scenegems_tool.assurance.pipeline.payload_builder import PayloadBuilder, environment_of, required_fingerprints, stack_key
 from scenegems_tool.assurance.pipeline.stage_graph import StageGraph
@@ -32,6 +33,17 @@ class CampaignContext:
     def scenario_name(self, case: CaseRecord) -> str:
         """The case as a calibration reference and post-hoc scenario id: <class id>#<case index>."""
         return f"{case.class_id}#{case.case_index}"
+
+    def input_of(self, class_id: str) -> Optional[Union[FunctionalScenarioInput, InputItem]]:
+        """The functional scenario or item a class stands for; None for a catalog class."""
+        return input_of_class(self.config, class_id)
+
+    def case_input(self, class_id: str) -> Tuple[Optional[str], Optional[Dict]]:
+        """What a new case of the class records as its input: (input_artifact, input_source); (None, None) for a catalog class."""
+        found = self.input_of(class_id)
+        if found is None:
+            return None, None
+        return found.ref.sha256, input_source_of(found) if isinstance(found, InputItem) else None
 
     def stack(self, run_index: int) -> Dict:
         return stack_key(self.config, run_index)

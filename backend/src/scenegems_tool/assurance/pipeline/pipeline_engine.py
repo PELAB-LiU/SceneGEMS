@@ -48,25 +48,38 @@ Desired and actual states:
     complete every class complete or abandoned: actual completed
 
 Stop conditions of the config (max cases, max failed verdicts, max duration) set the desired
-state to draining, with a note event giving the reason.
+state to draining, with a note event giving the reason. max_failed_verdicts counts the failed
+verdicts of every monitored step (scenes and trajectory sets too, not only runs): the operator
+chose to monitor those steps, so their failures are findings like a run's.
 
 At start, and whenever it takes the lock again, the engine appends engine_started to every
 unfinished campaign, repairs the class counts from the cases, cancels jobs whose cases ended,
 and checks every class on its first tick; intents without a job are resubmitted by that tick.
+
+wake() runs a tick at once instead of after the interval (the create route calls it through
+ControlPlane.wake_pipeline, so a new campaign or workbench entry starts without waiting).
+
+Runs from outside the cluster: a live session entry (origin live_session) gets no case from
+the engine. record_external_run writes its one case with the recorded run (run record with
+source live_session and no job) and the intent of its post-hoc monitor in a transaction that
+holds the cursor row like a tick's, and submits the monitor job after the commit; from then
+on the case moves like any other. Ticks and recorded runs take turns on the event loop, so
+they never share the engine's state at once.
 """
 
 import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Awaitable, Callable, Collection, Dict, List, Mapping, Optional, Sequence, Set
+from typing import Any, Awaitable, Callable, Collection, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 import anyio
 from sqlalchemy.orm import Session
 
+from scenegems_tool.assurance.campaign.campaign_inputs import item_class_id
 from scenegems_tool.assurance.campaign.class_catalog import ClassCatalog
 from scenegems_tool.assurance.pipeline.campaign_context import CampaignContext, CampaignContexts
-from scenegems_tool.assurance.pipeline.case_machine import CaseMachine, StepOutbox
+from scenegems_tool.assurance.pipeline.case_machine import CaseMachine, ExternalRun, RecordedRun, StepOutbox
 from scenegems_tool.assurance.pipeline.coverage_controller import Backpressure, decide_class, plan_new_cases
 from scenegems_tool.assurance.pipeline.engine_leadership import EngineLeadership, LeadershipLost
 from scenegems_tool.assurance.pipeline.payload_builder import required_fingerprints
@@ -74,7 +87,17 @@ from scenegems_tool.assurance.pipeline.pipeline_queries import UNFINISHED_JOB_ST
 from scenegems_tool.assurance.pipeline.stage_graph import STAGE_JOB_TYPES
 from scenegems_tool.cluster.protocol.jobs import JobSubmission, JobType
 from scenegems_tool.persistence.clock import Clock, utc_now
-from scenegems_tool.persistence.schema import CampaignActualState, CampaignClassState, CampaignDesiredState, CampaignEventKind, CaseState, JobEventKind, NodeStatus, VerdictState
+from scenegems_tool.persistence.schema import (
+    CampaignActualState,
+    CampaignClassState,
+    CampaignDesiredState,
+    CampaignEventKind,
+    CampaignOrigin,
+    CaseState,
+    JobEventKind,
+    NodeStatus,
+    VerdictState,
+)
 from scenegems_tool.persistence.stores import ENGINE_CURSOR, AssuranceStores, CampaignRecord, JobStore, NodeRecord, PipelineJobEvent, SubmitOutcome
 
 logger = logging.getLogger(__name__)
@@ -178,6 +201,10 @@ class PipelineEngine:
         self._unrunnable_since: Dict[str, datetime] = {}
         self.on_change = on_change  # hears the campaigns each committed transaction wrote to
         self._changed: Set[str] = set()
+        self._wakeup = asyncio.Event()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None  # the loop run() ticks on, for wakes from other threads
+        self._turn = asyncio.Lock()  # a tick or a recorded run at a time
+        self._recorded_classes: Set[Tuple[str, str]] = set()  # classes of recorded runs for the next tick's coverage controller
 
     @property
     def started(self) -> bool:
@@ -195,7 +222,8 @@ class PipelineEngine:
     # Lifetime
 
     async def run(self, interval_s: float) -> None:
-        """Ticks until stopped or cancelled; a tick that read a full batch is followed at once by the next."""
+        """Ticks until stopped or cancelled; a tick that read a full batch, or a wake, is followed at once by the next."""
+        self._loop = asyncio.get_running_loop()
         try:
             while not self._stopped:
                 report = TickReport()
@@ -204,9 +232,31 @@ class PipelineEngine:
                 except Exception:
                     logger.exception("A pipeline engine tick failed; retrying in %.0f s", interval_s)
                 if report.caught_up:
-                    await asyncio.sleep(interval_s)
+                    await self._sleep(interval_s)
         finally:
             self.leadership.release()
+
+    async def _sleep(self, interval_s: float) -> None:
+        try:
+            await asyncio.wait_for(self._wakeup.wait(), interval_s)
+        except asyncio.TimeoutError:
+            pass
+        self._wakeup.clear()
+
+    def wake(self) -> None:
+        """Runs a tick at once instead of after the interval (a wake during a tick runs another one after it); safe from any thread."""
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            self._wakeup.set()
+            return
+        try:
+            on_loop = asyncio.get_running_loop() is loop
+        except RuntimeError:
+            on_loop = False
+        if on_loop:
+            self._wakeup.set()
+        else:
+            loop.call_soon_threadsafe(self._wakeup.set)
 
     async def start(self) -> bool:
         """Takes the engine lock and reconciles: engine_started per campaign, recounted classes, jobs of ended cases cancelled.
@@ -226,6 +276,10 @@ class PipelineEngine:
         return True
 
     async def tick(self) -> TickReport:
+        async with self._turn:
+            return await self._tick()
+
+    async def _tick(self) -> TickReport:
         if self._stopped:
             return TickReport(stopped=True)
         if not await anyio.to_thread.run_sync(self.leadership.acquire):
@@ -237,11 +291,16 @@ class PipelineEngine:
             if not await self.start():
                 return self._stand_by()
         nodes = list(self._nodes())
+        recorded, self._recorded_classes = self._recorded_classes, set()
         try:
-            plan = await anyio.to_thread.run_sync(self._step, nodes)
+            plan = await anyio.to_thread.run_sync(self._step, nodes, recorded)
         except LeadershipLost:
+            self._recorded_classes |= recorded
             self._lose_leadership()
             return self._stand_by()
+        except BaseException:
+            self._recorded_classes |= recorded
+            raise
         self._notify(plan.changed)
         cancelled = await self._cancel_jobs(plan.outbox)
         submitted = await self._submit_all(plan.submissions)
@@ -287,9 +346,10 @@ class PipelineEngine:
         self._check_every_class = True
         return outbox
 
-    def _step(self, nodes: Sequence[NodeAvailability]) -> StepPlan:
+    def _step(self, nodes: Sequence[NodeAvailability], recorded: Collection[Tuple[str, str]] = ()) -> StepPlan:
         now = self._clock()
         plan = StepPlan(StepOutbox())
+        plan.outbox.touched_classes.update(recorded)  # the coverage controller decides the classes of runs recorded since the last tick
         self._changed = set()
         with self.stores.transaction() as session:
             # The cursor row is locked and this engine holds the engine lock, so the cursor is where the
@@ -394,6 +454,8 @@ class PipelineEngine:
             self.contexts.update(self.stores.campaigns.set_desired_state(campaign_id, CampaignDesiredState.DRAINING, session=session))
             logger.info("Campaign %s drains: %s", campaign_id, reason)
             return
+        if campaign.origin == CampaignOrigin.LIVE_SESSION:
+            return  # its case comes from record_external_run
         self._start_cases(machine, session, context, queued)
 
     def _start_campaign(self, session: Session, campaign: CampaignRecord, now: datetime) -> Optional[CampaignRecord]:
@@ -511,6 +573,7 @@ class PipelineEngine:
         campaign_id = context.campaign_id
         if stop.max_cases is not None and self.stores.cases.count_cases(campaign_id, session=session) >= stop.max_cases:
             return f"{stop.max_cases} cases started (max_cases)"
+        # failed verdicts of every monitored step count, scenes and trajectory sets too
         if stop.max_failed_verdicts is not None and self.stores.results.count_verdicts(campaign_id, VerdictState.FAILED, session=session) >= stop.max_failed_verdicts:
             return f"{stop.max_failed_verdicts} failed verdicts (max_failed_verdicts)"
         started = context.campaign.started_at
@@ -519,7 +582,8 @@ class PipelineEngine:
         return None
 
     def _start_cases(self, machine: CaseMachine, session: Session, context: CampaignContext, queued) -> None:
-        room = min(Backpressure(context.config.resources.queue_depth, dict(queued)).room_for_new_cases(), self.settings.max_new_cases_per_tick)
+        backpressure = Backpressure(context.config.resources.queue_depth, dict(queued), context.graph.first_stage())
+        room = min(backpressure.room_for_new_cases(), self.settings.max_new_cases_per_tick)
         max_cases = context.config.policy.stop.max_cases
         if max_cases is not None:
             room = min(room, max_cases - self.stores.cases.count_cases(context.campaign_id, session=session))
@@ -528,6 +592,46 @@ class PipelineEngine:
         classes = self.stores.cases.list_classes(context.campaign_id, [CampaignClassState.OPEN], session=session)
         planned = plan_new_cases(classes, next_case_indexes(session, context.campaign_id), room)
         machine.start_cases(context, planned)
+
+    # Runs from outside the cluster
+
+    async def record_external_run(self, campaign_id: str, run: ExternalRun, class_id: Optional[str] = None) -> RecordedRun:
+        """Records a simulation that ran outside the cluster (a live session) as the one case of an item class (item/0 by default).
+
+        Writes the case, its run record (source live_session, no job) and the intent of its
+        post-hoc monitor in one transaction holding the cursor row, then submits the monitor
+        job after the commit (a submission that fails is retried by the next tick) and wakes
+        the engine. The campaign's fingerprints are pinned now when it has none yet. Raises
+        ValueError when the campaign is finished or stopping, or does not take a recorded run
+        (CaseMachine.record_external_run says when it does).
+        """
+        class_id = class_id or item_class_id(0)
+        async with self._turn:
+            recorded, outbox, submissions, changed = await anyio.to_thread.run_sync(self._record, campaign_id, class_id, run)
+            self._recorded_classes.add((campaign_id, class_id))
+            self._notify(changed)
+            await self._cancel_jobs(outbox)
+            await self._submit_all(submissions)
+        self.wake()
+        return recorded
+
+    def _record(self, campaign_id: str, class_id: str, run: ExternalRun) -> Tuple[RecordedRun, StepOutbox, List[PlannedSubmission], Set[str]]:
+        outbox = StepOutbox()
+        self._changed = set()
+        with self.stores.transaction() as session:
+            self.stores.pipeline.read_cursor(lock=True, session=session)  # no tick writes meanwhile
+            campaign = self.stores.campaigns.get_campaign(campaign_id, lock=True, session=session)
+            if campaign is None or campaign.actual_state.is_final or campaign.desired_state == CampaignDesiredState.STOPPED:
+                raise ValueError(f"campaign {campaign_id} is not running, so it takes no recorded run")
+            expected = None if campaign.pinned_fingerprints else self._expected()
+            if expected:
+                pin_fingerprints(session, campaign_id, expected, self._clock())
+            self.contexts.refresh(self.stores.campaigns.unfinished_campaigns(session=session))
+            machine = CaseMachine(self.stores, session, self.contexts, outbox)
+            recorded = machine.record_external_run(self.contexts.get(campaign_id, session), class_id, run)
+            self._event(session, campaign_id, CampaignEventKind.NOTE, {"recorded_run": {"case_id": recorded.case_id, "run_record_id": recorded.run_record_id}}, class_id)
+            submissions = [planned for planned in self._pending_submissions(session, outbox) if planned.case_id == recorded.case_id]
+        return recorded, outbox, submissions, self._take_changes(outbox)
 
     # Submissions
 

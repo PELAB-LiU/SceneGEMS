@@ -15,7 +15,7 @@ frames the nodes relay to the live channel, which create_live_channel wires to i
 
 With attach_pipeline the pipeline engine (assurance/pipeline) runs as one more timer on the
 same loop; it submits and cancels through this control plane like the operator does. It is
-loaded only then, for the same reason.
+loaded only then, for the same reason. wake_pipeline runs its next tick at once.
 """
 
 import asyncio
@@ -246,6 +246,11 @@ class ControlPlane:
             settings=EngineSettings(stall_after_s=self.timing.campaign_stall_after_s),
         )
         return self.pipeline
+
+    def wake_pipeline(self) -> None:
+        """Runs a pipeline engine tick at once, so a campaign or workbench entry just created starts without waiting; nothing without an engine."""
+        if self.pipeline is not None:
+            self.pipeline.wake()
 
     def node_availability(self) -> List["NodeAvailability"]:
         """The connected nodes as the pipeline engine's stall check sees them."""

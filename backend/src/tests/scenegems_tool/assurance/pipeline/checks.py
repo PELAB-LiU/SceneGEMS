@@ -21,7 +21,11 @@ def assert_consistent(stores: AssuranceStores, campaign_id: str, finished: bool 
         assert indexes == list(range(len(indexes))), f"the cases of {class_id} are not a prefix of the indexes: {indexes}"
     coverage = {entry.class_id: entry for entry in stores.results.coverage(campaign_id)}
     config = stores.campaigns.config_version(campaign_id).config
-    runs = len(config["execution"]["runs"])
+    steps = config.get("steps", ["scene_generation", "trajectory_generation", "simulation"])  # format 1 runs the full chain
+    runs = len(config["execution"]["runs"]) if "simulation" in steps else 0
+    monitored = sum(
+        1 for step, section in (("scene_generation", "scene_generation"), ("trajectory_generation", "trajectories")) if step in steps and config.get(section, {}).get("monitor") == "post_hoc"
+    )
     for record in classes:
         if record.state == CampaignClassState.COMPLETE:
             assert record.complete_count == record.quota, record.class_id
@@ -30,8 +34,8 @@ def assert_consistent(stores: AssuranceStores, campaign_id: str, finished: bool 
         assert record.complete_count <= record.quota
     verdict_cases = Counter(verdict.case_id for verdict in stores.results.list_verdicts(campaign_id, limit=None))
     complete = {case.case_id for case in cases if case.state == CaseState.COMPLETE}
-    assert set(verdict_cases) == complete, "verdicts belong to complete cases only"
-    assert all(count == runs for count in verdict_cases.values())
+    assert set(verdict_cases) == (complete if runs + monitored else set()), "verdicts belong to complete cases only, one per run and monitored generation step"
+    assert all(count == runs + monitored for count in verdict_cases.values())
     if finished:
         assert stores.pipeline.job_ids_of_campaign(campaign_id, UNFINISHED_JOB_STATES) == []
         assert stores.pipeline.intents_without_job(campaign_id) == []
