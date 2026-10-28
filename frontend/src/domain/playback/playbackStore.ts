@@ -226,348 +226,381 @@ export interface PlaybackState {
   advancePlayback: (playbackCursor: number) => void;
 }
 
-export const usePlaybackStore = create<PlaybackState>((set, get) => ({
-  streamStatus: "disconnected",
-  mqttBrokerStatus: "disconnected",
-  masterBroker: null,
-  previewMonitor: IDLE_PREVIEW_MONITOR,
-  setPreviewMonitor: (previewMonitor) => set({ previewMonitor }),
-  monitorStatus: "disconnected",
-  errorMessage: null,
-  isPlaying: false,
-  speed: 1,
-  followLatestPush: true,
-  activeScenarioId: null,
-  serverTimeStep: null,
-  simulationInitialized: false,
-  simulationInitializing: false,
-  autoFitPending: false,
-  hasTrajectoryChunk: false,
-  currentTimestamp: 0,
-  playbackCursor: 0,
-  latestTimestamp: 0,
-  scenarioTrajectoryLength: null,
-  frames: [],
-  frameIndexByTimestamp: {},
-  hasSimulationTrajectoryChunk: false,
-  simulationFrames: [],
-  simulationFrameIndexByTimestamp: {},
-  simulationStatus: "not initialized",
-  activeSceneGenerationRequestId: null,
-  completedSceneGenerationRequestId: null,
-  latestGeneratedScene: loadPersistedScene(),
-  pendingSceneMonitorRequestId: null,
-  sceneGenerationWaitEpoch: 0,
-  sceneGenerationEvaluationByRequestId: {},
-  sceneGenerationEvaluationBaselineByRequestId: {},
-  receivedSimulationModels: null,
-  groundControlPortsByAgentId: {},
-  stackOptions: null,
-  setStackOptions: (options) => set({ stackOptions: options }),
-  setStreamStatus: (status) => set({ streamStatus: status }),
-  setMqttBrokerStatus: (status, masterBroker) =>
-    set(masterBroker === undefined ? { mqttBrokerStatus: status } : { mqttBrokerStatus: status, masterBroker }),
-  setMonitorStatus: (status) => set({ monitorStatus: status }),
-  setError: (message) =>
-    set({
-      errorMessage: message,
-      ...(message !== null ? { simulationInitializing: false } : {}),
-    }),
-  setFollowLatestPush: (value) => set({ followLatestPush: value }),
-  followSimulationLive: () =>
-    set((state) => {
-      const base = { followLatestPush: true, isPlaying: false };
-      if (state.simulationFrames.length === 0) {
-        return base;
-      }
-      const latest = state.simulationFrames[state.simulationFrames.length - 1]!.timestamp;
-      const currentTimestamp = timestampAtOrBefore(state.simulationFrames, latest);
-      return {
-        ...base,
-        playbackCursor: latest,
-        currentTimestamp,
-      };
-    }),
-  setLatestTimestamp: (value) =>
-    set((state) => ({ latestTimestamp: Math.max(state.latestTimestamp, value) })),
-  setScenarioTrajectoryLength: (value) => set({ scenarioTrajectoryLength: value }),
-  setActiveScenarioId: (id) => set({ activeScenarioId: id }),
-  resetForNewScene: () => set(clearedLoadedPlaybackState),
-  beginSimulationInitialization: () =>
-    set({
-      simulationInitializing: true,
-      simulationStatus: "initializing",
-      errorMessage: null,
-    }),
-  requestAutoFit: () => set({ autoFitPending: true }),
-  consumeAutoFit: () => set({ autoFitPending: false }),
-  ingestFrame: (frame) =>
-    set((state) => {
-      if (state.frameIndexByTimestamp[frame.timestamp] !== undefined) {
-        return state;
-      }
-      const frames = [...state.frames, frame];
-      return {
-        frames,
-        frameIndexByTimestamp: rebuildIndex(frames),
-        latestTimestamp: Math.max(state.latestTimestamp, frame.timestamp),
-      };
-    }),
-  ingestFrames: (incoming) =>
-    set((state) => {
-      if (incoming.length === 0) {
-        return state;
-      }
-      const merged = mergeSortedUnique(state.frames, incoming);
-      return applyPreviewMergeResult(state, merged, state.frames.length === 0);
-    }),
-  applyMergedPreviewFrames: (merged) =>
-    set((state) => {
-      if (merged.length === 0) {
-        return state;
-      }
-      return applyPreviewMergeResult(state, merged, state.frames.length === 0);
-    }),
-  ingestSimulationFrames: (incoming) =>
-    set((state) => {
-      if (incoming.length === 0) {
-        return state;
-      }
-      const merged = mergeSortedUnique(state.simulationFrames, incoming);
-      return applySimulationMergeResult(state, merged);
-    }),
-  applyMergedSimulationFrames: (merged) =>
-    set((state) => {
-      if (merged.length === 0) {
-        return state;
-      }
-      return applySimulationMergeResult(state, merged);
-    }),
-  setTrajectoryPreviewFrames: (incoming) =>
-    set((state) => {
-      if (incoming.length === 0) {
-        return state;
-      }
-      const frames = [...incoming].sort((a, b) => a.timestamp - b.timestamp);
-      const first = frames[0]!.timestamp;
-      const last = frames[frames.length - 1]!.timestamp;
-      const wasEmpty = state.frames.length === 0;
-      const hasCurrent = frames.some((f) => f.timestamp === state.currentTimestamp);
-      const nextCurrent = hasCurrent ? state.currentTimestamp : first;
-      return {
-        frames,
-        frameIndexByTimestamp: rebuildIndex(frames),
-        latestTimestamp: last,
-        currentTimestamp: nextCurrent,
-        playbackCursor: hasCurrent
-          ? Math.min(Math.max(state.playbackCursor, first), last)
-          : first,
-        hasTrajectoryChunk: true,
-        simulationInitializing: false,
-        autoFitPending: wasEmpty ? true : state.autoFitPending,
-      };
-    }),
-  clearPreviewFrames: () =>
-    set({
-      frames: [],
-      frameIndexByTimestamp: {},
-      hasTrajectoryChunk: false,
-      currentTimestamp: 0,
-      playbackCursor: 0,
-      latestTimestamp: 0,
-    }),
-  ingestPushFrame: (frame) =>
-    set((state) => {
-      const exists = state.frameIndexByTimestamp[frame.timestamp] !== undefined;
-      const frames = exists ? state.frames : [...state.frames, frame];
-      const frameIndexByTimestamp = exists
-        ? state.frameIndexByTimestamp
-        : rebuildIndex(frames);
-      const latest = Math.max(state.latestTimestamp, frame.timestamp);
-      return {
-        frames,
-        frameIndexByTimestamp,
-        latestTimestamp: latest,
-        currentTimestamp: state.followLatestPush ? frame.timestamp : state.currentTimestamp,
-        playbackCursor: state.followLatestPush ? frame.timestamp : state.playbackCursor,
-      };
-    }),
-  clearSimulationTrajectories: () =>
-    set((state) => {
-      const previewLatest =
-        state.frames.length > 0 ? state.frames[state.frames.length - 1]!.timestamp : 0;
-      const previewStart = state.frames.length > 0 ? state.frames[0]!.timestamp : 0;
-      const hadOnlySimulation =
-        state.simulationFrames.length > 0 && state.frames.length === 0;
-      return {
-        hasSimulationTrajectoryChunk: false,
-        simulationFrames: [],
-        simulationFrameIndexByTimestamp: {},
-        latestTimestamp:
-          state.frames.length > 0
-            ? Math.max(previewLatest, previewStart)
-            : hadOnlySimulation
-              ? 0
-              : state.latestTimestamp,
-        ...(hadOnlySimulation || state.simulationFrames.length > 0
-          ? {
-              currentTimestamp: previewStart,
-              playbackCursor: previewStart,
-            }
-          : {}),
-      };
-    }),
-  markSimulationInitialized: () => set({ simulationInitialized: true }),
-  setSimulationStatus: (status, groundControlPortsByAgentId = {}) =>
-    set((state) => ({
-      simulationStatus: status,
-      groundControlPortsByAgentId,
-      // Any concrete status report from the backend ends the local "initializing"
-      // spinner state started by beginSimulationInitialization().
-      simulationInitializing:
-        status === "initializing" ? state.simulationInitializing : false,
-    })),
-  setActiveSceneGenerationRequestId: (requestId) =>
-    set((state) => ({
-      activeSceneGenerationRequestId: requestId,
-      completedSceneGenerationRequestId: null,
-      sceneGenerationWaitEpoch: state.sceneGenerationWaitEpoch + 1,
-      sceneGenerationEvaluationByRequestId: {},
-      sceneGenerationEvaluationBaselineByRequestId: {},
-    })),
-  recordSceneGenerationEvaluation: (requestId, evaluationData) =>
-    set((state) => {
-      const baseline =
-        state.sceneGenerationEvaluationBaselineByRequestId[requestId] ??
-        evaluationTimeBaseline(evaluationData);
-      return {
-        sceneGenerationEvaluationByRequestId: {
-          ...state.sceneGenerationEvaluationByRequestId,
-          [requestId]: evaluationData,
-        },
-        sceneGenerationEvaluationBaselineByRequestId: {
-          ...state.sceneGenerationEvaluationBaselineByRequestId,
-          [requestId]: baseline,
-        },
-      };
-    }),
-  completeSceneGeneration: (requestId) =>
-    set((state) => {
-      const {
-        [requestId]: _removedEval,
-        ...sceneGenerationEvaluationByRequestId
-      } = state.sceneGenerationEvaluationByRequestId;
-      const {
-        [requestId]: _removedBaseline,
-        ...sceneGenerationEvaluationBaselineByRequestId
-      } = state.sceneGenerationEvaluationBaselineByRequestId;
-      void _removedEval;
-      void _removedBaseline;
-      return {
-        activeSceneGenerationRequestId: null,
-        completedSceneGenerationRequestId: requestId,
-        sceneGenerationEvaluationByRequestId,
-        sceneGenerationEvaluationBaselineByRequestId,
-      };
-    }),
-  setReceivedSimulationModels: (models) => set({ receivedSimulationModels: models }),
-  setVisualizedScenario: (scene) =>
-    set({
-      latestGeneratedScene: scene,
-      pendingSceneMonitorRequestId: null,
-      ...clearedLoadedPlaybackState,
-    }),
-  beginSceneMonitor: (requestId) => set({ pendingSceneMonitorRequestId: requestId }),
-  applySceneMonitorResult: (requestId, frame) =>
-    set((state) => {
-      const current = state.latestGeneratedScene;
-      // A newer scene replaced the one this answer belongs to.
-      if (state.pendingSceneMonitorRequestId !== requestId || !current) {
-        return {};
-      }
-      return {
-        pendingSceneMonitorRequestId: null,
-        latestGeneratedScene: {
-          ...current,
-          scene: {
-            ...current.scene,
-            situationContexts: frame.situationContexts,
-            colregsStates: frame.colregsStates,
-            ruleResults: frame.ruleResults,
-            maneuverStates: frame.maneuverStates,
-            metrics: frame.metrics,
-          },
-        },
-      };
-    }),
-  cancelSceneGeneration: () =>
-    set((state) => {
-      const requestId = state.activeSceneGenerationRequestId;
-      const sceneGenerationEvaluationByRequestId = {
-        ...state.sceneGenerationEvaluationByRequestId,
-      };
-      const sceneGenerationEvaluationBaselineByRequestId = {
-        ...state.sceneGenerationEvaluationBaselineByRequestId,
-      };
-      if (requestId) {
-        delete sceneGenerationEvaluationByRequestId[requestId];
-        delete sceneGenerationEvaluationBaselineByRequestId[requestId];
-      }
-      return {
-        activeSceneGenerationRequestId: null,
+export interface PlaybackStoreOptions {
+  /** Restore the shown scene after a reload (the scene generation page). */
+  persistScene?: boolean;
+}
+
+/**
+ * A playback store: one per workbench page, so each page renders its own scene, trajectories or
+ * run (design doc 6.6). `usePlaybackStore` is the simulation page's and also holds the gateway
+ * session (stream, broker, monitor and simulation status, stack options, errors);
+ * `useScenePlaybackStore` holds the scene generation page's scene, `useTrajectoryPlaybackStore`
+ * the trajectory generation page's planned trajectories. Components of a page read the page's
+ * store through `PlaybackStoreContext` (`playbackContext.ts`).
+ */
+export function createPlaybackStore(options: PlaybackStoreOptions = {}) {
+  const store = create<PlaybackState>((set, get) => ({
+    streamStatus: "disconnected",
+    mqttBrokerStatus: "disconnected",
+    masterBroker: null,
+    previewMonitor: IDLE_PREVIEW_MONITOR,
+    setPreviewMonitor: (previewMonitor) => set({ previewMonitor }),
+    monitorStatus: "disconnected",
+    errorMessage: null,
+    isPlaying: false,
+    speed: 1,
+    followLatestPush: true,
+    activeScenarioId: null,
+    serverTimeStep: null,
+    simulationInitialized: false,
+    simulationInitializing: false,
+    autoFitPending: false,
+    hasTrajectoryChunk: false,
+    currentTimestamp: 0,
+    playbackCursor: 0,
+    latestTimestamp: 0,
+    scenarioTrajectoryLength: null,
+    frames: [],
+    frameIndexByTimestamp: {},
+    hasSimulationTrajectoryChunk: false,
+    simulationFrames: [],
+    simulationFrameIndexByTimestamp: {},
+    simulationStatus: "not initialized",
+    activeSceneGenerationRequestId: null,
+    completedSceneGenerationRequestId: null,
+    latestGeneratedScene: options.persistScene ? loadPersistedScene() : null,
+    pendingSceneMonitorRequestId: null,
+    sceneGenerationWaitEpoch: 0,
+    sceneGenerationEvaluationByRequestId: {},
+    sceneGenerationEvaluationBaselineByRequestId: {},
+    receivedSimulationModels: null,
+    groundControlPortsByAgentId: {},
+    stackOptions: null,
+    setStackOptions: (options) => set({ stackOptions: options }),
+    setStreamStatus: (status) => set({ streamStatus: status }),
+    setMqttBrokerStatus: (status, masterBroker) =>
+      set(masterBroker === undefined ? { mqttBrokerStatus: status } : { mqttBrokerStatus: status, masterBroker }),
+    setMonitorStatus: (status) => set({ monitorStatus: status }),
+    setError: (message) =>
+      set({
+        errorMessage: message,
+        ...(message !== null ? { simulationInitializing: false } : {}),
+      }),
+    setFollowLatestPush: (value) => set({ followLatestPush: value }),
+    followSimulationLive: () =>
+      set((state) => {
+        const base = { followLatestPush: true, isPlaying: false };
+        if (state.simulationFrames.length === 0) {
+          return base;
+        }
+        const latest = state.simulationFrames[state.simulationFrames.length - 1]!.timestamp;
+        const currentTimestamp = timestampAtOrBefore(state.simulationFrames, latest);
+        return {
+          ...base,
+          playbackCursor: latest,
+          currentTimestamp,
+        };
+      }),
+    setLatestTimestamp: (value) =>
+      set((state) => ({ latestTimestamp: Math.max(state.latestTimestamp, value) })),
+    setScenarioTrajectoryLength: (value) => set({ scenarioTrajectoryLength: value }),
+    setActiveScenarioId: (id) => set({ activeScenarioId: id }),
+    resetForNewScene: () => set(clearedLoadedPlaybackState),
+    beginSimulationInitialization: () =>
+      set({
+        simulationInitializing: true,
+        simulationStatus: "initializing",
+        errorMessage: null,
+      }),
+    requestAutoFit: () => set({ autoFitPending: true }),
+    consumeAutoFit: () => set({ autoFitPending: false }),
+    ingestFrame: (frame) =>
+      set((state) => {
+        if (state.frameIndexByTimestamp[frame.timestamp] !== undefined) {
+          return state;
+        }
+        const frames = [...state.frames, frame];
+        return {
+          frames,
+          frameIndexByTimestamp: rebuildIndex(frames),
+          latestTimestamp: Math.max(state.latestTimestamp, frame.timestamp),
+        };
+      }),
+    ingestFrames: (incoming) =>
+      set((state) => {
+        if (incoming.length === 0) {
+          return state;
+        }
+        const merged = mergeSortedUnique(state.frames, incoming);
+        return applyPreviewMergeResult(state, merged, state.frames.length === 0);
+      }),
+    applyMergedPreviewFrames: (merged) =>
+      set((state) => {
+        if (merged.length === 0) {
+          return state;
+        }
+        return applyPreviewMergeResult(state, merged, state.frames.length === 0);
+      }),
+    ingestSimulationFrames: (incoming) =>
+      set((state) => {
+        if (incoming.length === 0) {
+          return state;
+        }
+        const merged = mergeSortedUnique(state.simulationFrames, incoming);
+        return applySimulationMergeResult(state, merged);
+      }),
+    applyMergedSimulationFrames: (merged) =>
+      set((state) => {
+        if (merged.length === 0) {
+          return state;
+        }
+        return applySimulationMergeResult(state, merged);
+      }),
+    setTrajectoryPreviewFrames: (incoming) =>
+      set((state) => {
+        if (incoming.length === 0) {
+          return state;
+        }
+        const frames = [...incoming].sort((a, b) => a.timestamp - b.timestamp);
+        const first = frames[0]!.timestamp;
+        const last = frames[frames.length - 1]!.timestamp;
+        const wasEmpty = state.frames.length === 0;
+        const hasCurrent = frames.some((f) => f.timestamp === state.currentTimestamp);
+        const nextCurrent = hasCurrent ? state.currentTimestamp : first;
+        return {
+          frames,
+          frameIndexByTimestamp: rebuildIndex(frames),
+          latestTimestamp: last,
+          currentTimestamp: nextCurrent,
+          playbackCursor: hasCurrent
+            ? Math.min(Math.max(state.playbackCursor, first), last)
+            : first,
+          hasTrajectoryChunk: true,
+          simulationInitializing: false,
+          autoFitPending: wasEmpty ? true : state.autoFitPending,
+        };
+      }),
+    clearPreviewFrames: () =>
+      set({
+        frames: [],
+        frameIndexByTimestamp: {},
+        hasTrajectoryChunk: false,
+        currentTimestamp: 0,
+        playbackCursor: 0,
+        latestTimestamp: 0,
+      }),
+    ingestPushFrame: (frame) =>
+      set((state) => {
+        const exists = state.frameIndexByTimestamp[frame.timestamp] !== undefined;
+        const frames = exists ? state.frames : [...state.frames, frame];
+        const frameIndexByTimestamp = exists
+          ? state.frameIndexByTimestamp
+          : rebuildIndex(frames);
+        const latest = Math.max(state.latestTimestamp, frame.timestamp);
+        return {
+          frames,
+          frameIndexByTimestamp,
+          latestTimestamp: latest,
+          currentTimestamp: state.followLatestPush ? frame.timestamp : state.currentTimestamp,
+          playbackCursor: state.followLatestPush ? frame.timestamp : state.playbackCursor,
+        };
+      }),
+    clearSimulationTrajectories: () =>
+      set((state) => {
+        const previewLatest =
+          state.frames.length > 0 ? state.frames[state.frames.length - 1]!.timestamp : 0;
+        const previewStart = state.frames.length > 0 ? state.frames[0]!.timestamp : 0;
+        const hadOnlySimulation =
+          state.simulationFrames.length > 0 && state.frames.length === 0;
+        return {
+          hasSimulationTrajectoryChunk: false,
+          simulationFrames: [],
+          simulationFrameIndexByTimestamp: {},
+          latestTimestamp:
+            state.frames.length > 0
+              ? Math.max(previewLatest, previewStart)
+              : hadOnlySimulation
+                ? 0
+                : state.latestTimestamp,
+          ...(hadOnlySimulation || state.simulationFrames.length > 0
+            ? {
+                currentTimestamp: previewStart,
+                playbackCursor: previewStart,
+              }
+            : {}),
+        };
+      }),
+    markSimulationInitialized: () => set({ simulationInitialized: true }),
+    setSimulationStatus: (status, groundControlPortsByAgentId = {}) =>
+      set((state) => ({
+        simulationStatus: status,
+        groundControlPortsByAgentId,
+        // Any concrete status report from the backend ends the local "initializing"
+        // spinner state started by beginSimulationInitialization().
+        simulationInitializing:
+          status === "initializing" ? state.simulationInitializing : false,
+      })),
+    setActiveSceneGenerationRequestId: (requestId) =>
+      set((state) => ({
+        activeSceneGenerationRequestId: requestId,
         completedSceneGenerationRequestId: null,
-        sceneGenerationEvaluationByRequestId,
-        sceneGenerationEvaluationBaselineByRequestId,
-      };
-    }),
-  clearVisualizedScenario: () =>
-    set({
-      latestGeneratedScene: null,
-      pendingSceneMonitorRequestId: null,
-      completedSceneGenerationRequestId: null,
-      ...clearedLoadedPlaybackState,
-    }),
-  setPlaying: (value) => set({ isPlaying: value }),
-  setSpeed: (value) => set({ speed: Math.max(0.1, Math.min(240, value)) }),
-  stepBy: (delta) => {
-    const state = get();
-    state.seek(state.playbackCursor + delta);
-  },
-  seek: (timestamp) => {
-    const state = get();
-    if (state.frames.length === 0) {
-      return;
-    }
-    const minT = state.frames[0]!.timestamp;
-    const maxT = state.frames[state.frames.length - 1]!.timestamp;
-    const clamped = Math.min(Math.max(timestamp, minT), maxT);
-    const currentTimestamp = timestampAtOrBefore(state.frames, clamped);
-    set({ followLatestPush: false, currentTimestamp, playbackCursor: clamped });
-  },
-  advancePlayback: (playbackCursor) => {
-    set((state) => {
+        sceneGenerationWaitEpoch: state.sceneGenerationWaitEpoch + 1,
+        sceneGenerationEvaluationByRequestId: {},
+        sceneGenerationEvaluationBaselineByRequestId: {},
+      })),
+    recordSceneGenerationEvaluation: (requestId, evaluationData) =>
+      set((state) => {
+        const baseline =
+          state.sceneGenerationEvaluationBaselineByRequestId[requestId] ??
+          evaluationTimeBaseline(evaluationData);
+        return {
+          sceneGenerationEvaluationByRequestId: {
+            ...state.sceneGenerationEvaluationByRequestId,
+            [requestId]: evaluationData,
+          },
+          sceneGenerationEvaluationBaselineByRequestId: {
+            ...state.sceneGenerationEvaluationBaselineByRequestId,
+            [requestId]: baseline,
+          },
+        };
+      }),
+    completeSceneGeneration: (requestId) =>
+      set((state) => {
+        const {
+          [requestId]: _removedEval,
+          ...sceneGenerationEvaluationByRequestId
+        } = state.sceneGenerationEvaluationByRequestId;
+        const {
+          [requestId]: _removedBaseline,
+          ...sceneGenerationEvaluationBaselineByRequestId
+        } = state.sceneGenerationEvaluationBaselineByRequestId;
+        void _removedEval;
+        void _removedBaseline;
+        return {
+          activeSceneGenerationRequestId: null,
+          completedSceneGenerationRequestId: requestId,
+          sceneGenerationEvaluationByRequestId,
+          sceneGenerationEvaluationBaselineByRequestId,
+        };
+      }),
+    setReceivedSimulationModels: (models) => set({ receivedSimulationModels: models }),
+    setVisualizedScenario: (scene) =>
+      set({
+        latestGeneratedScene: scene,
+        pendingSceneMonitorRequestId: null,
+        ...clearedLoadedPlaybackState,
+      }),
+    beginSceneMonitor: (requestId) => set({ pendingSceneMonitorRequestId: requestId }),
+    applySceneMonitorResult: (requestId, frame) =>
+      set((state) => {
+        const current = state.latestGeneratedScene;
+        // A newer scene replaced the one this answer belongs to.
+        if (state.pendingSceneMonitorRequestId !== requestId || !current) {
+          return {};
+        }
+        return {
+          pendingSceneMonitorRequestId: null,
+          latestGeneratedScene: {
+            ...current,
+            scene: {
+              ...current.scene,
+              situationContexts: frame.situationContexts,
+              colregsStates: frame.colregsStates,
+              ruleResults: frame.ruleResults,
+              maneuverStates: frame.maneuverStates,
+              metrics: frame.metrics,
+            },
+          },
+        };
+      }),
+    cancelSceneGeneration: () =>
+      set((state) => {
+        const requestId = state.activeSceneGenerationRequestId;
+        const sceneGenerationEvaluationByRequestId = {
+          ...state.sceneGenerationEvaluationByRequestId,
+        };
+        const sceneGenerationEvaluationBaselineByRequestId = {
+          ...state.sceneGenerationEvaluationBaselineByRequestId,
+        };
+        if (requestId) {
+          delete sceneGenerationEvaluationByRequestId[requestId];
+          delete sceneGenerationEvaluationBaselineByRequestId[requestId];
+        }
+        return {
+          activeSceneGenerationRequestId: null,
+          completedSceneGenerationRequestId: null,
+          sceneGenerationEvaluationByRequestId,
+          sceneGenerationEvaluationBaselineByRequestId,
+        };
+      }),
+    clearVisualizedScenario: () =>
+      set({
+        latestGeneratedScene: null,
+        pendingSceneMonitorRequestId: null,
+        completedSceneGenerationRequestId: null,
+        ...clearedLoadedPlaybackState,
+      }),
+    setPlaying: (value) => set({ isPlaying: value }),
+    setSpeed: (value) => set({ speed: Math.max(0.1, Math.min(240, value)) }),
+    stepBy: (delta) => {
+      const state = get();
+      state.seek(state.playbackCursor + delta);
+    },
+    seek: (timestamp) => {
+      const state = get();
       if (state.frames.length === 0) {
-        return state;
+        return;
       }
       const minT = state.frames[0]!.timestamp;
       const maxT = state.frames[state.frames.length - 1]!.timestamp;
-      const clamped = Math.min(Math.max(playbackCursor, minT), maxT);
+      const clamped = Math.min(Math.max(timestamp, minT), maxT);
       const currentTimestamp = timestampAtOrBefore(state.frames, clamped);
-      if (
-        state.playbackCursor === clamped &&
-        state.currentTimestamp === currentTimestamp &&
-        !state.followLatestPush
-      ) {
-        return state;
+      set({ followLatestPush: false, currentTimestamp, playbackCursor: clamped });
+    },
+    advancePlayback: (playbackCursor) => {
+      set((state) => {
+        if (state.frames.length === 0) {
+          return state;
+        }
+        const minT = state.frames[0]!.timestamp;
+        const maxT = state.frames[state.frames.length - 1]!.timestamp;
+        const clamped = Math.min(Math.max(playbackCursor, minT), maxT);
+        const currentTimestamp = timestampAtOrBefore(state.frames, clamped);
+        if (
+          state.playbackCursor === clamped &&
+          state.currentTimestamp === currentTimestamp &&
+          !state.followLatestPush
+        ) {
+          return state;
+        }
+        return {
+          followLatestPush: false,
+          playbackCursor: clamped,
+          currentTimestamp,
+        };
+      });
+    },
+  }));
+  if (options.persistScene) {
+    // Persist the last generated/loaded scene so it is restored on a hard refresh.
+    store.subscribe((state, prev) => {
+      if (state.latestGeneratedScene !== prev.latestGeneratedScene) {
+        savePersistedScene(state.latestGeneratedScene);
       }
-      return {
-        followLatestPush: false,
-        playbackCursor: clamped,
-        currentTimestamp,
-      };
     });
-  },
-}));
+  }
+  return store;
+}
+
+export type PlaybackStore = ReturnType<typeof createPlaybackStore>;
+
+/** The simulation page's frames and the workbench's gateway session. */
+export const usePlaybackStore = createPlaybackStore();
+/** The scene generation page's scene, restored after a reload. */
+export const useScenePlaybackStore = createPlaybackStore({ persistScene: true });
+/** The trajectory generation page's planned trajectories. */
+export const useTrajectoryPlaybackStore = createPlaybackStore();
 
 export function getCurrentFrame(state: PlaybackState): SimulationFrame | null {
   const index = state.frameIndexByTimestamp[state.currentTimestamp];
@@ -583,9 +616,3 @@ export function getCurrentSimulationFrame(state: PlaybackState): SimulationFrame
   return index === undefined ? null : state.simulationFrames[index];
 }
 
-// Persist the last generated/loaded scene so it is restored on a hard refresh.
-usePlaybackStore.subscribe((state, prev) => {
-  if (state.latestGeneratedScene !== prev.latestGeneratedScene) {
-    savePersistedScene(state.latestGeneratedScene);
-  }
-});

@@ -1,6 +1,6 @@
 import type { TrajectoryStream } from "../../../app/uiStore";
 import { useUiStore } from "../../../app/uiStore";
-import { usePlaybackStore } from "../../../domain/playback/playbackStore";
+import { useShownPlayback } from "../../../domain/playback/playbackContext";
 import { monitorSectionKey } from "../monitor/monitorSectionKey";
 import { PersistedDetails } from "../monitor/monitorPrimitives";
 
@@ -19,7 +19,7 @@ export function ActorVisibilityPanel({ stream }: ActorVisibilityPanelProps) {
   const setHidePreviewStream = useUiStore((s) => s.setHidePreviewStream);
   const setHideSimulationStream = useUiStore((s) => s.setHideSimulationStream);
 
-  const hasSimulationTrajectory = usePlaybackStore((s) => s.hasSimulationTrajectoryChunk);
+  const hasSimulationTrajectory = useShownPlayback((s) => s.hasSimulationTrajectoryChunk);
 
   const isPreview = stream === "animation";
   const overlays = isPreview ? previewOverlays : simulationOverlays;

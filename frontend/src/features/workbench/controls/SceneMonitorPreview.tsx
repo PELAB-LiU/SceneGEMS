@@ -1,4 +1,4 @@
-import { usePlaybackStore } from "../../../domain/playback/playbackStore";
+import { useScenePlaybackStore } from "../../../domain/playback/playbackStore";
 import { BasicActorInfoPanel } from "../monitor/BasicActorInfoPanel";
 import { ActorVisibilityPanel } from "./ActorVisibilityPanel";
 import { SceneGenerationPaneViewSelect } from "./SceneGenerationPaneViewSelect";
@@ -9,8 +9,8 @@ import { SceneGenerationPaneViewSelect } from "./SceneGenerationPaneViewSelect";
  * such scene through the active monitor (live or empty) before sending it.
  */
 export function SceneMonitorPreview() {
-  const scene = usePlaybackStore((s) => s.latestGeneratedScene?.scene ?? null);
-  const waitingForMonitor = usePlaybackStore((s) => s.pendingSceneMonitorRequestId !== null);
+  const scene = useScenePlaybackStore((s) => s.latestGeneratedScene?.scene ?? null);
+  const waitingForMonitor = useScenePlaybackStore((s) => s.pendingSceneMonitorRequestId !== null);
 
   return (
     <aside className="right-pane right-pane-trajectory">

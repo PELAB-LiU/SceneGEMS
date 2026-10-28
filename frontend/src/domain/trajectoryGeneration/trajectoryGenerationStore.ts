@@ -64,7 +64,7 @@ type TrajectoryGenerationPersisted = {
 };
 
 interface TrajectoryGenerationState {
-  /** Initial scene handed over from the Scene Generation page (or loaded here). */
+  /** The trajectory page's input scene: from the Scene Generation page, Campaign History or a file. */
   handoffScene: GeneratedSceneData | null;
   /** Human-readable label for the handoff scene source. */
   handoffSourceName: string | null;
@@ -129,18 +129,8 @@ export const useTrajectoryGenerationStore = create<TrajectoryGenerationState>()(
       errorMessage: null,
       activeTab: "generate",
       setActiveTab: (activeTab) => set({ activeTab }),
-      setHandoffScene: (scene, sourceName) =>
-        set({
-          handoffScene: scene,
-          handoffSourceName: sourceName,
-          status: "idle",
-          activeRequestId: null,
-          iteration: 0,
-          resultScenarioJson: null,
-          resultValid: false,
-          resultComplete: null,
-          errorMessage: null,
-        }),
+      // The page's input; the shown trajectories stay until a run or a loaded entry replaces them (design doc 6.6).
+      setHandoffScene: (scene, sourceName) => set({ handoffScene: scene, handoffSourceName: sourceName }),
       setParam: (key, value) =>
         set((state) => ({ params: { ...state.params, [key]: value } })),
       setIncludeMonitorResults: (includeMonitorResults) => set({ includeMonitorResults }),

@@ -11,6 +11,7 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         'domain-configuration',
+        'workbench-pages',
         'scene-generation',
         'simulation',
         'connections',

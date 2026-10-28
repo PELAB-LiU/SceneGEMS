@@ -37,7 +37,16 @@ Campaign History (section id `history`, until its page replaces Observe it still
 section) and Results. `uiStore` keeps `section` and `workbenchView` (persisted, v6). Other sections
 open an output on a workbench page through `openInWorkbench(target)` in
 `features/workbench/pages/workbenchTarget.ts`, which shows the page and queues the target for it
-(`takeTarget(page)`). The workbench stays mounted while another section is shown, so its gateway socket and state carry on. The left
+(`takeTarget(page)`). The workbench stays mounted while another section is shown, so its gateway socket and state carry on.
+
+The workbench pages (design doc 6.6, `features/workbench/pages/`): Scene Generation, Trajectory
+Generation and Simulation each hold `{input, loaded}` in a persisted page store (`pageStore.ts`): the
+input (from the previous page's output, a Campaign History output or a file, `PageInputPanel`) and
+the target of the latest loaded entry. Every run is a one-step workbench entry (`entryConfig.ts`
+builds its format 2 config; `WorkbenchJobDriver` creates it with `kind: "workbench"` and the page
+as origin, follows its case with `entryFollower.ts`, then loads its output). `entryLoader.ts` fetches
+a target's output from the master; a 404 clears the page. The shown page takes queued targets with
+`useTargetConsumer`, and every page fetches its loaded entry again on start (`useLoadedRefresh`). The left
 pane is 280px with a plain-language hint per destination, an icon rail of 72px when collapsed (the
 choice is kept per browser) and a bar at the top below 800px. Below 1100px the workbench panes stack
 and scroll as one page.
@@ -91,7 +100,13 @@ flowchart LR
 4. **Run on the cluster**: a kinematic setup runs as one `simulation.kinematic` job (`simulationJobs.ts`), its frames observed on `instance:<node>/job-<id>-<attempt>`
 5. **Live session**: `connect_to_mqtt_broker` (the master's broker by default), `initialize_simulation` -> `initial_state`, `start_simulation` -> `simulation_trajectory_chunk`(s) and live `frame` pushes
 
-Preview and simulation trajectories are stored separately in `playbackStore`; the monitoring panel shows one of them at a time.
+`playbackStore.ts` makes one store per page (`createPlaybackStore`): `useScenePlaybackStore` (the
+scene page's scene), `useTrajectoryPlaybackStore` (the planned trajectories) and `usePlaybackStore`
+(the simulation page's preview and simulation streams, plus the gateway session: stream, broker,
+monitor and simulation status, stack options, errors). `WorkbenchSection` provides the shown page's
+store through `PlaybackStoreContext` (`playbackContext.ts`); the canvas, the playback bar and the
+monitor panels read it with `useShownPlayback`, so each page renders its own frames. The monitoring
+panel shows one stream at a time.
 
 ## Tests
 

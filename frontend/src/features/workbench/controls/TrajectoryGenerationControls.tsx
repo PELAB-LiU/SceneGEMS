@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { useSimulationWorkflow } from "../../../domain/simulation/useSimulationWorkflow";
-import { usePlaybackStore } from "../../../domain/playback/playbackStore";
+import { usePlaybackStore, useScenePlaybackStore, useTrajectoryPlaybackStore } from "../../../domain/playback/playbackStore";
 import {
   buildFramesFromTrajectoryData,
   formatScenarioJsonForExport,
-  parseScenarioFile,
 } from "../../../domain/sceneGeneration/parseEvaluationDataFile";
 import {
   TRAJECTORY_GENERATION_PARAM_DEFAULTS,
@@ -24,6 +23,10 @@ import { Disclosure } from "../../../components/Disclosure";
 import { AnimationPlaybackControls } from "./AnimationPlaybackControls";
 import { TRAJECTORY_GENERATION_JOB } from "../cluster/workbenchJobs";
 import { describeResources } from "../cluster/workbenchResources";
+import { PageEntryStatus } from "../pages/PageEntryStatus";
+import { PageInputPanel } from "../pages/PageInputPanel";
+import { inputOfFile, sceneOfDocument, sceneOfScenePage, setTrajectoryInput, trajectoriesOfTrajectoryPage } from "../pages/pageHandoff";
+import { useScenePageStore, useTrajectoryPageStore } from "../pages/pageStore";
 
 interface TrajectoryGenerationControlsProps {
   streamControls: ReturnType<typeof useSimulationWorkflow>;
@@ -66,10 +69,13 @@ export function TrajectoryGenerationControls({
 }: TrajectoryGenerationControlsProps) {
   const streamStatus = usePlaybackStore((s) => s.streamStatus);
   const simulationInitializing = usePlaybackStore((s) => s.simulationInitializing);
-  const setTrajectoryPreviewFrames = usePlaybackStore((s) => s.setTrajectoryPreviewFrames);
+  const setTrajectoryPreviewFrames = useTrajectoryPlaybackStore((s) => s.setTrajectoryPreviewFrames);
+  const input = useTrajectoryPageStore((s) => s.input);
+  // The scene page shows a valid scene to take in one click.
+  const scenePageHasScene = useScenePlaybackStore((s) => s.latestGeneratedScene?.valid === true && !!s.latestGeneratedScene.evaluationData);
+  const scenePageOutput = useScenePageStore((s) => s.output);
 
   const handoffScene = useTrajectoryGenerationStore((s) => s.handoffScene);
-  const handoffSourceName = useTrajectoryGenerationStore((s) => s.handoffSourceName);
   const params = useTrajectoryGenerationStore((s) => s.params);
   const includeMonitorResults = useTrajectoryGenerationStore((s) => s.includeMonitorResults);
   const generator = useTrajectoryGenerationStore((s) => s.generator);
@@ -91,10 +97,8 @@ export function TrajectoryGenerationControls({
   const setGenerator = useTrajectoryGenerationStore((s) => s.setGenerator);
   const setTimespan = useTrajectoryGenerationStore((s) => s.setTimespan);
   const resetParams = useTrajectoryGenerationStore((s) => s.resetParams);
-  const setHandoffScene = useTrajectoryGenerationStore((s) => s.setHandoffScene);
 
   const [localError, setLocalError] = useState<string | null>(null);
-  const sceneFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const running = status === "running";
   const straight = generator === "straight";
@@ -103,13 +107,13 @@ export function TrajectoryGenerationControls({
   // Trajectories are planned by a job on the active cluster: without a node that plans, nothing runs.
   const trajectoryResources = streamControls.clusterResources(TRAJECTORY_GENERATION_JOB);
   const canGenerate =
-    trajectoryResources.blocker === null && !running && handoffScene?.valid === true && (!straight || timespanValid);
+    trajectoryResources.blocker === null && !running && input !== null && handoffScene?.valid === true && (!straight || timespanValid);
   const hasResult = status === "done" && resultValid && !!resultScenarioJson;
 
-  // Restore the last generated trajectory as the on-canvas preview whenever the page
-  // is (re)opened. A live run manages the preview frames itself.
+  // Restore the last generated trajectory as the on-canvas preview after a reload (the page's
+  // playback store keeps it while the app runs). A live run manages the preview frames itself.
   useEffect(() => {
-    if (running || !resultScenarioJson) {
+    if (running || !resultScenarioJson || useTrajectoryPlaybackStore.getState().frames.length > 0) {
       return;
     }
     try {
@@ -157,56 +161,36 @@ export function TrajectoryGenerationControls({
   const paramFields = straight ? PARAM_FIELDS.filter(({ key }) => key === "timeStep") : PARAM_FIELDS;
 
   const handleGenerate = useCallback(() => {
-    if (!handoffScene?.valid) {
+    if (!handoffScene?.valid || input === null) {
       return;
     }
     setLocalError(null);
-    const scenarioContent = formatScenarioJsonForExport(
-      handoffScene.evaluationData,
-      handoffScene.scene
-    );
-    streamControls.generateTrajectories(
-      crypto.randomUUID(),
-      scenarioContent,
+    streamControls.generateTrajectories(crypto.randomUUID(), {
+      input,
+      scenarioContent: formatScenarioJsonForExport(handoffScene.evaluationData, handoffScene.scene),
       colregsConstraintsContent,
-      toParamsWire(params, includeMonitorResults, generator, timespan)
-    );
+      params: toParamsWire(params, includeMonitorResults, generator, timespan),
+    });
   }, [
     colregsConstraintsContent,
     generator,
     handoffScene,
     includeMonitorResults,
+    input,
     params,
     streamControls,
     timespan,
   ]);
 
-  const handleSceneFileSelected = useCallback(
-    async (file: File) => {
-      try {
-        const text = await file.text();
-        const { evaluationData, scene } = parseScenarioFile(text);
-        setHandoffScene({ scene, evaluationData, valid: true }, file.name);
-        setLocalError(null);
-      } catch (error) {
-        setLocalError(
-          error instanceof Error ? error.message : "Failed to parse scenario file."
-        );
-      }
-    },
-    [setHandoffScene]
-  );
-
+  // The shown trajectories become the simulation page's input, and the page opens.
   const handleLoadForSimulation = useCallback(() => {
-    if (!resultScenarioJson) {
+    const handoff = trajectoriesOfTrajectoryPage();
+    if (handoff === null) {
       return;
     }
-    const file = new File([resultScenarioJson], "planned_trajectory.json", {
-      type: "application/json",
-    });
-    void streamControls.loadScenarioFromFile(file, { colregsConstraintsContent });
+    void streamControls.setSimulationInput(handoff.input, handoff.content, { colregsConstraintsContent });
     onNavigateToSimulation();
-  }, [colregsConstraintsContent, onNavigateToSimulation, resultScenarioJson, streamControls]);
+  }, [colregsConstraintsContent, onNavigateToSimulation, streamControls]);
 
   const handleExportTrajectory = useCallback(() => {
     if (!resultScenarioJson) {
@@ -275,14 +259,25 @@ export function TrajectoryGenerationControls({
 
       {activeTab === "generate" ? (
         <div className="animation-control-stack">
-          <p className={`meta initial-scene-line${handoffScene ? " is-ok" : ""}`}>
-            Initial scene:{" "}
-            {handoffScene
-              ? handoffSourceName
-                ? `from file (${handoffSourceName})`
-                : "from Scene Generation"
-              : "none yet. Generate a valid scene on the Scene Generation page, or load a scenario file below."}
-          </p>
+          <PageInputPanel
+            title="Input scene"
+            input={handoffScene ? input : null}
+            emptyText="none yet. Take the scene of the Scene Generation page, an output of Campaign History or a scenario file."
+            previousLabel="Use the scene of the Scene Generation page"
+            previousAvailable={scenePageHasScene}
+            onUsePrevious={() => {
+              const handoff = sceneOfScenePage(scenePageOutput?.ref === null ? scenePageOutput.label : null);
+              if (handoff !== null) {
+                setTrajectoryInput(handoff.input, handoff.scene);
+              }
+            }}
+            historyStep="scene_generation"
+            client={streamControls.operatorClient}
+            onPickHistory={(picked, document) => setTrajectoryInput(picked, sceneOfDocument(document))}
+            onPickFile={async (file) => setTrajectoryInput(inputOfFile(file.name), sceneOfDocument(JSON.parse(await file.text())))}
+            disabled={running}
+          />
+          <PageEntryStatus store={useTrajectoryPageStore} />
           <div className="toolbar-row" style={{ alignItems: "flex-end" }}>
             <label className="field">
               <span>Generator</span>
@@ -390,7 +385,7 @@ export function TrajectoryGenerationControls({
                 }
                 onClick={handleLoadForSimulation}
               >
-                Load for Simulation
+                Next: Simulation
               </button>
               <button
                 type="button"
@@ -404,40 +399,11 @@ export function TrajectoryGenerationControls({
               {hasResult
                 ? partialPlan || runWarning
                   ? "The partial trajectory is shown on the canvas and can still be simulated and exported."
-                  : "The trajectory is shown on the canvas. Load it for simulation to run it."
-                : "Generate or load a trajectory to enable simulation and export."}
+                  : "The trajectory is shown on the canvas. Next: Simulation makes it the input of the simulation page."
+                : "Generate a trajectory, or open one from Campaign History, to enable simulation and export."}
             </p>
           </section>
 
-          <Disclosure
-            id="trajectory:load-file"
-            variant="link"
-            headingLevel={null}
-            title="Use a scenario file as the initial scene"
-            openTitle="Hide the scenario file option"
-            keepMounted
-          >
-            <input
-              ref={sceneFileInputRef}
-              type="file"
-              accept="application/json,.json"
-              hidden
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) {
-                  void handleSceneFileSelected(file);
-                }
-                e.target.value = "";
-              }}
-            />
-            <button
-              type="button"
-              disabled={running}
-              onClick={() => sceneFileInputRef.current?.click()}
-            >
-              Load Scenario File...
-            </button>
-          </Disclosure>
         </div>
       ) : activeTab === "advanced" ? (
         <div className="animation-control-stack">

@@ -9,8 +9,8 @@ import type { SimulationFrame } from "../../../domain/simulation/types";
 import {
   getCurrentFrame,
   getCurrentSimulationFrame,
-  usePlaybackStore,
 } from "../../../domain/playback/playbackStore";
+import { useShownPlayback } from "../../../domain/playback/playbackContext";
 import { useUiStore, type OverlayVisibility } from "../../../app/uiStore";
 import { useEncounterSelectionStore } from "../monitor/encounterSelectionStore";
 import { buildShipColorsByActorId, getShipColor, getSimulationStreamColor } from "./shipColors";
@@ -31,15 +31,15 @@ interface SceneCanvasProps {
  */
 export function SceneCanvas({ generatedScene }: SceneCanvasProps = {}) {
   const isGeneratedMode = generatedScene !== undefined;
-  const frames = usePlaybackStore((s) => s.frames);
-  const simulationFrames = usePlaybackStore((s) => s.simulationFrames);
-  const playbackFrame = usePlaybackStore((s) => getCurrentFrame(s));
+  const frames = useShownPlayback((s) => s.frames);
+  const simulationFrames = useShownPlayback((s) => s.simulationFrames);
+  const playbackFrame = useShownPlayback((s) => getCurrentFrame(s));
   const previewFrame = isGeneratedMode ? generatedScene : playbackFrame;
-  const simulationFrame = usePlaybackStore((s) => getCurrentSimulationFrame(s));
-  const hasTrajectoryChunk = usePlaybackStore((s) => s.hasTrajectoryChunk);
-  const hasSimulationTrajectoryChunk = usePlaybackStore((s) => s.hasSimulationTrajectoryChunk);
-  const autoFitPending = usePlaybackStore((s) => s.autoFitPending);
-  const consumeAutoFit = usePlaybackStore((s) => s.consumeAutoFit);
+  const simulationFrame = useShownPlayback((s) => getCurrentSimulationFrame(s));
+  const hasTrajectoryChunk = useShownPlayback((s) => s.hasTrajectoryChunk);
+  const hasSimulationTrajectoryChunk = useShownPlayback((s) => s.hasSimulationTrajectoryChunk);
+  const autoFitPending = useShownPlayback((s) => s.autoFitPending);
+  const consumeAutoFit = useShownPlayback((s) => s.consumeAutoFit);
   const svgRef = useRef<SVGSVGElement | null>(null);
 
   const controlPanelMode = useUiStore((s) => s.controlPanelMode);
