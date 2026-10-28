@@ -19,7 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --upgrade pip
+RUN pip install --upgrade pip==26.2.2
 
 # Set the working directory
 WORKDIR /app
