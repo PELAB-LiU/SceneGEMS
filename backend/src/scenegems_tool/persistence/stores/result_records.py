@@ -1,17 +1,27 @@
-"""Run records, verdicts and coverage as the result store takes and returns them."""
+"""Run records, verdicts, coverage and findings as the result store takes and returns them."""
 
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 
-from scenegems_tool.persistence.schema import CampaignClassState, MonitorImplementation, RunRecordRow, TrajectoryGeneratorImplementation, VerdictRow, VerdictState
+from scenegems_tool.persistence.schema import (
+    CampaignClassState,
+    CaseState,
+    MonitorImplementation,
+    RunRecordRow,
+    RunSource,
+    StepKind,
+    TrajectoryGeneratorImplementation,
+    VerdictRow,
+    VerdictState,
+)
 
 
 @dataclass(frozen=True)
 class NewRunRecord:
     case_id: int
     run_index: int
-    trajectory_generator: TrajectoryGeneratorImplementation
+    trajectory_generator: Optional[TrajectoryGeneratorImplementation]  # None for trajectories from an input item or a live session
     trajectories_complete: bool
     stack: Dict[str, Any]
     environment: Dict[str, Any]
@@ -26,6 +36,7 @@ class NewRunRecord:
     node_id: Optional[str] = None
     fingerprints: Dict[str, str] = field(default_factory=dict)
     durations_s: Dict[str, float] = field(default_factory=dict)
+    source: RunSource = RunSource.JOB
 
 
 @dataclass(frozen=True)
@@ -36,7 +47,7 @@ class RunRecord:
     class_id: str
     run_index: int
     repeat_index: int
-    trajectory_generator: TrajectoryGeneratorImplementation
+    trajectory_generator: Optional[TrajectoryGeneratorImplementation]
     trajectories_complete: bool
     stack: Dict[str, Any]
     repeatability_tier: Optional[str]
@@ -52,6 +63,7 @@ class RunRecord:
     durations_s: Dict[str, float]
     created_at: datetime
     case_index: Optional[int] = None  # the case's index in its class, joined in by the store
+    source: RunSource = RunSource.JOB
 
     @classmethod
     def from_row(cls, row: RunRecordRow, case_index: Optional[int] = None) -> "RunRecord":
@@ -78,6 +90,7 @@ class RunRecord:
             durations_s=dict(row.durations_s),
             created_at=row.created_at,
             case_index=case_index,
+            source=row.source,
         )
 
 
@@ -94,6 +107,7 @@ class NewVerdict:
     sensitive: bool = False
     early_stop_time_s: Optional[float] = None
     run_record_id: Optional[int] = None
+    step: StepKind = StepKind.SIMULATION  # the scene and trajectory steps have run index 0
 
 
 @dataclass(frozen=True)
@@ -114,6 +128,7 @@ class VerdictRecord:
     early_stop_time_s: Optional[float]
     created_at: datetime
     case_index: Optional[int] = None  # the case's index in its class, joined in by the store
+    step: StepKind = StepKind.SIMULATION
 
     @classmethod
     def from_row(cls, row: VerdictRow, case_index: Optional[int] = None) -> "VerdictRecord":
@@ -134,6 +149,7 @@ class VerdictRecord:
             early_stop_time_s=row.early_stop_time_s,
             created_at=row.created_at,
             case_index=case_index,
+            step=row.step,
         )
 
 
@@ -152,3 +168,43 @@ class ClassCoverage:
 
     def verdict_count(self, state: Optional[VerdictState] = None, run_index: Optional[int] = None) -> int:
         return sum(count for run, states in self.verdicts.items() if run_index is None or run == run_index for verdict_state, count in states.items() if state is None or verdict_state == state)
+
+
+@dataclass(frozen=True)
+class RuleFindings:
+    """One rule over the failed verdicts of a step: in how many it failed, and when it failed first (min and median over those verdicts)."""
+
+    rule: str
+    count: int
+    first_failure_time_min_s: Optional[float]
+    first_failure_time_median_s: Optional[float]
+
+
+@dataclass(frozen=True)
+class ClassFindings:
+    class_id: str
+    cases: int
+    passed: int
+    failed: int
+
+
+@dataclass(frozen=True)
+class StepFindings:
+    """The summary of one step of a campaign that Results shows (operator API `findings`).
+
+    An unmonitored step has statistics only: verdicts and failed_rules stay empty. outputs
+    counts the step's outputs (count), the usable ones (valid) and the complete ones;
+    durations_s are the running times of the step's finished jobs.
+    """
+
+    step: StepKind
+    monitored: bool
+    cases: Dict[CaseState, int]
+    outputs_count: int
+    outputs_valid: int
+    outputs_complete: int
+    verdicts: Dict[VerdictState, int]
+    failed_rules: Tuple[RuleFindings, ...]
+    classes: Tuple[ClassFindings, ...]
+    duration_median_s: Optional[float]
+    duration_p90_s: Optional[float]

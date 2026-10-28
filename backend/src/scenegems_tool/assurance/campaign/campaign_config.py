@@ -1,11 +1,18 @@
 """The campaign config: what a campaign runs, as an immutable, hashed pydantic model.
 
 Sections:
+    format          1 (the default) or 2
+    steps           format 2: the consecutive part of the chain scene_generation, trajectory_generation,
+                    simulation the campaign runs, in chain order; all three by default
     scope           classes (catalog ids or folder patterns), each entry with a quota and a failure budget
+    input           format 2: functional scenarios given as content (a campaign that starts with scene
+                    generation) or items, outputs of earlier steps or uploaded files (one that starts later)
     domain          COLREGS constants, vessel types and obstacle types as content (defaults from
                     backend/assets/domain_config/), the scene generation timeout, enforce_low_tcpa
+    scene_generation  format 2: the monitor of the generated scenes (post_hoc or empty)
     trajectories    the generator: monitor_driven_rrt with its search parameters (the wire keys of
-                    TrajectoryGenerationParams) or straight with its timespan; the timeout
+                    TrajectoryGenerationParams) or straight with its timespan; the timeout; format 2:
+                    the monitor of the planned trajectories (post_hoc or empty)
     execution       the runs of every case: a stack, an environment, a seed, repeats, the monitor
     resources       the nodes it may use (all when none are named), required node labels, queue depth
                     caps per stage, priority
@@ -15,6 +22,11 @@ Unknown fields are rejected everywhere. YAML is read with a safe loader that als
 duplicate keys. The hash is the sha256 of the config's canonical JSON with every default
 filled in, so it pins the domain content too. Content strings get LF line endings, so a
 config hashes the same from a Windows and a Linux checkout.
+
+A format 1 config is the full chain with the fields it always had: it takes none of the
+format 2 fields, and its JSON (and so its hash) leaves them out, so a campaign created
+before format 2 keeps its stored hash. Sections of steps a campaign does not run are kept
+but not used.
 
 Every case seed derives from the campaign seed, the class id and the case index
 (case_seed), and every run seed from the case seed and the run index unless the run fixes
@@ -31,12 +43,14 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from scenegems_tool.cluster.node.jobs.simulation_kinematic_job import KinematicMode, UsvNavigationPayload
 from scenegems_tool.cluster.node.jobs.trajectory_generation_job import PARAM_KEYS
+from scenegems_tool.cluster.protocol.artifacts import JSON_MEDIA_TYPE, SHA256_PATTERN
 from scenegems_tool.persistence.canonical_json import canonical_json_sha256
-from scenegems_tool.persistence.schema import MonitorImplementation, PipelineStage, TrajectoryGeneratorImplementation
+from scenegems_tool.persistence.schema import MonitorImplementation, PipelineStage, StepKind, TrajectoryGeneratorImplementation
 from scenegems_tool.subsystems.trajectory_generation.trajectory_generation_types import TrajectoryGenerationParams
 from utils.file_system_utils import COLREGS_CONSTANTS_FOLDER, STATIC_OBSTACLE_TYPES_FOLDER, VESSEL_TYPES_FOLDER
 
-CONFIG_FORMAT = 1
+CONFIG_FORMAT = 1  # the format of a config that names none
+LATEST_CONFIG_FORMAT = 2
 MAX_SEED = 2**31 - 1  # seeds are 31-bit, so every consumer (numpy included) takes them
 
 DEFAULT_COLREGS_CONSTANTS_FILE = Path(COLREGS_CONSTANTS_FOLDER) / "general_maritime_constants.yaml"
@@ -60,6 +74,31 @@ class ConfigModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+# Steps
+
+
+class CampaignStep(str, Enum):
+    """The steps of the chain, in chain order."""
+
+    SCENE_GENERATION = "scene_generation"
+    TRAJECTORY_GENERATION = "trajectory_generation"
+    SIMULATION = "simulation"
+
+    @property
+    def step_kind(self) -> StepKind:
+        """The step as verdicts and outputs name it."""
+        return {CampaignStep.SCENE_GENERATION: StepKind.SCENE, CampaignStep.TRAJECTORY_GENERATION: StepKind.TRAJECTORIES, CampaignStep.SIMULATION: StepKind.SIMULATION}[self]
+
+
+CHAIN = tuple(CampaignStep)
+
+
+def _generation_step_monitor(monitor: MonitorImplementation) -> MonitorImplementation:
+    if monitor == MonitorImplementation.LIVE:
+        raise ValueError("a generated scene or trajectory set is monitored post_hoc or not at all (empty)")
+    return monitor
+
+
 # Scope
 
 
@@ -80,6 +119,93 @@ class ScopeEntry(ConfigModel):
         if not self.classes and not self.patterns:
             raise ValueError("a scope entry needs classes or patterns")
         return self
+
+
+# Input
+
+
+class InputArtifactKind(str, Enum):
+    FUNCTIONAL_SCENARIO = "functional_scenario"  # a functional scenario (.problem text)
+    SCENE = "scene"  # a scene or a scene generation's EvaluationData
+    TRAJECTORY_DATA = "trajectory_data"  # a trajectory generation's TrajectoryData
+    TRAJECTORIES = "trajectories"  # Trajectories: planned trajectories or a run's state log
+
+
+class InputRef(ConfigModel):
+    """An artifact in the master's store, in the wire form of cluster/protocol/artifacts.ArtifactRef.
+
+    Its own model because the protocol's artifact kinds have no functional scenario yet.
+    """
+
+    sha256: str = Field(pattern=SHA256_PATTERN)
+    size_bytes: int = Field(ge=0)
+    kind: InputArtifactKind
+    media_type: str = JSON_MEDIA_TYPE
+    pointer: Optional[str] = None  # JSON pointer into the document, such as /trajectories; the whole document when None
+
+    @field_validator("pointer")
+    @classmethod
+    def _pointer_syntax(cls, pointer: Optional[str]) -> Optional[str]:
+        if pointer is not None and pointer != "" and not pointer.startswith("/"):
+            raise ValueError("a JSON pointer starts with '/'")
+        return pointer
+
+
+class FunctionalScenarioInput(ConfigModel):
+    """A functional scenario given as content: a class of its own, id scenario/<name>, its content pinned by the reference's hash."""
+
+    name: str = Field(min_length=1, max_length=200, pattern=r"^[^/]+$")
+    ref: InputRef
+    quota: int = Field(ge=1)
+    failure_budget: int = Field(default=0, ge=0)
+
+    @field_validator("ref")
+    @classmethod
+    def _a_functional_scenario(cls, ref: InputRef) -> InputRef:
+        if ref.kind != InputArtifactKind.FUNCTIONAL_SCENARIO:
+            raise ValueError(f"a functional scenario's reference has kind functional_scenario, not {ref.kind.value}")
+        return ref
+
+
+class ItemSource(ConfigModel):
+    """Where an item came from: an output of a step of an earlier campaign, or an uploaded file."""
+
+    campaign_id: Optional[str] = Field(default=None, min_length=1, max_length=36)
+    case_id: Optional[int] = Field(default=None, ge=1)
+    step: Optional[CampaignStep] = None
+    file: Optional[str] = Field(default=None, min_length=1, max_length=512)
+
+    @model_validator(mode="after")
+    def _one_source(self) -> "ItemSource":
+        output = (self.campaign_id, self.case_id, self.step)
+        if self.file is not None:
+            if any(value is not None for value in output):
+                raise ValueError("an item comes from a file or from a campaign's output, not both")
+        elif any(value is None for value in output):
+            raise ValueError("an item's source is {campaign_id, case_id, step} or {file}")
+        return self
+
+
+class InputItem(ConfigModel):
+    """A scene (for trajectory generation) or trajectories (for simulation): a class of its own, id item/<index>, quota 1."""
+
+    name: str = Field(min_length=1, max_length=256)
+    ref: InputRef
+    source: ItemSource
+
+
+class InputConfig(ConfigModel):
+    functional_scenarios: Tuple[FunctionalScenarioInput, ...] = ()
+    items: Tuple[InputItem, ...] = ()
+
+    @field_validator("functional_scenarios")
+    @classmethod
+    def _distinct_names(cls, scenarios: Tuple[FunctionalScenarioInput, ...]) -> Tuple[FunctionalScenarioInput, ...]:
+        names = [scenario.name for scenario in scenarios]
+        twice = sorted({name for name in names if names.count(name) > 1})
+        if twice:
+            raise ValueError(f"functional scenario names must be distinct: {twice}")
+        return scenarios
 
 
 # Domain
@@ -105,6 +231,15 @@ class DomainConfig(ConfigModel):
         return content
 
 
+# Scene generation
+
+
+class SceneGenerationConfig(ConfigModel):
+    monitor: MonitorImplementation = MonitorImplementation.EMPTY  # post_hoc judges each scene as a one-scene log
+
+    _monitor = field_validator("monitor")(_generation_step_monitor)
+
+
 # Trajectories
 
 
@@ -114,6 +249,9 @@ class TrajectoriesConfig(ConfigModel):
     params: Dict[str, Union[bool, int, float]] = Field(default_factory=dict)
     timespan_s: Optional[float] = Field(default=None, gt=0)  # straight only, required there: how far every vessel goes straight on
     timeout_s: float = Field(default=1800.0, gt=0)  # how long a trajectory generation job may take
+    monitor: MonitorImplementation = MonitorImplementation.EMPTY  # format 2: post_hoc judges the planned trajectories
+
+    _monitor = field_validator("monitor")(_generation_step_monitor)
 
     @model_validator(mode="after")
     def _parameters_of_the_generator(self) -> "TrajectoriesConfig":
@@ -208,8 +346,11 @@ class QueueDepthCaps(ConfigModel):
     calibrate: int = Field(default=8, ge=1)
 
     def cap(self, stage: PipelineStage) -> int:
+        """The cap of a stage; the scene and trajectory monitors share the monitor's, since all three run monitoring.post_hoc."""
         if stage == PipelineStage.VERDICT:
             raise ValueError("the verdict stage queues no jobs")
+        if stage in (PipelineStage.MONITOR_SCENE, PipelineStage.MONITOR_TRAJECTORIES):
+            return self.monitor
         return getattr(self, stage.value)
 
 
@@ -254,19 +395,61 @@ class PolicyConfig(ConfigModel):
 # The config
 
 
+# The format 2 fields; a format 1 config takes none of them and its JSON leaves them out
+FORMAT_2_FIELDS = ("steps", "input", "scene_generation")
+FORMAT_2_TRAJECTORY_FIELDS = ("monitor",)
+FORMAT_1_EXCLUDED: Dict[str, Any] = {**{name: True for name in FORMAT_2_FIELDS}, "trajectories": set(FORMAT_2_TRAJECTORY_FIELDS)}
+
+
 class CampaignConfig(ConfigModel):
-    format: Literal[1] = CONFIG_FORMAT
+    format: Literal[1, 2] = CONFIG_FORMAT
     name: str = Field(min_length=1, max_length=256)
     description: str = ""
-    scope: Tuple[ScopeEntry, ...] = Field(min_length=1)
+    steps: Tuple[CampaignStep, ...] = CHAIN
+    scope: Tuple[ScopeEntry, ...] = ()  # catalog classes; a format 1 config needs at least one entry
+    input: InputConfig = Field(default_factory=InputConfig)
     domain: DomainConfig = Field(default_factory=DomainConfig)
+    scene_generation: SceneGenerationConfig = Field(default_factory=SceneGenerationConfig)
     trajectories: TrajectoriesConfig = Field(default_factory=TrajectoriesConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     resources: ResourcesConfig = Field(default_factory=ResourcesConfig)
     policy: PolicyConfig = Field(default_factory=PolicyConfig)
 
+    @field_validator("steps")
+    @classmethod
+    def _consecutive_steps(cls, steps: Tuple[CampaignStep, ...]) -> Tuple[CampaignStep, ...]:
+        if not steps:
+            raise ValueError("a campaign runs at least one step")
+        positions = [CHAIN.index(step) for step in steps]
+        if positions != list(range(positions[0], positions[0] + len(steps))):
+            raise ValueError(f"steps must be consecutive and in chain order ({', '.join(step.value for step in CHAIN)}), got {[step.value for step in steps]}")
+        return steps
+
+    @model_validator(mode="after")
+    def _fields_of_the_format(self) -> "CampaignConfig":
+        if self.format == 1:
+            newer = [name for name in FORMAT_2_FIELDS if name in self.model_fields_set]
+            newer += [f"trajectories.{name}" for name in FORMAT_2_TRAJECTORY_FIELDS if name in self.trajectories.model_fields_set]
+            if newer:
+                raise ValueError(f"{', '.join(newer)} need format 2")
+            if not self.scope:
+                raise ValueError("a format 1 config needs at least one scope entry")
+        return self
+
+    @property
+    def first_step(self) -> CampaignStep:
+        return self.steps[0]
+
+    def runs_step(self, step: CampaignStep) -> bool:
+        return step in self.steps
+
     def to_json(self) -> Dict[str, Any]:
-        """The config as JSON with every default filled in: what the database stores and the hash covers."""
+        """The config as JSON with every default filled in: what the database stores and the hash covers.
+
+        A format 1 config leaves the format 2 fields out, so its hash is the one it always had.
+        """
+        if self.format == 1:
+            return self.model_dump(mode="json", exclude=FORMAT_1_EXCLUDED)
         return self.model_dump(mode="json")
 
     def config_hash(self) -> str:

@@ -1,6 +1,6 @@
-"""Detached snapshots of campaigns, classes, cases, pipeline jobs and the engine's event cursor."""
+"""Detached snapshots of campaigns, classes, cases, step outputs, pipeline jobs and the engine's event cursor."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 
@@ -13,12 +13,16 @@ from scenegems_tool.persistence.schema import (
     CampaignDesiredState,
     CampaignEventKind,
     CampaignEventRow,
+    CampaignKind,
+    CampaignOrigin,
     CampaignRow,
     CaseState,
     JobEventKind,
     PipelineJobRow,
     PipelineStage,
     ScenarioCaseRow,
+    StepKind,
+    VerdictState,
 )
 
 
@@ -47,6 +51,8 @@ class CampaignRecord:
     updated_at: datetime
     started_at: Optional[datetime]
     finished_at: Optional[datetime]
+    kind: CampaignKind = CampaignKind.CAMPAIGN
+    origin: Optional[CampaignOrigin] = None  # None for campaigns made before Phase 6
 
     @classmethod
     def from_row(cls, row: CampaignRow) -> "CampaignRecord":
@@ -62,7 +68,17 @@ class CampaignRecord:
             updated_at=row.updated_at,
             started_at=row.started_at,
             finished_at=row.finished_at,
+            kind=row.kind,
+            origin=row.origin,
         )
+
+
+@dataclass(frozen=True)
+class CampaignTotals:
+    """What a campaign list row shows without a detail call: its cases by state and its verdicts by step and state."""
+
+    cases: Dict[CaseState, int] = field(default_factory=dict)
+    verdicts: Dict[StepKind, Dict[VerdictState, int]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -163,6 +179,8 @@ class CaseRecord:
     created_at: datetime
     updated_at: datetime
     finished_at: Optional[datetime]
+    input_artifact: Optional[str] = None  # what the first configured step took; None for catalog classes
+    input_source: Optional[Dict[str, Any]] = None  # {campaign_id, case_id, step} or {file}
 
     @classmethod
     def from_row(cls, row: ScenarioCaseRow) -> "CaseRecord":
@@ -184,18 +202,59 @@ class CaseRecord:
             created_at=row.created_at,
             updated_at=row.updated_at,
             finished_at=row.finished_at,
+            input_artifact=row.input_artifact,
+            input_source=None if row.input_source is None else dict(row.input_source),
         )
 
 
 @dataclass(frozen=True)
 class NewCase:
-    """A case to create: its class, its index in the class and its seed."""
+    """A case to create: its class, its index in the class and its seed, and the input of its first step when it has one."""
 
     class_id: str
     case_index: int
     seed: int
     config_version: int = 1
     stage: PipelineStage = PipelineStage.GENERATE_SCENE
+    input_artifact: Optional[str] = None  # sha256 of a functional scenario, a scene or trajectories
+    input_source: Optional[Dict[str, Any]] = None
+
+
+@dataclass(frozen=True)
+class OutputArtifact:
+    """The artifact an output row points at; size, kind and media type are None once the artifact record is gone."""
+
+    sha256: str
+    size_bytes: Optional[int]
+    kind: Optional[str]
+    media_type: Optional[str]
+    pointer: Optional[str] = None  # JSON pointer into the document, such as /trajectories
+
+
+@dataclass(frozen=True)
+class OutputRecord:
+    """One output of one step of a case: its scene, its trajectories, or one simulated run (one row per case without runs yet).
+
+    valid says the step gave a usable output: the output exists and the case did not drop at
+    the step. complete is the trajectories' completeness (None for scenes). verdict_state and
+    failed_rules are the step's verdict, None while the step has none (or is not monitored).
+    """
+
+    step: StepKind
+    case_id: int
+    case_index: int
+    class_id: str
+    state: CaseState
+    reason: Optional[str]
+    artifact: Optional[OutputArtifact]
+    valid: bool
+    complete: Optional[bool]
+    run_index: Optional[int]
+    repeat_index: Optional[int]
+    run_record_id: Optional[int]
+    verdict_state: Optional[VerdictState]
+    failed_rules: Tuple[str, ...]
+    input_source: Optional[Dict[str, Any]]
 
 
 @dataclass(frozen=True)

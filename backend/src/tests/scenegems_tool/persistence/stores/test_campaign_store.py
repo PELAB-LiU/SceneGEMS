@@ -1,8 +1,23 @@
+from datetime import timedelta
+
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from scenegems_tool.persistence.schema import CampaignActualState, CampaignClassState, CampaignDesiredState, CampaignEventKind
-from scenegems_tool.persistence.stores import CampaignStateConflict, ClassSpec, UnknownCampaign
+from scenegems_tool.persistence.schema import (
+    ArtifactHolderKind,
+    CampaignActualState,
+    CampaignClassState,
+    CampaignDesiredState,
+    CampaignEventKind,
+    CampaignKind,
+    CampaignOrigin,
+    CaseState,
+    MonitorImplementation,
+    PipelineStage,
+    StepKind,
+    VerdictState,
+)
+from scenegems_tool.persistence.stores import CampaignStateConflict, CampaignTotals, ClassSpec, NewCase, NewRunRecord, NewVerdict, UnknownCampaign
 from tests.scenegems_tool.persistence.stores.builders import CONFIG_HASH, START, make_class_spec, sha256_of
 from tests.scenegems_tool.persistence.stores.conftest import CLASS_A, CLASS_B
 
@@ -24,7 +39,7 @@ def test_create_a_campaign_with_its_config_and_classes(stores, campaign):
     ]
     assert all((c.complete_count, c.dropped_count, c.in_flight_count) == (0, 0, 0) for c in classes)
     (created,) = stores.campaigns.list_events(campaign.campaign_id)
-    assert created.kind == CampaignEventKind.CREATED and created.detail == {"config_hash": CONFIG_HASH, "classes": 2, "desired_state": "paused"}
+    assert created.kind == CampaignEventKind.CREATED and created.detail == {"config_hash": CONFIG_HASH, "classes": 2, "desired_state": "paused", "kind": "campaign"}
 
 
 def test_creation_is_one_transaction(stores):
@@ -151,3 +166,122 @@ def test_a_change_in_the_callers_transaction_rolls_back_with_it(stores, campaign
             raise RuntimeError("engine step failed")
     assert stores.campaigns.get_campaign(campaign.campaign_id).desired_state == CampaignDesiredState.PAUSED
     assert len(stores.campaigns.list_events(campaign.campaign_id)) == 1
+
+
+# Kinds and origins, list filters and totals, deletion (Phase 6)
+
+CAMPAIGN, WORKBENCH = CampaignKind.CAMPAIGN, CampaignKind.WORKBENCH
+
+
+def _make(stores, name, kind=CampaignKind.CAMPAIGN, origin=None):
+    return stores.campaigns.create_campaign(name, {"name": name}, CONFIG_HASH, [make_class_spec()], kind=kind, origin=origin)
+
+
+def test_kind_and_origin_come_with_the_creation(stores):
+    plain = _make(stores, "plain")
+    assert (plain.kind, plain.origin) == (CAMPAIGN, None)
+    entry = _make(stores, "scene run", WORKBENCH, CampaignOrigin.SCENE_GENERATION)
+    assert (entry.kind, entry.origin) == (WORKBENCH, CampaignOrigin.SCENE_GENERATION)
+    assert stores.campaigns.get_campaign(entry.campaign_id) == entry
+    (created,) = stores.campaigns.list_events(entry.campaign_id)
+    assert (created.detail["kind"], created.detail["origin"]) == ("workbench", "scene_generation")
+
+
+@pytest.mark.parametrize("kind, origin", [(WORKBENCH, CampaignOrigin.WIZARD), (CAMPAIGN, CampaignOrigin.LIVE_SESSION), (CAMPAIGN, CampaignOrigin.SIMULATION)])
+def test_an_origin_belongs_to_one_kind(stores, kind, origin):
+    with pytest.raises(ValueError, match=f"origin {origin.value} makes a"):
+        _make(stores, "mismatch", kind, origin)
+    assert stores.campaigns.count_campaigns() == 0
+
+
+def test_list_campaigns_by_kind_origin_and_name(stores, clock):
+    _make(stores, "Head-on 100% night", CAMPAIGN, CampaignOrigin.WIZARD)
+    clock.advance(1)
+    _make(stores, "crossing_cli", CAMPAIGN, CampaignOrigin.CLI)
+    clock.advance(1)
+    _make(stores, "head-on scene", WORKBENCH, CampaignOrigin.SCENE_GENERATION)
+    clock.advance(1)
+    live = _make(stores, "live session", WORKBENCH, CampaignOrigin.LIVE_SESSION)
+    stores.campaigns.set_actual_state(live.campaign_id, CampaignActualState.RUNNING)
+
+    def names(**filters):
+        found = [campaign.name for campaign in stores.campaigns.list_campaigns(**filters)]
+        assert stores.campaigns.count_campaigns(**filters) == len(found), filters
+        return found
+
+    assert names(kinds=[WORKBENCH]) == ["live session", "head-on scene"]
+    assert names(kinds=[CAMPAIGN], origins=[CampaignOrigin.CLI]) == ["crossing_cli"]
+    assert names(origins=[CampaignOrigin.WIZARD, CampaignOrigin.LIVE_SESSION]) == ["live session", "Head-on 100% night"]
+    assert names(q="HEAD-ON") == ["head-on scene", "Head-on 100% night"]
+    assert names(q="100%") == ["Head-on 100% night"]  # LIKE wildcards are taken literally
+    assert names(q="g_c") == ["crossing_cli"]
+    assert names(q="_") == ["crossing_cli"]
+    assert names(q="") == ["live session", "head-on scene", "crossing_cli", "Head-on 100% night"]
+    assert names(actual_states=[CampaignActualState.RUNNING], kinds=[WORKBENCH]) == ["live session"]
+    assert [campaign.name for campaign in stores.campaigns.list_campaigns(kinds=[WORKBENCH], limit=1, offset=1)] == ["head-on scene"]
+
+
+def test_campaign_totals_count_cases_by_state_and_verdicts_by_step(stores, campaign):
+    other = _make(stores, "other")
+    a0, a1 = stores.cases.create_cases(campaign.campaign_id, [NewCase(class_id=CLASS_A, case_index=index, seed=index) for index in range(2)])
+    stores.cases.move_case(a1.case_id, a1.version, state=CaseState.DROPPED, reason="invalid scene")
+    post_hoc = MonitorImplementation.POST_HOC
+    stores.results.add_verdict(NewVerdict(case_id=a0.case_id, run_index=0, state=VerdictState.PASSED, monitor=post_hoc, step=StepKind.SCENE))
+    stores.results.add_verdict(NewVerdict(case_id=a0.case_id, run_index=0, state=VerdictState.FAILED, monitor=post_hoc))
+    stores.results.add_verdict(NewVerdict(case_id=a0.case_id, run_index=1, state=VerdictState.PASSED, monitor=post_hoc))
+    totals = stores.campaigns.campaign_totals([campaign.campaign_id, other.campaign_id, "missing", campaign.campaign_id])
+    assert totals[campaign.campaign_id] == CampaignTotals(
+        cases={CaseState.ACTIVE: 1, CaseState.DROPPED: 1},
+        verdicts={StepKind.SCENE: {VerdictState.PASSED: 1}, StepKind.SIMULATION: {VerdictState.FAILED: 1, VerdictState.PASSED: 1}},
+    )
+    assert totals[other.campaign_id] == CampaignTotals() == totals["missing"]
+    assert stores.campaigns.campaign_totals([]) == {}
+
+
+def test_current_configs_of_a_page_of_campaigns(stores, campaign):
+    other = stores.campaigns.create_campaign("other", {"format": 2, "steps": ["simulation"]}, sha256_of("other"), [make_class_spec()])
+    configs = stores.campaigns.current_configs([campaign.campaign_id, other.campaign_id, "missing"])
+    assert set(configs) == {campaign.campaign_id, other.campaign_id}
+    assert (configs[other.campaign_id].config, configs[other.campaign_id].version) == ({"format": 2, "steps": ["simulation"]}, 1)
+    assert configs[campaign.campaign_id] == stores.campaigns.config_version(campaign.campaign_id)
+    assert stores.campaigns.current_configs([]) == {}
+
+
+def test_only_a_final_campaign_is_deleted(stores, campaign):
+    with pytest.raises(CampaignStateConflict, match="only a stopped or completed campaign can be deleted"):
+        stores.campaigns.delete_campaign(campaign.campaign_id)
+    with pytest.raises(UnknownCampaign):
+        stores.campaigns.delete_campaign("missing")
+    assert stores.campaigns.get_campaign(campaign.campaign_id) is not None
+
+
+def test_deleting_a_campaign_removes_its_rows_and_the_references_it_holds(stores, campaign, clock):
+    other = _make(stores, "other")
+    (case,) = stores.cases.create_cases(campaign.campaign_id, [NewCase(class_id=CLASS_A, case_index=0, seed=1)])
+    (other_case,) = stores.cases.create_cases(other.campaign_id, [NewCase(class_id=CLASS_A, case_index=0, seed=1)])
+    run = stores.results.add_run_record(NewRunRecord(case_id=case.case_id, run_index=0, trajectory_generator=None, trajectories_complete=True, stack={}, environment={}, seed=1))
+    stores.results.add_verdict(NewVerdict(case_id=case.case_id, run_index=0, state=VerdictState.PASSED, monitor=MonitorImplementation.POST_HOC, run_record_id=run.run_record_id))
+    stores.pipeline.add_intent(campaign.campaign_id, case.case_id, PipelineStage.GENERATE_SCENE, "campaign:x:case:1:generate_scene")
+    item, scene, log, shared, upload = (sha256_of(name) for name in ("item", "scene", "log", "shared", "upload"))
+    for artifact_hash in (item, scene, log, shared, upload):
+        stores.artifacts.insert_if_absent(artifact_hash, "scene", 10, "application/json")
+    stores.artifacts.add_reference(item, ArtifactHolderKind.CAMPAIGN, campaign.campaign_id, "input:0")
+    stores.artifacts.add_reference(scene, ArtifactHolderKind.CASE, case.case_id, "scene")  # without the campaign id: found through the case
+    stores.artifacts.add_reference(log, ArtifactHolderKind.RUN, run.run_record_id, "state_log")
+    stores.artifacts.add_reference(shared, ArtifactHolderKind.CASE, case.case_id, "trajectory_data", campaign_id=campaign.campaign_id)
+    stores.artifacts.add_reference(shared, ArtifactHolderKind.CASE, other_case.case_id, "trajectory_data", campaign_id=other.campaign_id)
+    stores.artifacts.add_upload_reference(upload, START + timedelta(hours=24))
+    stores.campaigns.set_actual_state(campaign.campaign_id, CampaignActualState.STOPPED)
+    clock.advance(60)
+
+    assert stores.campaigns.delete_campaign(campaign.campaign_id) == sorted([item, scene, log, shared])
+    assert stores.campaigns.get_campaign(campaign.campaign_id) is None and stores.campaigns.config_versions(campaign.campaign_id) == []
+    assert stores.cases.get_case(case.case_id) is None and stores.cases.list_classes(campaign.campaign_id) == []
+    assert stores.results.get_run_record(run.run_record_id) is None and stores.results.count_verdicts(campaign.campaign_id) == 0
+    assert stores.campaigns.count_events(campaign.campaign_id) == 0 and stores.pipeline.pipeline_jobs_of_case(case.case_id) == []
+    remaining = {(reference.artifact_hash, reference.holder_kind) for name in (item, scene, log, shared, upload) for reference in stores.artifacts.references(name)}
+    assert remaining == {(shared, ArtifactHolderKind.CASE), (upload, ArtifactHolderKind.UPLOAD)}
+    assert stores.cases.get_case(other_case.case_id) is not None and stores.campaigns.get_campaign(other.campaign_id) is not None
+    # freed artifacts are swept once unused for the grace period; what another holder references stays
+    clock.advance(3600)
+    assert sorted(record.artifact_hash for record in stores.artifacts.list_unreferenced(3600)) == sorted([item, scene, log])

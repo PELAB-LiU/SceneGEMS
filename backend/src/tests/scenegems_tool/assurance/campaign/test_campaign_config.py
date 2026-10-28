@@ -7,15 +7,20 @@ from pathlib import Path
 import pytest
 
 from scenegems_tool.assurance.campaign.campaign_config import (
+    CHAIN,
     DEFAULT_COLREGS_CONSTANTS_FILE,
     DEFAULT_OBSTACLE_TYPES_FILE,
     DEFAULT_VESSEL_TYPES_FILE,
     MAX_SEED,
     CampaignConfig,
     CampaignConfigError,
+    CampaignStep,
+    InputArtifactKind,
+    InputConfig,
     QueueDepthCaps,
     RetentionPolicy,
     RunConfig,
+    SceneGenerationConfig,
     campaign_config_from_dict,
     case_seed,
     load_campaign_config,
@@ -24,7 +29,7 @@ from scenegems_tool.assurance.campaign.campaign_config import (
 )
 from scenegems_tool.cluster.node.jobs.simulation_kinematic_job import KinematicMode
 from scenegems_tool.persistence.canonical_json import canonical_json
-from scenegems_tool.persistence.schema import MonitorImplementation, PipelineStage, TrajectoryGeneratorImplementation
+from scenegems_tool.persistence.schema import MonitorImplementation, PipelineStage, StepKind, TrajectoryGeneratorImplementation
 
 DATA = Path(__file__).parent / "data"
 EXIT_CAMPAIGN = DATA / "exit_campaign.yaml"
@@ -72,7 +77,8 @@ def test_the_exit_campaign_sample():
 
 def test_the_queue_depth_caps_cover_every_job_stage():
     caps = QueueDepthCaps(simulate=4)
-    assert [caps.cap(stage) for stage in PipelineStage if stage != PipelineStage.VERDICT] == [16, 16, 4, 32, 8]
+    # generate_scene, monitor_scene, generate_trajectories, monitor_trajectories, simulate, monitor, calibrate; the monitors share one cap
+    assert [caps.cap(stage) for stage in PipelineStage if stage != PipelineStage.VERDICT] == [16, 32, 16, 32, 4, 32, 8]
     with pytest.raises(ValueError):
         caps.cap(PipelineStage.VERDICT)
 
@@ -101,12 +107,12 @@ def test_live_monitor_with_early_stop_and_usv_navigation_parameters():
     [
         (dict(MINIMAL, colour="blue"), "colour: Extra inputs are not permitted"),
         (_with(scope=[{"classes": ["a/b"], "quota": 1, "weight": 2}]), "scope.0.weight: Extra inputs are not permitted"),
-        (_with(scope=[]), "scope: Tuple should have at least 1 item"),
+        (_with(scope=[]), "a format 1 config needs at least one scope entry"),
         (_with(scope=[{"quota": 1}]), "a scope entry needs classes or patterns"),
         (_with(scope=[{"classes": ["a/b"], "quota": 0}]), "scope.0.quota: Input should be greater than or equal to 1"),
         (_with(scope=[{"classes": ["a/b"], "quota": 1, "failure_budget": -1}]), "scope.0.failure_budget"),
         ({"scope": MINIMAL["scope"]}, "name: Field required"),
-        (_with(format=2), "format: Input should be 1"),
+        (_with(format=3), "format: Input should be 1 or 2"),
         (_with(trajectories={"generator": "straight"}), "the straight generator needs timespan_s"),
         (_with(trajectories={"generator": "straight", "timespan_s": 60, "params": {"maxIterations": 5}}), "the straight generator takes no search parameters"),
         (_with(trajectories={"timespan_s": 60}), "timespan_s applies to the straight generator only"),
@@ -233,3 +239,114 @@ def test_the_model_is_immutable():
     with pytest.raises(Exception):
         config.name = "other"
     assert isinstance(config, CampaignConfig)
+
+
+# Format 2: steps, input, step monitors
+
+EXIT_CAMPAIGN_HASH = "663cec9bbe4fd64ec99d6c57dff036d8538c038c6ebb6be20dd2a0786a8822c5"  # as stored by campaigns created before format 2
+MINIMAL_HASH = "a56ef19560d6b58abe2cee6ab125e276f315e76dd3677e742da62967a5a6d7df"
+SHA = "ab" * 32
+SCENARIO_REF = {"sha256": SHA, "size_bytes": 120, "kind": "functional_scenario", "media_type": "text/plain; charset=utf-8"}
+SCENE_ITEM = {"name": "case 12 scene", "ref": {"sha256": SHA, "size_bytes": 900, "kind": "scene"}, "source": {"campaign_id": "c-1", "case_id": 12, "step": "scene_generation"}}
+
+
+def _format2(**sections) -> dict:
+    return dict({"format": 2, "name": "partial"}, **sections)
+
+
+def test_format_1_hashes_stay_what_they_were():
+    """Existing campaigns keep their stored hashes: a format 1 config hashes without the format 2 fields."""
+    exit_campaign = load_campaign_config(EXIT_CAMPAIGN)
+    assert exit_campaign.config_hash() == EXIT_CAMPAIGN_HASH
+    assert campaign_config_from_dict(MINIMAL).config_hash() == MINIMAL_HASH
+    stored = exit_campaign.to_json()
+    assert not {"steps", "input", "scene_generation"} & set(stored) and "monitor" not in stored["trajectories"]
+    assert campaign_config_from_dict(stored).config_hash() == EXIT_CAMPAIGN_HASH
+
+
+def test_a_format_1_config_is_the_full_chain():
+    config = load_campaign_config(EXIT_CAMPAIGN)
+    assert config.format == 1 and config.steps == CHAIN and config.first_step == CampaignStep.SCENE_GENERATION
+    assert config.input == InputConfig() and config.scene_generation.monitor == MonitorImplementation.EMPTY and config.trajectories.monitor == MonitorImplementation.EMPTY
+    assert all(config.runs_step(step) for step in CampaignStep)
+
+
+@pytest.mark.parametrize(
+    "sections, reason",
+    [
+        ({"steps": ["scene_generation"]}, "steps need format 2"),
+        ({"input": {}}, "input need format 2"),
+        ({"scene_generation": {"monitor": "post_hoc"}}, "scene_generation need format 2"),
+        ({"trajectories": {"monitor": "empty"}}, "trajectories.monitor need format 2"),
+    ],
+)
+def test_format_1_takes_no_format_2_fields(sections, reason):
+    assert reason in _reasons(_with(**sections))
+
+
+def test_a_format_2_config_with_steps_and_monitors():
+    config = campaign_config_from_dict(
+        _format2(
+            steps=["scene_generation", "trajectory_generation"],
+            scope=MINIMAL["scope"],
+            scene_generation={"monitor": "post_hoc"},
+            trajectories={"generator": "straight", "timespan_s": 600, "monitor": "post_hoc"},
+        )
+    )
+    assert config.steps == (CampaignStep.SCENE_GENERATION, CampaignStep.TRAJECTORY_GENERATION) and not config.runs_step(CampaignStep.SIMULATION)
+    assert (config.scene_generation.monitor, config.trajectories.monitor) == (MonitorImplementation.POST_HOC, MonitorImplementation.POST_HOC)
+    stored = config.to_json()
+    assert stored["steps"] == ["scene_generation", "trajectory_generation"] and stored["trajectories"]["monitor"] == "post_hoc"
+    assert campaign_config_from_dict(stored) == config and campaign_config_from_dict(stored).config_hash() == config.config_hash()
+
+
+def test_format_2_defaults():
+    config = campaign_config_from_dict(_format2(scope=MINIMAL["scope"]))
+    assert config.steps == CHAIN and config.input == InputConfig() and config.scene_generation == SceneGenerationConfig()
+    assert config.config_hash() != campaign_config_from_dict(MINIMAL).config_hash()  # the format and the new fields are hashed
+
+
+def test_the_step_kinds():
+    assert [step.step_kind for step in CHAIN] == [StepKind.SCENE, StepKind.TRAJECTORIES, StepKind.SIMULATION]
+
+
+def test_input_with_scenarios_and_items():
+    upload = {"name": "upload", "ref": {"sha256": SHA, "size_bytes": 5, "kind": "scene", "pointer": "/best_scene"}, "source": {"file": "head_on.json"}}
+    config = campaign_config_from_dict(_format2(steps=["trajectory_generation"], input={"items": [SCENE_ITEM, upload]}))
+    first, second = config.input.items
+    assert (first.ref.kind, first.ref.media_type, first.ref.pointer, first.source.case_id, first.source.step) == (InputArtifactKind.SCENE, "application/json", None, 12, CampaignStep.SCENE_GENERATION)
+    assert (second.source.file, second.source.campaign_id, second.ref.pointer) == ("head_on.json", None, "/best_scene")
+    scenarios = campaign_config_from_dict(_format2(input={"functional_scenarios": [{"name": "my_head_on", "ref": SCENARIO_REF, "quota": 3, "failure_budget": 1}]}))
+    (scenario,) = scenarios.input.functional_scenarios
+    assert (scenario.name, scenario.quota, scenario.failure_budget, scenario.ref.sha256) == ("my_head_on", 3, 1, SHA)
+
+
+@pytest.mark.parametrize(
+    "data, reason",
+    [
+        (_format2(steps=[]), "a campaign runs at least one step"),
+        (_format2(steps=["scene_generation", "simulation"]), "steps must be consecutive and in chain order"),
+        (_format2(steps=["trajectory_generation", "scene_generation"]), "steps must be consecutive and in chain order"),
+        (_format2(steps=["simulation", "simulation"]), "steps must be consecutive and in chain order"),
+        (_format2(steps=["planning"]), "steps.0: Input should be 'scene_generation', 'trajectory_generation' or 'simulation'"),
+        (_format2(scene_generation={"monitor": "live"}), "monitored post_hoc or not at all"),
+        (_format2(trajectories={"monitor": "live"}), "monitored post_hoc or not at all"),
+        (_format2(input={"functional_scenarios": [{"name": "a/b", "ref": SCENARIO_REF, "quota": 1}]}), "input.functional_scenarios.0.name: String should match pattern"),
+        (_format2(input={"functional_scenarios": [{"name": "a", "ref": dict(SCENARIO_REF, kind="scene"), "quota": 1}]}), "has kind functional_scenario, not scene"),
+        (
+            _format2(input={"functional_scenarios": [{"name": "a", "ref": SCENARIO_REF, "quota": 1}, {"name": "a", "ref": SCENARIO_REF, "quota": 2}]}),
+            "functional scenario names must be distinct: ['a']",
+        ),
+        (_format2(input={"functional_scenarios": [{"name": "a", "ref": SCENARIO_REF, "quota": 0}]}), "input.functional_scenarios.0.quota"),
+        (_format2(input={"items": [dict(SCENE_ITEM, ref={"sha256": "AB" * 32, "size_bytes": 1, "kind": "scene"})]}), "input.items.0.ref.sha256: String should match pattern"),
+        (_format2(input={"items": [dict(SCENE_ITEM, ref={"sha256": SHA, "kind": "scene"})]}), "input.items.0.ref.size_bytes: Field required"),
+        (_format2(input={"items": [dict(SCENE_ITEM, ref={"sha256": SHA, "size_bytes": 1, "kind": "frames"})]}), "input.items.0.ref.kind"),
+        (_format2(input={"items": [dict(SCENE_ITEM, ref={"sha256": SHA, "size_bytes": 1, "kind": "scene", "pointer": "best_scene"})]}), "a JSON pointer starts with '/'"),
+        (_format2(input={"items": [dict(SCENE_ITEM, source={"campaign_id": "c-1", "step": "scene_generation"})]}), "an item's source is {campaign_id, case_id, step} or {file}"),
+        (_format2(input={"items": [dict(SCENE_ITEM, source={"file": "a.json", "case_id": 3})]}), "an item comes from a file or from a campaign's output, not both"),
+        (_format2(input={"items": [dict(SCENE_ITEM, source={})]}), "an item's source is {campaign_id, case_id, step} or {file}"),
+        (_format2(input={"items": [dict(SCENE_ITEM, colour="blue")]}), "input.items.0.colour: Extra inputs are not permitted"),
+    ],
+)
+def test_invalid_format_2_configs_are_rejected_with_the_reason(data, reason):
+    assert reason in _reasons(data)

@@ -10,18 +10,24 @@ move_case raises CaseConflict and changes nothing. A final case (complete, dropp
 cancelled) keeps its state; its other fields (artifacts after retention, progress) may
 still change.
 
+The outputs of a step (list_outputs) are what the history browses: per case its scene or
+its trajectories, or per run record its state log, with the step's verdict. A case belongs
+to a step's outputs once it reached the step (its stage is the step's or a later one) or
+has the step's output. The rule is meant for steps the campaign runs: asked for a step
+before the campaign's first, it lists the cases that started later too.
+
 Every method takes an optional session (see store_session).
 """
 
-from typing import Any, Collection, Dict, List, Optional, Sequence
+from typing import Any, Collection, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from scenegems_tool.persistence.clock import Clock, utc_now
-from scenegems_tool.persistence.schema import CampaignClassRow, CampaignClassState, CaseState, PipelineStage, ScenarioCaseRow
+from scenegems_tool.persistence.schema import ArtifactRow, CampaignClassRow, CampaignClassState, CaseState, PipelineStage, RunRecordRow, ScenarioCaseRow, StepKind, VerdictRow
 from scenegems_tool.persistence.schema.artifact_tables import require_sha256_hex
-from scenegems_tool.persistence.stores.campaign_records import CaseRecord, ClassCounts, ClassRecord, NewCase
+from scenegems_tool.persistence.stores.campaign_records import CaseRecord, ClassCounts, ClassRecord, NewCase, OutputArtifact, OutputRecord
 from scenegems_tool.persistence.stores.store_session import session_scope
 
 # The class count each case state adds to; cancelled cases count in none
@@ -31,6 +37,61 @@ COUNT_COLUMN_OF_STATE = {
     CaseState.DROPPED: "dropped_count",
     CaseState.FAILED: "dropped_count",
 }
+
+# The stages of a case in chain order; a case at a stage has reached every step that starts at or before it
+STAGE_ORDER = (
+    PipelineStage.GENERATE_SCENE,
+    PipelineStage.MONITOR_SCENE,
+    PipelineStage.GENERATE_TRAJECTORIES,
+    PipelineStage.MONITOR_TRAJECTORIES,
+    PipelineStage.SIMULATE,
+    PipelineStage.MONITOR,
+    PipelineStage.CALIBRATE,
+    PipelineStage.VERDICT,
+)
+FIRST_STAGE_OF_STEP = {StepKind.SCENE: PipelineStage.GENERATE_SCENE, StepKind.TRAJECTORIES: PipelineStage.GENERATE_TRAJECTORIES, StepKind.SIMULATION: PipelineStage.SIMULATE}
+TRAJECTORIES_POINTER = "/trajectories"  # where the trajectories are in a trajectory generation's trajectory data
+STATE_LOG_ROLE = "state_log"  # the run record's artifact role of the simulated states
+
+
+def stages_from(stage: PipelineStage) -> Tuple[PipelineStage, ...]:
+    return STAGE_ORDER[STAGE_ORDER.index(stage) :]
+
+
+def output_hash_of(step: StepKind):
+    """The column of a step's output: the case's scene or trajectories, or the run record's state log."""
+    if step == StepKind.SCENE:
+        return ScenarioCaseRow.scene_artifact
+    if step == StepKind.TRAJECTORIES:
+        return ScenarioCaseRow.trajectories_artifact
+    return RunRecordRow.artifacts[STATE_LOG_ROLE].astext
+
+
+def dropped_at_step(step: StepKind):
+    """The case dropped out at the step's own stage, so the step's output is not usable."""
+    return and_(ScenarioCaseRow.state == CaseState.DROPPED, ScenarioCaseRow.stage == FIRST_STAGE_OF_STEP[step])
+
+
+def step_outputs_query(columns, campaign_id: str, step: StepKind, states: Optional[Collection[CaseState]] = None, class_id: Optional[str] = None):
+    """The rows of a step's outputs with the given columns: the campaign's cases that reached the step or have its output,
+    joined with their run records (simulation), the output's artifact record and the step's verdict (all outer joins).
+    """
+    output_hash = output_hash_of(step)
+    query = select(*columns).select_from(ScenarioCaseRow)
+    if step == StepKind.SIMULATION:
+        query = query.outerjoin(RunRecordRow, RunRecordRow.case_id == ScenarioCaseRow.id)
+        verdict_run_index, has_output = RunRecordRow.run_index, RunRecordRow.id.is_not(None)
+    else:
+        verdict_run_index, has_output = 0, output_hash.is_not(None)
+    query = query.outerjoin(ArtifactRow, ArtifactRow.hash == output_hash).outerjoin(
+        VerdictRow, and_(VerdictRow.case_id == ScenarioCaseRow.id, VerdictRow.step == step, VerdictRow.run_index == verdict_run_index)
+    )
+    query = query.where(ScenarioCaseRow.campaign_id == campaign_id, or_(ScenarioCaseRow.stage.in_(stages_from(FIRST_STAGE_OF_STEP[step])), has_output))
+    if class_id is not None:
+        query = query.where(ScenarioCaseRow.class_id == class_id)
+    if states is not None:
+        query = query.where(ScenarioCaseRow.state.in_(list(states)))
+    return query
 
 
 class UnknownClass(LookupError):
@@ -160,6 +221,9 @@ class CaseStore:
         Raises UnknownClass for a class the campaign does not have, ClassStateConflict for a
         closed one; an index taken already violates the unique constraint.
         """
+        for case in cases:
+            if case.input_artifact is not None:
+                require_sha256_hex(case.input_artifact)
         now = self._clock()
         with session_scope(self._sessions, session) as scope:
             for class_id in sorted({case.class_id for case in cases}):
@@ -176,6 +240,8 @@ class CaseStore:
                     stage=case.stage,
                     state=CaseState.ACTIVE,
                     version=1,
+                    input_artifact=case.input_artifact,
+                    input_source=None if case.input_source is None else dict(case.input_source),
                     progress={},
                     created_at=now,
                     updated_at=now,
@@ -288,7 +354,85 @@ class CaseStore:
             scope.flush()
             return CaseRecord.from_row(row)
 
+    # Outputs
+
+    def list_outputs(
+        self,
+        campaign_id: str,
+        step: StepKind,
+        states: Optional[Collection[CaseState]] = None,
+        class_id: Optional[str] = None,
+        limit: Optional[int] = 100,
+        offset: int = 0,
+        *,
+        session: Optional[Session] = None,
+    ) -> List[OutputRecord]:
+        """The outputs of one step ordered by class and case (and run and repeat): a row per case for the scene and
+        trajectory steps, a row per run record for the simulation step (one without a run for a case that has none yet).
+        Optionally of cases in some states or of one class.
+        """
+        with session_scope(self._sessions, session) as scope:
+            columns = [
+                ScenarioCaseRow,
+                output_hash_of(step).label("output_hash"),
+                ArtifactRow.size_bytes.label("size_bytes"),
+                ArtifactRow.kind.label("artifact_kind"),
+                ArtifactRow.media_type.label("media_type"),
+                VerdictRow.state.label("verdict_state"),
+                VerdictRow.failed_rules.label("failed_rules"),
+            ]
+            order = [ScenarioCaseRow.class_id, ScenarioCaseRow.case_index]
+            if step == StepKind.SIMULATION:
+                columns += [
+                    RunRecordRow.id.label("run_record_id"),
+                    RunRecordRow.run_index.label("run_index"),
+                    RunRecordRow.repeat_index.label("repeat_index"),
+                    RunRecordRow.trajectories_complete.label("run_trajectories_complete"),
+                ]
+                order += [RunRecordRow.run_index, RunRecordRow.repeat_index]
+            query = step_outputs_query(columns, campaign_id, step, states, class_id).order_by(*order).offset(offset).limit(limit)
+            return [self._output(step, values) for values in scope.execute(query.execution_options(populate_existing=True))]
+
+    def count_outputs(self, campaign_id: str, step: StepKind, states: Optional[Collection[CaseState]] = None, class_id: Optional[str] = None, *, session: Optional[Session] = None) -> int:
+        """How many rows list_outputs would return for the same filters without a page."""
+        with session_scope(self._sessions, session) as scope:
+            return scope.execute(step_outputs_query([func.count()], campaign_id, step, states, class_id)).scalar_one()
+
     # Helpers
+
+    @staticmethod
+    def _output(step: StepKind, values) -> OutputRecord:
+        case: ScenarioCaseRow = values[0]
+        output_hash = values.output_hash
+        artifact = None
+        if output_hash is not None:
+            pointer = TRAJECTORIES_POINTER if step == StepKind.TRAJECTORIES else None
+            artifact = OutputArtifact(sha256=output_hash, size_bytes=values.size_bytes, kind=values.artifact_kind, media_type=values.media_type, pointer=pointer)
+        run_record_id = run_index = repeat_index = None
+        if step == StepKind.SIMULATION:
+            run_record_id, run_index, repeat_index = values.run_record_id, values.run_index, values.repeat_index
+            valid, complete = output_hash is not None, values.run_trajectories_complete
+        else:
+            dropped_here = case.state == CaseState.DROPPED and case.stage == FIRST_STAGE_OF_STEP[step]
+            valid = output_hash is not None and not dropped_here
+            complete = case.trajectories_complete if step == StepKind.TRAJECTORIES else None
+        return OutputRecord(
+            step=step,
+            case_id=case.id,
+            case_index=case.case_index,
+            class_id=case.class_id,
+            state=case.state,
+            reason=case.reason,
+            artifact=artifact,
+            valid=valid,
+            complete=complete,
+            run_index=run_index,
+            repeat_index=repeat_index,
+            run_record_id=run_record_id,
+            verdict_state=values.verdict_state,
+            failed_rules=tuple(values.failed_rules or ()),
+            input_source=None if case.input_source is None else dict(case.input_source),
+        )
 
     @staticmethod
     def _case_filtered(query, campaign_id: str, class_id: Optional[str], states: Optional[Collection[CaseState]], stages: Optional[Collection[PipelineStage]]):
