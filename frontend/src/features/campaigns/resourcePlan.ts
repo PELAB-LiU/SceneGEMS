@@ -10,14 +10,26 @@ import { QUEUE_DEPTH_DEFAULTS } from "./wizard/wizardState";
  * selected when the campaign names nodes, and offering the job type.
  */
 
-/** The job type of each queued stage, as `assurance/pipeline/stage_graph.py` STAGE_JOB_TYPES. */
+export const KINEMATIC_JOB = "simulation.kinematic";
+export const ARDUPILOT_JOB = "simulation.ardupilot";
+
+/** The job type of each queued stage, as `assurance/pipeline/stage_graph.py` STAGE_JOB_TYPES; a run on an ArduPilot stack simulates with `simulationJobType`. */
 export const STAGE_JOB_TYPES: Record<string, string> = {
   generate_scene: "scene_generation",
   generate_trajectories: "trajectory_generation",
-  simulate: "simulation.kinematic",
+  simulate: KINEMATIC_JOB,
   monitor: "monitoring.post_hoc",
   calibrate: "calibration.deviation",
 };
+
+/** The simulation layers that run as `simulation.ardupilot` (`campaign_config.ARDUPILOT_LAYERS`). */
+const ARDUPILOT_LAYERS = ["ardupilot_sim", "gazebo"];
+
+/** The job type that simulates a run of this stack section (`stage_graph.simulation_job_type`): ArduPilot on its layers, else kinematic. */
+export function simulationJobType(stack: unknown): string {
+  const layer = typeof stack === "object" && stack !== null ? (stack as { simulation_layer?: unknown }).simulation_layer : undefined;
+  return typeof layer === "string" && ARDUPILOT_LAYERS.includes(layer) ? ARDUPILOT_JOB : KINEMATIC_JOB;
+}
 
 const CAPABILITY_LABELS: Record<string, string> = {
   scene_generation: "Scene generation",
@@ -48,6 +60,7 @@ export interface RequiredCapability {
 
 interface RunLike {
   name?: unknown;
+  stack?: unknown;
   monitor?: unknown;
   repeats?: unknown;
 }
@@ -92,11 +105,19 @@ export function requiredCapabilities(config: Record<string, unknown>): RequiredC
       reason: typeof generator === "string" ? `Every case plans its trajectories (${generator.replace(/_/g, " ")}).` : "Every case plans its trajectories.",
     });
   }
-  if (runs.length > 0) {
+  const simulators = [...new Set(runs.map((run) => simulationJobType(run.stack)))];
+  for (const jobType of simulators) {
+    const names = runs.map((run, index) => (simulationJobType(run.stack) === jobType ? runName(run, index) : null)).filter((name): name is string => name !== null);
+    const where = jobType === ARDUPILOT_JOB ? "on ArduPilot SITL or Gazebo" : "on the kinematic layer";
     required.push({
-      jobType: STAGE_JOB_TYPES.simulate,
+      jobType,
       stage: "simulate",
-      reason: runs.length === 1 ? "The run is simulated." : `Each of the ${runs.length} runs is simulated.`,
+      reason:
+        simulators.length > 1
+          ? `${listed(names)} ${names.length === 1 ? "is" : "are"} simulated ${where}.`
+          : runs.length === 1
+            ? `The run is simulated${jobType === ARDUPILOT_JOB ? ` ${where}` : ""}.`
+            : `Each of the ${runs.length} runs is simulated${jobType === ARDUPILOT_JOB ? ` ${where}` : ""}.`,
     });
   }
   const judged: string[] = [];
@@ -196,10 +217,19 @@ export function slotsByJobType(nodes: readonly NodeView[], labels: Readonly<Reco
 /**
  * The queue caps of full usage: each stage may hold as many queued jobs as the cluster has slots
  * for its job type, never fewer than the config's default. A new case starts only while every
- * stage is below its cap, so with caps below the slot count a large cluster waits for work.
+ * stage is below its cap, so with caps below the slot count a large cluster waits for work. The
+ * simulate stage counts the slots of every simulation job type the runs use (kinematic by default).
  */
-export function fullUsageQueueDepth(slots: Readonly<Record<string, number>>): Record<string, number> {
-  return Object.fromEntries(Object.entries(QUEUE_DEPTH_DEFAULTS).map(([stage, depth]) => [stage, Math.max(depth, slots[STAGE_JOB_TYPES[stage]] ?? 0)]));
+export function fullUsageQueueDepth(slots: Readonly<Record<string, number>>, simulationJobTypes: readonly string[] = [KINEMATIC_JOB]): Record<string, number> {
+  const slotsOf = (stage: string) =>
+    stage === "simulate" ? simulationJobTypes.reduce((total, jobType) => total + (slots[jobType] ?? 0), 0) : (slots[STAGE_JOB_TYPES[stage]] ?? 0);
+  return Object.fromEntries(Object.entries(QUEUE_DEPTH_DEFAULTS).map(([stage, depth]) => [stage, Math.max(depth, slotsOf(stage))]));
+}
+
+/** The simulation job types among a plan's required capabilities. */
+export function simulationJobTypesOf(required: readonly RequiredCapability[]): string[] {
+  const types = required.filter((capability) => capability.stage === "simulate").map((capability) => capability.jobType);
+  return types.length > 0 ? types : [KINEMATIC_JOB];
 }
 
 function stringsOf(value: unknown): Record<string, string> {

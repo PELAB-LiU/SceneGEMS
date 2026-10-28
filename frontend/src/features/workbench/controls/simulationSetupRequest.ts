@@ -13,6 +13,10 @@ export interface SimulationSetupRequest {
   simulatorType: GlobalSimulatorType;
   /** replay: every vessel replays; usv_navigation: USV Navigation steers the own ship, the others replay. */
   mode: "replay" | "usv_navigation";
+  /** The control layer every vessel runs on: none on the kinematic layer, ardupilot on ArduPilot SITL and Gazebo. */
+  controlLayer: "none" | "ardupilot";
+  /** SITL's pace of an ArduPilot run, the setup's real-time factor; null keeps the current one. */
+  speedup: number | null;
   windVector: [number, number, number];
   wave: { amplitude: number; period: number; steepness: number; east: number; north: number } | null;
 }

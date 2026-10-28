@@ -288,7 +288,7 @@ class CaseMachine:
         if result.get("trajectories") is None and (run.monitor == MonitorImplementation.POST_HOC or context.graph.needs_calibration(run_index)):
             raise ResultError("the simulation returned no trajectories")
         facts = job_facts(self.session, [event.job_id]).get(event.job_id)
-        tier = (result.get("run_record") or {}).get("repeatability_tier")
+        tier = (result.get("run_record") or {}).get("repeatability_tier") or context.graph.run_tier(run_index)
         record = self.stores.results.add_run_record(
             new_run_record(
                 case_id=case.case_id,
@@ -336,7 +336,7 @@ class CaseMachine:
         self._save(context, case, progress)
 
     def _calibrated(self, context: CampaignContext, case: CaseRecord, progress: CaseProgress, step: Step, event: PipelineJobEvent, result: Mapping[str, Any]) -> None:
-        calibration = new_calibration_result(result, context.stack(step.run_index), context.run_fingerprints(), context.environment(step.run_index), context.campaign_id)
+        calibration = new_calibration_result(result, context.stack(step.run_index), context.run_fingerprints(step.run_index), context.environment(step.run_index), context.campaign_id)
         stored = self.stores.calibrations.upsert(calibration, session=self.session)
         state = progress.run(step.run_index)
         state["calibrated"] = True
@@ -374,7 +374,7 @@ class CaseMachine:
             if pending is None:
                 raise ValueError(f"case {case.case_id} has no verdict for run {run_index}")
             tier = progress.run(run_index).get("tier")
-            sensitive = is_sensitive(self.stores, self.session, tier, context.stack(run_index), context.run_fingerprints())
+            sensitive = is_sensitive(self.stores, self.session, tier, context.stack(run_index), context.run_fingerprints(run_index))
             verdict = self.stores.results.add_verdict(new_verdict(case.case_id, run_index, pending, progress.run_record_id(run_index, 0), sensitive), session=self.session)
             states[run_index] = verdict.state
             run_records[run_index] = sorted(progress.run(run_index).get("run_records", {}).values())

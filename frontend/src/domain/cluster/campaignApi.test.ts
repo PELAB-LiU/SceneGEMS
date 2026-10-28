@@ -5,6 +5,7 @@ import { sampleFormat2Config, sampleScenarioConfig } from "../../test/fixtures/h
 import {
   campaignInputSchema,
   catalogClassSchema,
+  catalogStackSchema,
   catalogStacksSchema,
   createCampaign,
   getCatalogStacks,
@@ -40,9 +41,12 @@ describe("catalog schemas", () => {
 
   it("parses the stacks catalog with its groups, monitors and generators", () => {
     const parsed = catalogStacksSchema.parse(sampleCatalogStacks);
-    expect(parsed.stacks.map((stack) => stack.id)).toEqual(["kinematic.replay", "kinematic.usv_navigation"]);
+    expect(parsed.stacks.map((stack) => stack.id)).toEqual(["kinematic.replay", "kinematic.usv_navigation", "ardupilot_sim.replay"]);
     expect(parsed.stacks[1].groups[0].parameters.map((parameter) => parameter.key)).toContain("goal");
     expect(parsed.stacks[0].environment.wind).toBe("unsupported");
+    expect(parsed.stacks.map((stack) => stack.supports_early_stop)).toEqual([true, true, false]);
+    expect(parsed.stacks[2].groups[0].key).toBe("geofence");
+    expect(catalogStackSchema.parse({ ...sampleCatalogStacks.stacks[0], supports_early_stop: undefined }).supports_early_stop).toBe(true); // an older master leaves it out
     expect(parsed.trajectory_generators.find((generator) => generator.id === "straight")?.params_field).toBeNull();
     expect(parsed.monitors.find((monitor) => monitor.id === "live")?.supports_early_stop).toBe(true);
     expect(parsed.unavailable_stacks[0].reasons[0]).toMatch(/Gazebo/);

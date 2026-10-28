@@ -10,7 +10,6 @@ from scenegems_tool.assurance.campaign.campaign_inputs import input_of_class, in
 from scenegems_tool.assurance.campaign.class_catalog import ClassCatalog
 from scenegems_tool.assurance.pipeline.payload_builder import PayloadBuilder, environment_of, required_fingerprints, stack_key
 from scenegems_tool.assurance.pipeline.stage_graph import StageGraph
-from scenegems_tool.cluster.protocol.jobs import JobType
 from scenegems_tool.persistence.stores import AssuranceStores, CampaignRecord, CaseRecord
 
 
@@ -51,9 +50,10 @@ class CampaignContext:
     def environment(self, run_index: int) -> Dict:
         return environment_of(self.config, run_index)
 
-    def run_fingerprints(self) -> Dict[str, str]:
-        """The pinned fingerprints a run's simulation uses: what calibration results are keyed by."""
-        return required_fingerprints(JobType.SIMULATION_KINEMATIC, {}, self.pinned)
+    def run_fingerprints(self, run_index: int) -> Dict[str, str]:
+        """The pinned fingerprints of the images a run's simulation job uses (kinematic, or SITL and Gazebo on the ArduPilot layers): what calibration results are keyed by."""
+        job_type, images = self.graph.run_job(run_index)
+        return required_fingerprints(job_type, images, self.pinned)
 
 
 class CampaignContexts:

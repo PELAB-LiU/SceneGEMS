@@ -53,6 +53,8 @@ export interface LoadedTrajectories {
 export interface LoadedRunSetup {
   simulationLayer: string;
   mode: string | null;
+  /** SITL's requested pace of an ArduPilot run; null on the kinematic layer. */
+  speedup: number | null;
   windVector: [number, number, number];
   waves: { amplitude: number; period: number; steepness: number; direction: [number, number] } | null;
 }
@@ -164,6 +166,7 @@ export function runSetupOf(record: Pick<RunRecord, "stack" | "environment">): Lo
   return {
     simulationLayer: typeof config.simulation_layer === "string" ? config.simulation_layer : "kinematic",
     mode: typeof config.mode === "string" ? config.mode : null,
+    speedup: typeof config.speedup === "number" && Number.isFinite(config.speedup) ? config.speedup : null,
     windVector: numberTriple(record.environment.wind_vector),
     waves:
       waves && typeof waves.amplitude === "number"

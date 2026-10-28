@@ -17,7 +17,7 @@ The wizard shows only the pages the chosen steps need.
 | Input | always | What the first step starts from: catalog classes and scenario files, scenes, or trajectories |
 | Domain | always | The master's domain content or customized COLREGS constants, vessel types and obstacle types. The scene generation timeout and the low TCPA option appear only with scene generation |
 | Trajectories | trajectory generation is a step | The trajectory generator and its parameters |
-| Runs | simulation is a step | The simulation runs: stack, environment, seed, repeats and monitor |
+| Runs | simulation is a step | The simulation runs: stack (kinematic, or replay on ArduPilot SITL or Gazebo), environment, seed, repeats and monitor |
 | Resources | always | The machines the campaign may use, with the needs of the chosen steps checked against them. Only the queues of the steps that run are listed |
 | Policy | always | Retention, frames, seed and stop conditions |
 | Review | always | The generated YAML, the master's check of it and the buttons that create the campaign |

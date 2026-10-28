@@ -19,11 +19,21 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from scenegems_tool.assurance.campaign.campaign_config import CampaignConfig, CampaignConfigError, CampaignStep, InputArtifactKind, InputRef, RunConfig, StackConfig
+from scenegems_tool.assurance.campaign.campaign_config import (
+    ArdupilotStackConfig,
+    CampaignConfig,
+    CampaignConfigError,
+    CampaignStep,
+    InputArtifactKind,
+    InputRef,
+    RunConfig,
+    StackConfig,
+)
 from scenegems_tool.assurance.campaign.campaign_inputs import InputContentError, item_class_spec, scenario_class_spec
 from scenegems_tool.assurance.campaign.class_catalog import ClassCatalog
 from scenegems_tool.cluster.node.jobs.simulation_kinematic_job import KinematicMode
 from scenegems_tool.persistence.stores import ClassSpec
+from scenegems_tool.vessel_stack.asv_software.replay.replay_specs import REPLAY_MAVLINK_LOCKSTEP
 from scenegems_tool.vessel_stack.contracts.roles import AsvSoftwareId, ControlLayerId, SimulationLayerId
 from scenegems_tool.vessel_stack.contracts.vessel_stack_config import EnvironmentConfig, SimulationInstanceConfig, VesselConfig, VesselStackConfig, WaveConfig
 from scenegems_tool.vessel_stack.registry.catalog import default_resolver
@@ -71,10 +81,19 @@ class ValidatedCampaign:
 
 def vessel_stacks(stack: StackConfig) -> Dict[str, VesselStackConfig]:
     """The triple of the own ship and of the target ships for a run's stack."""
+    if isinstance(stack, ArdupilotStackConfig):
+        replay_on_ardupilot = VesselStackConfig(AsvSoftwareId.REPLAY, ControlLayerId.ARDUPILOT, SimulationLayerId(stack.simulation_layer))
+        return {OWN_SHIP: replay_on_ardupilot, TARGET_SHIP: replay_on_ardupilot}
     replay = VesselStackConfig(AsvSoftwareId.REPLAY, ControlLayerId.NONE, SimulationLayerId.KINEMATIC)
     if stack.mode == KinematicMode.USV_NAVIGATION:
         return {OWN_SHIP: VesselStackConfig(AsvSoftwareId.USV_NAVIGATION, ControlLayerId.NONE, SimulationLayerId.KINEMATIC), TARGET_SHIP: replay}
     return {OWN_SHIP: replay, TARGET_SHIP: replay}
+
+
+def _vessel_config(agent_id: str, stack: VesselStackConfig, run_stack: StackConfig) -> VesselConfig:
+    """A vessel of the run's instance; on ArduPilot the lockstep adapter is named, as simulation.ardupilot's instance names it."""
+    adapters = (REPLAY_MAVLINK_LOCKSTEP.id,) if isinstance(run_stack, ArdupilotStackConfig) else ()
+    return VesselConfig(agent_id=agent_id, stack=stack, adapter_ids=adapters)
 
 
 def _environment(run: RunConfig) -> EnvironmentConfig:
@@ -85,18 +104,32 @@ def _environment(run: RunConfig) -> EnvironmentConfig:
     return EnvironmentConfig(wind_vector=np.array(run.environment.wind_vector, dtype=float), wave=wave)
 
 
+def _calm_only(run: RunConfig) -> List[str]:
+    """Why a run on an ArduPilot stack cannot carry this environment: simulation.ardupilot runs calm water, so wind and waves would be dropped silently."""
+    environment = run.environment
+    reasons = []
+    if any(component != 0.0 for component in environment.wind_vector):
+        reasons.append("the ArduPilot stacks run without wind: simulation.ardupilot applies no environment, so environment.wind_vector must stay zero")
+    if environment.waves is not None:
+        reasons.append("the ArduPilot stacks run without waves: simulation.ardupilot applies no environment, so environment.waves must stay absent")
+    return reasons
+
+
 def resolve_run(run: RunConfig, run_index: int, resolver: StackResolver) -> Tuple[Optional[RunStacks], List[str]]:
     """The run's stacks on the resolver, as an unattended run; the reasons when it refuses them."""
+    label = f"execution.runs.{run_index}" + (f" ({run.name})" if run.name else "")
     stacks = vessel_stacks(run.stack)
+    reasons = _calm_only(run) if isinstance(run.stack, ArdupilotStackConfig) else []
     instance = SimulationInstanceConfig(
         simulation_layer=SimulationLayerId(run.stack.simulation_layer),
         environment=_environment(run),
-        vessels={agent_id: VesselConfig(agent_id=agent_id, stack=stack) for agent_id, stack in stacks.items()},
+        vessels={agent_id: _vessel_config(agent_id, stack, run.stack) for agent_id, stack in stacks.items()},
+        speedup=run.stack.speedup if isinstance(run.stack, ArdupilotStackConfig) else 1,
     )
     resolution = resolver.resolve_instance(instance, attended=False)
-    if not resolution.accepted:
-        label = f"execution.runs.{run_index}" + (f" ({run.name})" if run.name else "")
-        return None, [f"{label}: {error}" for error in resolution.errors]
+    reasons += list(resolution.errors)
+    if reasons or not resolution.accepted:
+        return None, [f"{label}: {error}" for error in reasons]
     tier = resolution.repeatability_tier
     environment = {key: value for key, value in resolution.effective_environment().items() if key != "seed"}
     return RunStacks(run_index, stacks, None if tier is None else tier.value, environment, resolution.warnings), []

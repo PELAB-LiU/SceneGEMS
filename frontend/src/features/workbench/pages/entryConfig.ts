@@ -2,7 +2,8 @@ import { stringify } from "yaml";
 import type { CampaignConfigFormat2, ConfigArtifactRef, InputItemSource, StepMonitor } from "../../../domain/cluster/campaignApi";
 import type { ArtifactRef, CampaignOrigin } from "../../../domain/cluster/schemas";
 import type { TrajectoryGenerationParamsWire } from "../../../domain/simulation/wireTypes";
-import type { KinematicRunPlan } from "../cluster/simulationJobs";
+import type { ClusterRunPlan } from "../cluster/simulationJobs";
+import { defaultReferenceGeofence, type ReferenceGeofence } from "../connection/referenceGeofence";
 import type { WorkbenchPage } from "./workbenchTarget";
 
 /**
@@ -163,12 +164,27 @@ export function trajectoryEntryConfig(input: TrajectoryEntryInput): CampaignConf
 export interface SimulationEntryInput {
   name: string;
   trajectories: EntryItem;
-  plan: KinematicRunPlan;
+  plan: ClusterRunPlan;
   colregsConstraintsContent: string;
   seed: number;
+  /** The reference area of an ArduPilot run (the Connections page's); the workbench default when absent. */
+  geofence?: ReferenceGeofence;
 }
 
-/** A kinematic run over one trajectory item, judged live by the COLREGS monitor as the workbench watches it. */
+/** The run's stack section (`campaign_config.KinematicStackConfig`, `ArdupilotStackConfig`) for the plan the workbench made of the setup. */
+export function simulationStack(plan: ClusterRunPlan, geofence: ReferenceGeofence = defaultReferenceGeofence): Record<string, unknown> {
+  if (plan.jobType === "simulation.kinematic") {
+    return { simulation_layer: "kinematic", mode: plan.mode };
+  }
+  return {
+    simulation_layer: plan.simulationLayer,
+    mode: "replay",
+    speedup: plan.speedup,
+    geofence: { latitude: geofence.latitude, longitude: geofence.longitude, radius_meters: geofence.radius_meters },
+  };
+}
+
+/** A run over one trajectory item on the kinematic layer or on ArduPilot SITL or Gazebo, judged live by the COLREGS monitor as the workbench watches it. */
 export function simulationEntryConfig(input: SimulationEntryInput): CampaignConfigFormat2 {
   return {
     format: 2,
@@ -177,7 +193,7 @@ export function simulationEntryConfig(input: SimulationEntryInput): CampaignConf
     input: { items: [input.trajectories] },
     domain: { colregs_constants: input.colregsConstraintsContent },
     execution: {
-      runs: [{ stack: { simulation_layer: "kinematic", mode: input.plan.mode }, monitor: "live" }],
+      runs: [{ stack: simulationStack(input.plan, input.geofence), monitor: "live" }],
     },
     policy: entryPolicy(input.seed),
   };

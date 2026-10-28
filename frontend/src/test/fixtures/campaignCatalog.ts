@@ -38,6 +38,7 @@ const runStackParameters = [
 ];
 
 const triple = (software: string) => ({ asv_software: software, control_layer: "none", simulation_layer: "kinematic" });
+const ardupilotTriple = { asv_software: "replay", control_layer: "ardupilot", simulation_layer: "ardupilot_sim" };
 
 export const sampleCatalogStacks = {
   stacks: [
@@ -69,6 +70,37 @@ export const sampleCatalogStacks = {
       parameters: runStackParameters,
       groups: [usvNavigationGroup],
     },
+    {
+      id: "ardupilot_sim.replay",
+      label: "Replay on ArduPilot SITL",
+      description: "Every vessel replays its generated trajectory through its own ArduPilot SITL, stepped in lockstep over MAVLink.",
+      simulation_layer: "ardupilot_sim",
+      mode: "replay",
+      available: true,
+      reasons: [],
+      repeatability_tier: "bounded",
+      supports_early_stop: false,
+      vessels: { own_ship: ardupilotTriple, target_ship: ardupilotTriple },
+      environment: { wind: "unsupported", waves: "unsupported", interactive_only: false },
+      parameters: [
+        parameter("speedup", "integer", "SITL's requested pace as a multiple of real time", { default: 1, minimum: 1 }),
+        parameter("dt", "number", "time step of the run in whole seconds", { unit: "s", exclusive_minimum: 0 }),
+        parameter("steps", "integer", "number of steps; the trajectories' timespan when absent", { minimum: 1 }),
+      ],
+      groups: [
+        {
+          key: "geofence",
+          label: "Reference area",
+          optional: true,
+          derived_when_absent: "Left out, the workbench's reference area is used.",
+          parameters: [
+            parameter("latitude", "number", "latitude of the reference area's center", { default: 57.76080082972655, unit: "deg", minimum: -90, maximum: 90 }),
+            parameter("longitude", "number", "longitude of the reference area's center", { default: 16.680965995056, unit: "deg", minimum: -180, maximum: 180 }),
+            parameter("radius_meters", "number", "radius of the reference area", { default: 20, unit: "m", exclusive_minimum: 0 }),
+          ],
+        },
+      ],
+    },
   ],
   unavailable_stacks: [
     {
@@ -89,12 +121,12 @@ export const sampleCatalogStacks = {
       design_status: "design",
       available_in_resolver: true,
       tier: "bounded",
-      reasons: ["the campaign config does not offer this stack yet: its runs use the kinematic layer"],
+      reasons: ["the campaign config does not offer this stack yet: its runs use the kinematic layer or replay on ArduPilot SITL or Gazebo"],
     },
   ],
   monitors: [
     { id: "post_hoc", label: "Post hoc", description: "A monitoring job judges the recorded run after the simulation.", job_types: ["monitoring.post_hoc"], supports_early_stop: false },
-    { id: "live", label: "Live", description: "The COLREGS monitor runs inside the simulation step by step.", job_types: ["simulation.kinematic"], supports_early_stop: true },
+    { id: "live", label: "Live", description: "The COLREGS monitor runs inside the simulation step by step.", job_types: ["simulation.kinematic", "simulation.ardupilot"], supports_early_stop: true },
     { id: "empty", label: "None", description: "Nothing is judged; every verdict is unmonitored.", job_types: [], supports_early_stop: false },
   ],
   trajectory_generators: [

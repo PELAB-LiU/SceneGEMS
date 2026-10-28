@@ -122,7 +122,7 @@ def test_live_monitor_with_early_stop_and_usv_navigation_parameters():
         (_with(execution={"runs": []}), "execution.runs: Tuple should have at least 1 item"),
         (_with(execution={"runs": [{"early_stop": True}]}), "early_stop needs the live monitor"),
         (_with(execution={"runs": [{"monitor": "eventually"}]}), "execution.runs.0.monitor"),
-        (_with(execution={"runs": [{"stack": {"simulation_layer": "gazebo"}}]}), "execution.runs.0.stack.simulation_layer: Input should be 'kinematic'"),
+        (_with(execution={"runs": [{"stack": {"simulation_layer": "mars"}}]}), "execution.runs.0.stack: Value error, unknown simulation_layer 'mars'"),
         (
             _with(execution={"runs": [{"stack": {"usv_navigation": {"goal": [1, 2], "speed": 1, "safety_radius": 1, "control_horizon": 1}}}]}),
             "usv_navigation parameters apply only to mode usv_navigation",

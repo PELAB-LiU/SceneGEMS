@@ -1,6 +1,6 @@
 import { Document, isSeq, visit, type YAMLSeq } from "yaml";
 import type { CatalogGenerator, CatalogParameter, CatalogStack, ConfigArtifactRef } from "../../../domain/cluster/campaignApi";
-import { fullUsageQueueDepth } from "../resourcePlan";
+import { ARDUPILOT_JOB, fullUsageQueueDepth, KINEMATIC_JOB } from "../resourcePlan";
 import { activeStages, firstStep, normalizeSteps, runsStep } from "./stepPlan";
 import { QUEUE_DEPTH_DEFAULTS, type InputItemDraft, type ParamValues, type RunDraft, type ScenarioFileDraft, type ScopeEntryDraft, type WizardDraft } from "./wizardState";
 
@@ -220,7 +220,12 @@ export function requiredLabelsOf(draft: WizardDraft): Record<string, string> {
 
 /** The queue caps the config gets: full usage's from the cluster's slots, else the operator's. */
 export function effectiveQueueDepth(draft: WizardDraft, catalog: BuilderCatalog): Record<string, number | null> {
-  return draft.resources.fullUsage ? fullUsageQueueDepth(catalog.slots ?? {}) : draft.resources.queueDepth;
+  if (!draft.resources.fullUsage) {
+    return draft.resources.queueDepth;
+  }
+  const layers = draft.runs.map((run) => findStack(catalog, run.stackId)?.simulation_layer);
+  const simulators = [...new Set(layers.map((layer) => (layer === "ardupilot_sim" || layer === "gazebo" ? ARDUPILOT_JOB : KINEMATIC_JOB)))];
+  return fullUsageQueueDepth(catalog.slots ?? {}, simulators.length > 0 ? simulators : [KINEMATIC_JOB]);
 }
 
 /** The queue stages the campaign's cases pass through (the others get no cap in the config). */

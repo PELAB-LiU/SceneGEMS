@@ -33,7 +33,8 @@ import { resolveInputItem, uploadedRef } from "../pages/pageInputs";
 import { PAGE_STORES, type PageInput } from "../pages/pageStore";
 import { clearPageOutput, showLoadedScene, showLoadedTrajectories } from "../pages/showEntryOutput";
 import type { WorkbenchPage, WorkbenchTarget } from "../pages/workbenchTarget";
-import type { KinematicRunPlan } from "./simulationJobs";
+import type { ReferenceGeofence } from "../connection/referenceGeofence";
+import type { ClusterRunPlan } from "./simulationJobs";
 import type { JobTypeResources } from "./workbenchResources";
 import {
   MONITORING_JOB,
@@ -59,9 +60,9 @@ import {
  * engine submits them, and reports them through the messages the workbench's stores understand
  * (`generated_scene`, `trajectory_generation_preview`, `trajectory_generation_result`), so the
  * pages read the same state whether a job is queued, running or done. When the case ended, the
- * page loads the entry's output like any target from Campaign History. ArduPilot runs stay direct
- * `simulation.ardupilot` jobs until campaigns run ArduPilot stacks (P6.6), and the monitoring of
- * scenes and trajectories loaded from files stays a direct `monitoring.post_hoc` job.
+ * page loads the entry's output like any target from Campaign History. A simulation is an entry
+ * whether it runs on the kinematic layer or on ArduPilot SITL or Gazebo (P6.6); a run with no page
+ * input and the monitoring of scenes and trajectories loaded from files stay direct jobs.
  */
 
 export interface ClusterAccess {
@@ -105,6 +106,8 @@ export interface SimulationEntryRequest {
   /** The input trajectories as a full scenario file, uploaded when the input is not on the master. */
   scenarioContent: string | null;
   colregsConstraintsContent: string;
+  /** The reference area an ArduPilot run places the local frame with (the Connections page's). */
+  geofence?: ReferenceGeofence;
 }
 
 /** What the driver needs of the workbench to show a loaded run: its input loaded for a run again, and its frames replayed. */
@@ -619,8 +622,11 @@ export class WorkbenchJobDriver {
 
   // Simulation
 
-  /** Runs the page's input trajectories as a kinematic workbench entry; its frames fill the simulation stream as the node sends them. */
-  async runSimulationEntry(plan: KinematicRunPlan, request: SimulationEntryRequest): Promise<void> {
+  /**
+   * Runs the page's input trajectories as a workbench entry on the plan's stack (kinematic, or
+   * ArduPilot SITL or Gazebo); its frames fill the simulation stream as the node sends them.
+   */
+  async runSimulationEntry(plan: ClusterRunPlan, request: SimulationEntryRequest): Promise<void> {
     this.abortTask(this.simulationJob);
     const run = useClusterRunStore.getState();
     const cluster = this.access().cluster;
@@ -642,6 +648,7 @@ export class WorkbenchJobDriver {
         plan,
         colregsConstraintsContent: request.colregsConstraintsContent,
         seed: newEntrySeed(),
+        geofence: request.geofence,
       });
       const entryId = await this.createEntry(cluster, toConfigYaml(config), config.name, WORKBENCH_ORIGIN.simulation, task);
       PAGE_STORES.simulation.getState().setStatus("running", null, entryId);
@@ -775,9 +782,9 @@ export class WorkbenchJobDriver {
   }
 
   /**
-   * Runs a simulation as one direct job (ArduPilot SITL or Gazebo, until campaigns run ArduPilot
-   * stacks) at its SITL speedup. A run that ended before the observation reached its node is
-   * monitored over its result trajectories.
+   * Runs a simulation as one direct job, for trajectories the page has no input for (the entry
+   * route needs one). A run that ended before the observation reached its node is monitored
+   * over its result trajectories.
    */
   async runSimulation(submission: JobSubmission, colregsConstraintsContent: string): Promise<void> {
     this.abortTask(this.simulationJob);
@@ -823,7 +830,7 @@ export class WorkbenchJobDriver {
     }
   }
 
-  /** Changes the pace a running kinematic simulation is watched and run at; an ArduPilot run keeps its speedup. */
+  /** Changes the pace a running kinematic simulation is watched and run at; an ArduPilot run keeps its speedup (the watch speed only thins its frames). */
   setSimulationSpeed(speed: number): void {
     useClusterRunStore.getState().update({ speed });
     this.simulationWatcher?.configure({ speed });

@@ -22,8 +22,16 @@ describe("a loaded run's setup", () => {
     expect(applied.map((draft) => draft.asvSoftware)).toEqual(["usv_navigation", "replay"]);
   });
 
+  it("replays every vessel on ArduPilot when the run was an ArduPilot run", () => {
+    const applied = applySetupRequestToDrafts(drafts, "replay", new Set(["0"]), "ardupilot");
+    expect(applied.map((draft) => [draft.asvSoftware, draft.controlLayer, draft.context])).toEqual([
+      ["replay", "ardupilot", "simulation"],
+      ["replay", "ardupilot", "simulation"],
+    ]);
+  });
+
   it("asks again with a new token for the same setup", () => {
-    const setup = { simulatorType: "Kinematic" as const, mode: "replay" as const, windVector: [0, 0, 0] as [number, number, number], wave: null };
+    const setup = { simulatorType: "Kinematic" as const, mode: "replay" as const, controlLayer: "none" as const, speedup: null, windVector: [0, 0, 0] as [number, number, number], wave: null };
     useSimulationSetupRequestStore.getState().requestSetup(setup);
     const first = useSimulationSetupRequestStore.getState().request?.token ?? 0;
     useSimulationSetupRequestStore.getState().requestSetup(setup);

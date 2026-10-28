@@ -144,6 +144,8 @@ export function checkDraft(draft: WizardDraft, catalog: BuilderCatalog | null, n
     }
     if (run.earlyStop && run.monitor !== "live") {
       reasons.push(local("runs", index, "early_stop", "Early stop needs the live monitor."));
+    } else if (run.earlyStop && stack?.supports_early_stop === false) {
+      reasons.push(local("runs", index, "early_stop", `${stack.label} runs to the end: a run on it does not stop early.`));
     }
     if (run.repeats === null || run.repeats < 1) {
       reasons.push(local("runs", index, "repeats", "Repeats is at least 1."));

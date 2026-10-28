@@ -257,11 +257,14 @@ export const SimulationInitControls = forwardRef<SimulationInitControlsHandle, P
   if (setupRequest !== null && setupRequest.token !== appliedSetupToken && vesselConnectionDrafts.length > 0) {
     setAppliedSetupToken(setupRequest.token);
     setSimulatorType(setupRequest.simulatorType);
+    if (setupRequest.speedup !== null) {
+      setSimulationSpeed(setupRequest.speedup);
+    }
     setWindEast(setupRequest.windVector[0]);
     setWindNorth(setupRequest.windVector[1]);
     setWindUp(setupRequest.windVector[2]);
     setWave(setupRequest.wave ?? { ...DEFAULT_WAVE });
-    setVesselConnectionDrafts(applySetupRequestToDrafts(vesselConnectionDrafts, setupRequest.mode, ownShipIdsOf([...animationActors, ...simulationActors])));
+    setVesselConnectionDrafts(applySetupRequestToDrafts(vesselConnectionDrafts, setupRequest.mode, ownShipIdsOf([...animationActors, ...simulationActors]), setupRequest.controlLayer));
   }
 
   useImperativeHandle(

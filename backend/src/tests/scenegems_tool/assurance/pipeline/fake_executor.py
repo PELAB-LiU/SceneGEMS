@@ -51,6 +51,7 @@ class CaseScript:
     fail: Optional[PipelineStage] = None  # this stage's job fails for good (not retryable)
     retryable_failures: Dict[PipelineStage, int] = field(default_factory=dict)  # this many retryable failures first
     tier: str = "exact"  # the repeatability tier the simulation reports
+    omit_tier: bool = False  # the simulation reports none
     stopped_early_at: Optional[int] = None  # the live monitor's early stop
 
 
@@ -201,6 +202,8 @@ def _outcomes(script: CaseScript, stage: PipelineStage = PipelineStage.MONITOR) 
 def _simulation(executor: FakeExecutor, script: CaseScript, case, payload) -> Dict[str, Any]:
     assert payload["trajectories"]["scene_list"], "the simulation gets the generated trajectories"
     digest = hashlib.sha256(f"{case.seed}:{payload['seed']}".encode("utf-8")).hexdigest()
+    if "simulation_layer" in payload:
+        return _ardupilot_simulation(script, payload, digest)
     run_record = {
         "stack": payload["mode"],
         "dt": 1.0,
@@ -210,9 +213,33 @@ def _simulation(executor: FakeExecutor, script: CaseScript, case, payload) -> Di
         "environment": {"wind_vector": [0.0, 0.0, 0.0]},
         "state_digest": digest,
     }
+    if script.omit_tier:
+        del run_record["repeatability_tier"]
     result: Dict[str, Any] = {"run_record": run_record, "steps": 10, "state_digest": digest, "trajectories": trajectories_data()}
     if payload.get("monitor") == "live":
         result["monitor"] = {"scenes": 11, "monitored_scenes": 11, "time_step": 1, **_outcomes(script, PipelineStage.SIMULATE), "stopped_early_at": script.stopped_early_at}
+    return result
+
+
+def _ardupilot_simulation(script: CaseScript, payload, digest: str) -> Dict[str, Any]:
+    """A simulation.ardupilot result as the job reports it: a bounded run record, the state digest, the observed run as trajectories and no state rows."""
+    assert payload["include_trajectories"] is True and payload["include_states"] is False and payload["geofence"]["radius_meters"] > 0
+    run_record = {
+        "stack": ["replay on ardupilot"],
+        "dt": 1.0,
+        "steps": 10,
+        "speedup": payload["speedup"],
+        "run_seed": payload["seed"],
+        "repeatability_tier": "bounded",
+        "environment": {"wind_vector": None, "waves": None},
+        "state_digest": digest,
+    }
+    if script.omit_tier:
+        del run_record["repeatability_tier"]
+    result: Dict[str, Any] = {"run_record": run_record, "steps": 10, "achieved_speedup": 1.5, "state_digest": digest, "trajectories": trajectories_data()}
+    if payload.get("monitor") == "live":
+        assert payload["colregs_constraints_content"] and "early_stop" not in payload, "the live monitor of an ArduPilot run has the COLREGS constants and no early stop"
+        result["monitor"] = {"scenes": 11, "monitored_scenes": 11, "time_step": 1, **_outcomes(script, PipelineStage.SIMULATE), "stopped_early_at": None}
     return result
 
 
@@ -230,14 +257,15 @@ def _monitoring(executor: FakeExecutor, script: CaseScript, case, payload, stage
 def _calibration(executor: FakeExecutor, script: CaseScript, case, payload) -> Dict[str, Any]:
     repeats = payload["trajectories"]
     assert all(repeat["scene_list"] for repeat in repeats)
+    exact = payload["stack"].get("simulation_layer") == "kinematic"  # an ArduPilot stack is bounded: its repeats differ
     return {
         "reference": payload["reference"],
         "stack": payload["stack"],
         "repeats": len(repeats),
-        "exact": True,
+        "exact": exact,
         "trajectory_digests": ["d" * 64] * len(repeats),
         "alignment": "scenario_time",
-        "deviation_bound_m": 0.0,
+        "deviation_bound_m": 0.0 if exact else 0.8,
         "per_vessel": {"0": {"max_m": 0.0, "rms_m": 0.0, "compared_duration_s": 10.0, "compared_samples": 11}},
         "samples_per_repeat": [11] * len(repeats),
     }
