@@ -5,11 +5,12 @@ import { sampleCatalogStacks } from "../../../test/fixtures/campaignCatalog";
 import { buildCampaignConfig, buildCampaignYaml, configToYaml, supportsEnvironment, type BuilderCatalog } from "./configBuilder";
 import { emptyDraft, emptyRun, type WizardDraft } from "./wizardState";
 
-/** `backend/src/tests/scenegems_tool/assurance/campaign/data/exit_campaign.yaml` (the Phase 4 exit campaign), as the config model reads it. */
+/** `backend/src/tests/scenegems_tool/assurance/campaign/data/exit_campaign.yaml` (the Phase 4 exit campaign) as the wizard writes it: format 2 with the whole chain. */
 const EXIT_CAMPAIGN_YAML = `
-format: 1
+format: 2
 name: phase 4 exit campaign
 description: Two- and three-vessel classes at quota 15 with USV Navigation on the kinematic layer.
+steps: [scene_generation, trajectory_generation, simulation]
 scope:
   - patterns: [2vessel_*_scenarios, 3vessel_*_scenarios]
     quota: 15
@@ -59,6 +60,7 @@ describe("buildCampaignConfig", () => {
       "format",
       "name",
       "description",
+      "steps",
       "scope",
       "domain",
       "trajectories",

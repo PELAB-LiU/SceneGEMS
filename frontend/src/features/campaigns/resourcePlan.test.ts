@@ -41,6 +41,37 @@ describe("requiredCapabilities", () => {
   });
 });
 
+describe("requiredCapabilities of a partial campaign", () => {
+  function partial(steps: string[], extra: Record<string, unknown> = {}): Record<string, unknown> {
+    return { format: 2, steps, trajectories: { generator: "monitor_driven_rrt" }, execution: { runs: [{}] }, resources: {}, ...extra };
+  }
+  const stages = (c: Record<string, unknown>) => requiredCapabilities(c).map((capability) => capability.stage);
+
+  it("needs only the jobs of the steps it runs", () => {
+    expect(stages(partial(["scene_generation"]))).toEqual(["generate_scene"]);
+    expect(stages(partial(["scene_generation", "trajectory_generation"]))).toEqual(["generate_scene", "generate_trajectories"]);
+    expect(stages(partial(["trajectory_generation", "simulation"]))).toEqual(["generate_trajectories", "simulate", "monitor"]);
+    expect(stages(partial(["simulation"]))).toEqual(["simulate", "monitor"]);
+  });
+
+  it("needs the monitoring job for a post hoc scene or trajectory monitor, and names what it judges", () => {
+    const scenes = requiredCapabilities(partial(["scene_generation"], { scene_generation: { monitor: "post_hoc" } }));
+    expect(scenes.map((capability) => capability.stage)).toEqual(["generate_scene", "monitor"]);
+    expect(scenes[1].reason).toBe("The post hoc monitor judges the generated scenes.");
+    const both = requiredCapabilities(partial(["scene_generation", "trajectory_generation", "simulation"], { scene_generation: { monitor: "post_hoc" }, trajectories: { generator: "straight", monitor: "post_hoc" } }));
+    expect(both.find((capability) => capability.stage === "monitor")?.reason).toBe("The post hoc monitor judges the generated scenes, the planned trajectories and run 1.");
+  });
+
+  it("ignores the monitor of a step it does not run and the runs of a campaign without simulation", () => {
+    expect(stages(partial(["trajectory_generation"], { scene_generation: { monitor: "post_hoc" } }))).toEqual(["generate_trajectories"]);
+    expect(stages(partial(["scene_generation", "trajectory_generation"], { execution: { runs: [{ repeats: 3 }] } }))).toEqual(["generate_scene", "generate_trajectories"]);
+  });
+
+  it("reads a stored format 1 config, which has no steps, as the whole chain", () => {
+    expect(stages({ trajectories: { generator: "straight" }, execution: { runs: [{}] }, resources: {} })).toEqual(["generate_scene", "generate_trajectories", "simulate", "monitor"]);
+  });
+});
+
 describe("nodeProblems", () => {
   it("accepts an online, current node with the labels", () => {
     expect(nodeProblems(node("a", PIPELINE), { site: "lab" })).toEqual([]);

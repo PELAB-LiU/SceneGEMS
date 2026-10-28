@@ -4,17 +4,17 @@ import { describeReason, parseReason, parseReasons, reasonsByStep, reasonsOfEntr
 describe("parseReason", () => {
   it("attaches a scope reason to its entry", () => {
     expect(parseReason("scope.0: no class 'x/y' in the catalog")).toMatchObject({
-      step: "scope",
+      step: "input",
       entry: 0,
       field: null,
       message: "no class 'x/y' in the catalog",
       source: "server",
     });
-    expect(parseReason("scope.2: class 'a/b' is in scope.0 already")).toMatchObject({ step: "scope", entry: 2, field: null });
+    expect(parseReason("scope.2: class 'a/b' is in scope.0 already")).toMatchObject({ step: "input", entry: 2, field: null });
   });
 
   it("splits the entry from the field of a validation error", () => {
-    expect(parseReason("scope.1.quota: Input should be greater than or equal to 1")).toMatchObject({ step: "scope", entry: 1, field: "quota", path: "scope.1.quota" });
+    expect(parseReason("scope.1.quota: Input should be greater than or equal to 1")).toMatchObject({ step: "input", entry: 1, field: "quota", path: "scope.1.quota" });
     expect(parseReason("scope.0.failure_budget: Input should be greater than or equal to 0")).toMatchObject({ entry: 0, field: "failure_budget" });
   });
 
@@ -48,10 +48,56 @@ describe("parseReason", () => {
     expect(parseReason("execution.runs: Tuple should have at least 1 item after validation, not 0")).toMatchObject({ step: "runs", entry: null, field: "runs" });
   });
 
-  it("puts the name and description with the scope step", () => {
-    expect(parseReason("name: String should have at least 1 character")).toMatchObject({ step: "scope", entry: null, field: "name" });
-    expect(parseReason("description: Input should be a valid string")).toMatchObject({ step: "scope", field: "description" });
-    expect(parseReason("scope: Tuple should have at least 1 item after validation, not 0")).toMatchObject({ step: "scope", entry: null, field: "scope" });
+  it("puts the name and description with the steps page and the catalog scope with the input page", () => {
+    expect(parseReason("name: String should have at least 1 character")).toMatchObject({ step: "steps", entry: null, field: "name" });
+    expect(parseReason("description: Input should be a valid string")).toMatchObject({ step: "steps", field: "description" });
+    expect(parseReason("scope: Tuple should have at least 1 item after validation, not 0")).toMatchObject({ step: "input", entry: null, field: "scope" });
+  });
+
+  it("maps the steps and the monitors of the generation steps to the steps page", () => {
+    expect(parseReason("steps: Value error, steps must be consecutive and in chain order")).toMatchObject({ step: "steps", entry: null, field: "steps" });
+    expect(parseReason("steps.1: Input should be 'scene_generation'")).toMatchObject({ step: "steps", entry: null, field: "steps" });
+    expect(parseReason("scene_generation.monitor: Value error, a generation step cannot be monitored live")).toMatchObject({
+      step: "steps",
+      entry: null,
+      field: "scene_generation.monitor",
+      message: "a generation step cannot be monitored live",
+    });
+    expect(parseReason("trajectories.monitor: Value error, a generation step cannot be monitored live")).toMatchObject({ step: "steps", field: "trajectories.monitor" });
+    // The other fields of the trajectories section stay with the trajectories page
+    expect(parseReason("trajectories.timeout_s: Input should be greater than 0")).toMatchObject({ step: "trajectories", field: "timeout_s" });
+  });
+
+  it("attaches scenario file and item reasons to their entry in their own list", () => {
+    expect(parseReason("input.functional_scenarios.1.quota: Input should be greater than or equal to 1")).toMatchObject({
+      step: "input",
+      entry: 1,
+      list: "scenario",
+      field: "quota",
+    });
+    expect(parseReason("input.functional_scenarios.0 (my_head_on): no artifact abc in the artifact store")).toMatchObject({
+      step: "input",
+      entry: 0,
+      list: "scenario",
+      field: null,
+      message: "no artifact abc in the artifact store",
+    });
+    expect(parseReason("input.items.2 (case 5 scene): a campaign that starts with simulation takes trajectory_data or trajectories items, not scene")).toMatchObject({
+      step: "input",
+      entry: 2,
+      list: "item",
+      field: null,
+    });
+    expect(parseReason("input.items: a campaign that starts with simulation needs at least one item")).toMatchObject({ step: "input", entry: null, field: "items" });
+    expect(parseReason("input: a campaign that starts with scene_generation needs scope entries or input.functional_scenarios")).toMatchObject({ step: "input", entry: null, field: "input" });
+    expect(parseReason("input.functional_scenarios: a campaign that starts with simulation takes input.items, not functional scenarios")).toMatchObject({ step: "input", field: "functional_scenarios" });
+  });
+
+  it("keeps scope entries and runs apart from scenario files and items when picking an entry", () => {
+    const reasons = parseReasons(["scope.0.quota: x", "input.functional_scenarios.0.quota: y", "input.items.0: z", "execution.runs.0: w"]);
+    expect(reasonsOfEntry(reasons, 0).map((reason) => reason.message)).toEqual(["x", "w"]);
+    expect(reasonsOfEntry(reasons, 0, "scenario").map((reason) => reason.message)).toEqual(["y"]);
+    expect(reasonsOfEntry(reasons, 0, "item").map((reason) => reason.message)).toEqual(["z"]);
   });
 
   it("sends reasons without a path, or about the whole config, to the review step", () => {
@@ -80,7 +126,7 @@ describe("grouping reasons", () => {
 
   it("lists every step, with the reasons of each", () => {
     const grouped = reasonsByStep(reasons);
-    expect(grouped.scope).toHaveLength(2);
+    expect(grouped.input).toHaveLength(2);
     expect(grouped.runs).toHaveLength(3);
     expect(grouped.review).toHaveLength(1);
     expect(grouped.domain).toEqual([]);
@@ -89,7 +135,7 @@ describe("grouping reasons", () => {
   it("picks the reasons of one entry", () => {
     expect(reasonsOfEntry(reasonsByStep(reasons).runs, 0)).toHaveLength(3);
     expect(reasonsOfEntry(reasonsByStep(reasons).runs, 1)).toHaveLength(0);
-    expect(reasonsOfEntry(reasonsByStep(reasons).scope, 1).map((reason) => reason.field)).toEqual(["quota"]);
+    expect(reasonsOfEntry(reasonsByStep(reasons).input, 1).map((reason) => reason.field)).toEqual(["quota"]);
   });
 
   it("separates the reasons a field shows from those the entry shows", () => {

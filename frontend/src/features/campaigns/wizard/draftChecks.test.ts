@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { catalogStacksSchema } from "../../../domain/cluster/campaignApi";
 import { sampleCatalogStacks } from "../../../test/fixtures/campaignCatalog";
 import type { BuilderCatalog } from "./configBuilder";
-import { checkDraft } from "./draftChecks";
-import { emptyDraft, emptyRun, type WizardDraft } from "./wizardState";
+import { checkDraft, uploadExpired } from "./draftChecks";
+import { emptyDraft, emptyRun, UPLOAD_LIFETIME_MS, type InputItemDraft, type ScenarioFileDraft, type WizardDraft } from "./wizardState";
 
 const parsed = catalogStacksSchema.parse(sampleCatalogStacks);
 const catalog: BuilderCatalog = { stacks: parsed.stacks, generators: parsed.trajectory_generators };
@@ -28,14 +28,14 @@ describe("checkDraft", () => {
   it("asks for a name and a scope", () => {
     const draft = emptyDraft();
     draft.runs = [emptyRun("kinematic.replay")];
-    expect(messages(draft)).toEqual(["scope/-/name", "scope/0/-"]);
+    expect(messages(draft)).toEqual(["steps/-/name", "input/0/-"]);
   });
 
   it("checks the quota and the failure budget of each entry", () => {
     const draft = validDraft();
     draft.scope[0].quota = 0;
     draft.scope.push({ id: "t", classes: ["a/b"], patterns: [], quota: null, failureBudget: -1 });
-    expect(messages(draft)).toEqual(["scope/0/quota", "scope/1/quota", "scope/1/failure_budget"]);
+    expect(messages(draft)).toEqual(["input/0/quota", "input/1/quota", "input/1/failure_budget"]);
   });
 
   it("parses customized domain text and flags what is not a YAML mapping", () => {
@@ -112,5 +112,108 @@ describe("checkDraft", () => {
     expect(messages(draft)).toEqual(["resources/-/nodes"]);
     draft.resources.nodes = ["node-a"];
     expect(messages(draft)).toEqual([]);
+  });
+});
+
+const NOW = 1_800_000_000_000;
+
+function scenario(overrides: Partial<ScenarioFileDraft> = {}): ScenarioFileDraft {
+  return {
+    id: "sc",
+    fileName: "a.problem",
+    name: "a",
+    ref: { sha256: "a".repeat(64), size_bytes: 10, kind: "functional_scenario" },
+    quota: 1,
+    failureBudget: 0,
+    uploadedAt: NOW - 1000,
+    ...overrides,
+  };
+}
+
+function item(overrides: Partial<InputItemDraft> = {}): InputItemDraft {
+  return {
+    id: "it",
+    name: "scene",
+    ref: { sha256: "b".repeat(64), size_bytes: 10, kind: "scene" },
+    source: { campaign_id: "c1", case_id: 1, step: "scene_generation" },
+    uploadedAt: null,
+    ...overrides,
+  };
+}
+
+function checks(draft: WizardDraft) {
+  return checkDraft(draft, catalog, NOW).map((reason) => `${reason.step}/${reason.list ?? ""}/${reason.entry ?? "-"}/${reason.field ?? "-"}`);
+}
+
+describe("checkDraft for partial campaigns", () => {
+  it("does not look at the sections of steps it does not run", () => {
+    const draft = validDraft();
+    draft.steps = ["scene_generation"];
+    draft.runs = [emptyRun("")];
+    draft.trajectories.generator = "unheard_of";
+    draft.trajectories.timeoutS = null;
+    expect(checks(draft)).toEqual([]);
+    draft.steps = ["trajectory_generation"];
+    draft.domain.sceneGenerationTimeoutS = null;
+    draft.input.items = [item()];
+    expect(checks(draft)).toEqual(["trajectories//-/generator", "trajectories//-/timeout_s"]);
+    draft.steps = ["simulation"];
+    draft.input.items = [item({ ref: { sha256: "c".repeat(64), size_bytes: 1, kind: "trajectories" } })];
+    expect(checks(draft)).toEqual(["runs//0/stack"]);
+  });
+
+  it("asks scene generation for classes or scenario files", () => {
+    const draft = validDraft();
+    draft.steps = ["scene_generation"];
+    draft.scope = [{ id: "e", classes: [], patterns: [], quota: 1, failureBudget: 0 }];
+    expect(checks(draft)).toEqual(["input//0/-"]);
+    draft.input.scenarios = [scenario()];
+    expect(checks(draft)).toEqual([]);
+  });
+
+  it("checks each scenario file's name, quota and failure budget", () => {
+    const draft = validDraft();
+    draft.steps = ["scene_generation"];
+    draft.input.scenarios = [scenario({ name: " ", quota: 0 }), scenario({ id: "b", name: "a/b", failureBudget: -1 }), scenario({ id: "c", name: "a" }), scenario({ id: "d", name: "a" })];
+    expect(checks(draft)).toEqual([
+      "input/scenario/0/name",
+      "input/scenario/0/quota",
+      "input/scenario/1/name",
+      "input/scenario/1/failure_budget",
+      "input/scenario/3/name",
+    ]);
+  });
+
+  it("asks a later start for items of the right kind", () => {
+    const draft = validDraft();
+    draft.steps = ["trajectory_generation", "simulation"];
+    expect(checks(draft)).toEqual(["input//-/items"]);
+    draft.input.items = [item({ name: "" }), item({ id: "t", ref: { sha256: "c".repeat(64), size_bytes: 1, kind: "trajectories" } })];
+    expect(checks(draft)).toEqual(["input/item/0/name", "input/item/1/ref"]);
+    draft.steps = ["simulation"];
+    draft.input.items = [item({ ref: { sha256: "c".repeat(64), size_bytes: 1, kind: "trajectory_data", pointer: "/trajectories" } })];
+    expect(checks(draft)).toEqual([]);
+  });
+
+  it("reports an upload the master has deleted by now, for a scenario file and an item", () => {
+    const draft = validDraft();
+    draft.steps = ["scene_generation"];
+    draft.input.scenarios = [scenario({ uploadedAt: NOW - UPLOAD_LIFETIME_MS })];
+    expect(checks(draft)).toEqual(["input/scenario/0/ref"]);
+    draft.steps = ["trajectory_generation"];
+    draft.input.items = [item({ uploadedAt: NOW - UPLOAD_LIFETIME_MS - 1 }), item({ id: "kept", uploadedAt: null })];
+    expect(checks(draft)).toEqual(["input/item/0/ref"]);
+  });
+
+  it("dates an upload against the clock: expired from 24 hours on, never for a history output", () => {
+    expect(uploadExpired(NOW - UPLOAD_LIFETIME_MS + 1, NOW)).toBe(false);
+    expect(uploadExpired(NOW - UPLOAD_LIFETIME_MS, NOW)).toBe(true);
+    expect(uploadExpired(null, NOW)).toBe(false);
+  });
+
+  it("puts the missing name on the steps page", () => {
+    const draft = validDraft();
+    draft.name = " ";
+    expect(checkDraft(draft, catalog, NOW)[0]).toMatchObject({ step: "steps", field: "name", source: "local" });
   });
 });
