@@ -7,7 +7,7 @@ import {
   formatNm,
 } from "../scene/encounterGeometry";
 import { RESULT_COLORS, RESULT_LABELS, ROLE_CODES, ROLE_COLORS } from "../scene/encounterPalette";
-import { renderActorName } from "./actorNameFormat";
+import { renderActorName } from "./actorNames";
 import type { PairModel, PairRule, PairVessel } from "./encounterPairs";
 import { directionWord, humanizeEnum } from "./monitorFormat";
 import "./encounterPanel.css";

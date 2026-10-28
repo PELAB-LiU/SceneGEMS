@@ -5,7 +5,7 @@ import type {
   RuleResultData,
   SituationContextData,
 } from "../../../domain/simulation/types";
-import { renderRelationId } from "./actorNameFormat";
+import { renderRelationId } from "./renderRelationId";
 import { humanizeEnum, resolveActorLabel } from "./monitorFormat";
 import { Chip, MonitorSection } from "./monitorPrimitives";
 

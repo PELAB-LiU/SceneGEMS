@@ -8,9 +8,10 @@ import { jobViewSchema, type JobView } from "./schemas";
 /**
  * A recorded run's monitor frames on demand. The master submits a `monitoring.post_hoc` job
  * with frames over the run's stored state log (`POST .../run-records/<id>/frames`, answered
- * 201 when submitted and 200 when one exists) and answers the request's state to `GET` on the
+ * 201 when submitted and 200 when one exists) and answers the newest job's state to `GET` on the
  * same path; once the job succeeded, `frames` references the frames artifact, a JSON array of
- * frames in the workbench's wire format (`serialize_monitored_frame`).
+ * frames in the workbench's wire format (`serialize_monitored_frame`). A failed or cancelled job
+ * is returned as it is until the request is made again with `?retry=true`, which submits a new job.
  */
 
 export const artifactRefSchema = z
@@ -55,8 +56,8 @@ export function isFramesBusy(phase: FramesPhase): boolean {
 
 /** What the flow needs of the master; `createFramesApi` builds it, tests use a fake. */
 export interface FramesApi {
-  /** `POST`: the request, submitted or found. */
-  submit(signal?: AbortSignal): Promise<FramesRequestView>;
+  /** `POST`: the request, submitted or found. With `retry`, a failed or cancelled job is replaced by a new one (`?retry=true`). */
+  submit(signal?: AbortSignal, options?: { retry?: boolean }): Promise<FramesRequestView>;
   /** `GET`: the request's state. */
   poll(signal?: AbortSignal): Promise<FramesRequestView>;
   /** The frames artifact's JSON. */
@@ -77,7 +78,7 @@ export function createFramesApi(
 ): FramesApi {
   const path = framesPath(campaignId, runRecordId);
   return {
-    submit: async (signal) => (await client.request("POST", path, framesRequestSchema, { signal })).data,
+    submit: async (signal, options) => (await client.request("POST", path, framesRequestSchema, { signal, query: options?.retry ? { retry: "true" } : undefined })).data,
     poll: async (signal) => (await client.request("GET", path, framesRequestSchema, { signal })).data,
     download: async (ref, signal) => {
       let response: Response;
@@ -150,6 +151,8 @@ export interface FramesFlowOptions {
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   /** The most polls before the flow gives up (a job that never starts). */
   maxPolls?: number;
+  /** Ask again after a failed or cancelled job: the master submits a new one instead of returning the old. */
+  retry?: boolean;
 }
 
 export function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -201,7 +204,7 @@ function errorPhase(error: unknown): FramesPhase {
  * `failed` or `error`), or `idle` when the signal aborted first.
  */
 export async function runFramesFlow(api: FramesApi, options: FramesFlowOptions = {}): Promise<FramesPhase> {
-  const { signal, pollMs = 1000, sleep = abortableSleep, maxPolls = 900 } = options;
+  const { signal, pollMs = 1000, sleep = abortableSleep, maxPolls = 900, retry = false } = options;
   const report = (phase: FramesPhase): FramesPhase => {
     if (!signal?.aborted) {
       options.onUpdate?.(phase);
@@ -212,7 +215,7 @@ export async function runFramesFlow(api: FramesApi, options: FramesFlowOptions =
 
   try {
     report({ phase: "submitting" });
-    let view = await api.submit(signal);
+    let view = await api.submit(signal, retry ? { retry } : undefined);
     for (let polls = 0; ; polls += 1) {
       if (stopped()) {
         return { phase: "idle" };

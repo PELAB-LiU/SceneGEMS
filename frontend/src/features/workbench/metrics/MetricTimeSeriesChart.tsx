@@ -1,13 +1,12 @@
 import {
   useCallback,
-  useEffect,
   useId,
   useMemo,
   useRef,
   useState,
   type WheelEvent as ReactWheelEvent,
 } from "react";
-import { formatRelationId, useActorNames } from "../monitor/actorNameFormat";
+import { formatRelationId, useActorNames } from "../monitor/actorNames";
 import { buildNiceScale, formatAxisTick } from "./metricChartScale";
 import {
   computeBaseDomain,
@@ -118,10 +117,13 @@ export function MetricTimeSeriesChart({
   const [viewport, setViewport] = useState<ChartDomain | null>(null);
   const [hover, setHover] = useState<{ px: number; py: number; t: number; y: number } | null>(null);
 
-  useEffect(() => {
+  // Reset zoom and hover whenever the inputs change (state adjusted during render, not in an effect).
+  const [seenInputs, setSeenInputs] = useState({ baseDomain, points, yDomain });
+  if (seenInputs.baseDomain !== baseDomain || seenInputs.points !== points || seenInputs.yDomain !== yDomain) {
+    setSeenInputs({ baseDomain, points, yDomain });
     setViewport(null);
     setHover(null);
-  }, [baseDomain, points, yDomain]);
+  }
 
   const activeDomain = viewport ?? baseDomain;
   const chart = useMemo(

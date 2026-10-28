@@ -1,5 +1,6 @@
-import { renderRelationId } from "./actorNameFormat";
-import { asRecord, DynamicFieldGrid, DynamicValue } from "./frameDataDisplay";
+import { renderRelationId } from "./renderRelationId";
+import { DynamicFieldGrid, DynamicValue } from "./frameDataDisplay";
+import { asRecord } from "./frameDataFormat";
 import { PersistedDetails, MonitorSection } from "./monitorPrimitives";
 
 /**

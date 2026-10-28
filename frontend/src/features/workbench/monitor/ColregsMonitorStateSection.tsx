@@ -1,5 +1,5 @@
 import type { ActorStaticInfo, ColregsMonitorStateData } from "../../../domain/simulation/types";
-import { renderRelationId } from "./actorNameFormat";
+import { renderRelationId } from "./renderRelationId";
 import { GeneralMonitorList } from "./GeneralMonitorList";
 import { looksLikeColregsStates } from "./monitorFieldShapes";
 import { ActorTag, BoolChip, BoolDot, MonitorSection } from "./monitorPrimitives";

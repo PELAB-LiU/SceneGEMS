@@ -50,20 +50,25 @@ export function RecordedRun({ operatorUrl, campaignId, runRecord, verdict, title
     controller.current = null;
   }, []);
 
-  const start = useCallback(() => {
-    stop();
-    const abort = new AbortController();
-    controller.current = abort;
-    void runFramesFlow(createFramesApi(client, campaignId, runRecordId), {
-      signal: abort.signal,
-      onUpdate: setPhase,
-    });
-  }, [client, campaignId, runRecordId, stop]);
+  // `retry` asks the master for a new job when the last one failed or was cancelled; a job that runs or succeeded is returned as it is.
+  const start = useCallback(
+    (retry: boolean) => {
+      stop();
+      const abort = new AbortController();
+      controller.current = abort;
+      void runFramesFlow(createFramesApi(client, campaignId, runRecordId), {
+        signal: abort.signal,
+        onUpdate: setPhase,
+        retry,
+      });
+    },
+    [client, campaignId, runRecordId, stop]
+  );
 
   // The parent keys this panel by run record, so another run starts clean; leaving ends the request.
   useEffect(() => {
     if (autoStart) {
-      start();
+      start(false);
     }
     return stop;
   }, [autoStart, start, stop]);
@@ -84,7 +89,7 @@ export function RecordedRun({ operatorUrl, campaignId, runRecord, verdict, title
             Hide
           </button>
         ) : (
-          <button type="button" className="primary-btn accent" onClick={start} disabled={busy}>
+          <button type="button" className="primary-btn accent" onClick={() => start(phase.phase !== "idle")} disabled={busy}>
             {busy ? "Working" : phase.phase === "idle" ? "Show the run" : "Try again"}
           </button>
         )}
@@ -122,9 +127,9 @@ export function RecordedRun({ operatorUrl, campaignId, runRecord, verdict, title
         <div className="results-notice results-notice--bad" role="alert">
           <strong>The monitoring job did not finish.</strong>
           <span>{phase.message}</span>
-          <span className="meta">The master keeps this request, so asking again returns the same job; the failure has to be resolved on the cluster first.</span>
-          <button type="button" onClick={start}>
-            Check the job again
+          <span className="meta">The master submits a new monitoring job when you run it again; if the cause is on the cluster, resolve it there first.</span>
+          <button type="button" onClick={() => start(true)}>
+            Run the job again
           </button>
         </div>
       )}

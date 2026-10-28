@@ -9,7 +9,7 @@ import {
 import type { SimulationFrame } from "../../../domain/simulation/types";
 import { PlaybackBar } from "../../encounter/PlaybackBar";
 import { getShipColor, getSimulationStreamColor } from "../scene/shipColors";
-import { buildActorNameMap } from "./actorNameFormat";
+import { buildActorNameMap } from "./actorNames";
 import { buildPairModels } from "./encounterPairs";
 import { useEncounterSelectionStore } from "./encounterSelectionStore";
 import { PairCardList } from "./PairCards";

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { OverlayVisibility } from "../../app/uiStore";
 import { usePersistedState } from "../../app/usePersistedState";
 import type { SimulationFrame } from "../../domain/simulation/types";
-import { buildActorNameMap } from "../workbench/monitor/actorNameFormat";
+import { buildActorNameMap } from "../workbench/monitor/actorNames";
 import { buildPairModels } from "../workbench/monitor/encounterPairs";
 import { PairCardList } from "../workbench/monitor/PairCards";
 import { RuleTimeline } from "../workbench/monitor/RuleTimeline";
