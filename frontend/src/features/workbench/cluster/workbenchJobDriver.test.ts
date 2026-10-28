@@ -1,0 +1,247 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { parse } from "yaml";
+import { OperatorApiError, type OperatorClient } from "../../../domain/cluster/operatorApi";
+import { caseDetailSchema, jobDetailSchema } from "../../../domain/cluster/schemas";
+import { useScenePlaybackStore, useTrajectoryPlaybackStore } from "../../../domain/playback/playbackStore";
+import type { ParsedServerMessage } from "../../../domain/simulation/protocol";
+import { useTrajectoryGenerationStore } from "../../../domain/trajectoryGeneration/trajectoryGenerationStore";
+import { sampleCampaignDetail, sampleCampaignSummary, sampleCase } from "../../../test/fixtures/clusterViews";
+import { useScenePageStore, useTrajectoryPageStore } from "../pages/pageStore";
+import { WorkbenchJobDriver, type ClusterAccess } from "./workbenchJobDriver";
+
+const SCENE_SHA = "a".repeat(64);
+const UPLOAD_SHA = "9".repeat(64);
+const TRAJECTORY_SHA = "b".repeat(64);
+
+function sceneOf(y: number) {
+  return {
+    _data: [
+      [
+        { id: 0, type: "OSPassengerShip", length: 30, breadth: 10.5, height: 4.5, draft: 1.8, mass: 346612, safety_radius: 120, _is_os: true, is_vessel: true },
+        { x: 0, y, speed: 14.6, heading: 1.57 },
+      ],
+    ],
+  };
+}
+const trajectoryData = { trajectories: { scene_list: [sceneOf(0), sceneOf(10)], time_step: 10 } };
+
+function jobView(jobId: string, state: string, result: Record<string, unknown> | null = null) {
+  return jobDetailSchema.parse({
+    job_id: jobId,
+    job_type: "trajectory_generation",
+    state,
+    priority: 0,
+    attempt: 1,
+    failed_attempts: 0,
+    max_attempts: 1,
+    idempotency_key: jobId,
+    requirements: { labels: {}, fingerprints: {}, min_memory_mb: 0, min_cpus: 0 },
+    lease_owner: null,
+    lease_expires_at: null,
+    submitted_at: "2026-10-28T09:00:00+00:00",
+    available_at: "2026-10-28T09:00:00+00:00",
+    started_at: null,
+    finished_at: null,
+    result,
+    error: null,
+    progress: null,
+    payload: {},
+    events: [],
+    log_lines: [],
+  });
+}
+
+function caseJob(stage: string, jobId: string, state: string) {
+  return {
+    stage,
+    run_index: null,
+    repeat_index: null,
+    idempotency_key: `${stage}-1`,
+    job_id: jobId,
+    intent: true,
+    created_at: "2026-10-28T09:00:00+00:00",
+    submitted_at: "2026-10-28T09:00:00+00:00",
+    job: { job_type: "x", state, priority: 0, attempt: 1, failed_attempts: 0, max_attempts: 1, lease_owner: null, available_at: null, started_at: null, finished_at: null, error: null },
+  };
+}
+
+/** A master that runs a trajectory generation entry: one case, its job succeeds at once, the case completes. */
+function fakeMaster() {
+  const created: { body: Record<string, unknown> }[] = [];
+  const uploads: { kind: unknown }[] = [];
+  let caseGets = 0;
+  const client = {
+    request: async (method: string, path: string, _schema: unknown, options: { body?: Record<string, unknown>; query?: Record<string, unknown> } = {}) => {
+      if (method === "POST" && path === "/cluster/artifacts") {
+        uploads.push({ kind: options.query?.kind });
+        return { data: { sha256: UPLOAD_SHA, size_bytes: 321, kind: "scene", media_type: "application/json", pointer: null }, total: null };
+      }
+      if (method === "POST" && path === "/cluster/campaigns") {
+        created.push({ body: options.body ?? {} });
+        return { data: { ...sampleCampaignDetail(), campaign_id: "wb1" }, total: null };
+      }
+      throw new Error(`unexpected ${method} ${path}`);
+    },
+    listCases: async () => ({ items: [{ ...sampleCase, campaign_id: "wb1", case_id: 1, class_id: "item/0", state: "active", stage: "generate_trajectories" }], total: 1 }),
+    getCampaign: async () => ({ ...sampleCampaignSummary, campaign_id: "wb1" }),
+    getCase: async () => {
+      caseGets += 1;
+      const done = caseGets > 2;
+      return caseDetailSchema.parse({
+        ...sampleCase,
+        campaign_id: "wb1",
+        case_id: 1,
+        class_id: "item/0",
+        stage: done ? "verdict" : "generate_trajectories",
+        state: done ? "complete" : "active",
+        scene_artifact: null,
+        trajectories_artifact: done ? TRAJECTORY_SHA : null,
+        trajectories_complete: true,
+        progress: {},
+        jobs: [caseJob("generate_trajectories", "t1", "succeeded")],
+        run_records: [],
+        verdicts: [],
+      });
+    },
+    getJob: async (jobId: string) => jobView(jobId, "succeeded", { trajectory_data: trajectoryData, valid: true, complete: true }),
+    cancelJob: async () => ({}),
+    controlCampaign: async () => ({}),
+    artifactUrl: (sha256: string) => `http://master/cluster/artifacts/${sha256}`,
+  };
+  return { client: client as unknown as OperatorClient, created, uploads };
+}
+
+function access(client: OperatorClient): ClusterAccess {
+  return { cluster: { client, channel: null }, resources: (jobType) => ({ jobType, nodes: 1, slots: 1, freeSlots: 1, blocker: null }) };
+}
+
+describe("workbench job driver", () => {
+  beforeEach(() => {
+    useTrajectoryPageStore.setState({ input: null, loaded: null, output: null, status: "idle", message: null, activeEntryId: null });
+    useScenePageStore.setState({ input: null, loaded: null, output: null, status: "idle", message: null, activeEntryId: null });
+    useTrajectoryGenerationStore.getState().reset();
+    useTrajectoryPlaybackStore.getState().clearPreviewFrames();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const sha = String(input).split("/").pop();
+        return sha === TRAJECTORY_SHA ? new Response(JSON.stringify(trajectoryData)) : new Response("missing", { status: 404 });
+      })
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("runs a trajectory generation as a workbench entry and loads its output on the page", async () => {
+    const master = fakeMaster();
+    const messages: ParsedServerMessage[] = [];
+    const driver = new WorkbenchJobDriver(() => access(master.client), (message) => messages.push(message));
+    driver.pollMs = 1;
+    driver.jobPollMs = 1;
+    const input = { label: "head_on.json", origin: "file" as const, ref: null, source: { file: "head_on.json" } };
+    await driver.generateTrajectories("r1", {
+      input,
+      scenarioContent: JSON.stringify({ best_scene: sceneOf(0) }),
+      colregsConstraintsContent: "colregs: 1\n",
+      params: { generator: "straight", timeStep: 10, timespan: 600 },
+    });
+
+    // The scene file was uploaded, and the entry made with kind and origin outside the config.
+    expect(master.uploads).toEqual([{ kind: "scene" }]);
+    expect(master.created).toHaveLength(1);
+    const body = master.created[0].body;
+    expect(body).toMatchObject({ kind: "workbench", origin: "trajectory_generation", start: true });
+    const config = parse(body.config as string);
+    expect(config).toMatchObject({
+      format: 2,
+      steps: ["trajectory_generation"],
+      input: { items: [{ name: "head_on.json", ref: { sha256: UPLOAD_SHA, kind: "scene" }, source: { file: "head_on.json" } }] },
+      trajectories: { generator: "straight", timespan_s: 600 },
+      policy: { keep_frames: true },
+    });
+    expect(Number.isInteger(config.policy.seed)).toBe(true);
+
+    // The job's result reached the page, then the entry's output was loaded as the page's latest.
+    expect(messages.some((message) => message.kind === "trajectory_generation_result")).toBe(true);
+    expect(useTrajectoryPageStore.getState().loaded).toMatchObject({ page: "trajectoryGeneration", campaignId: "wb1", caseId: 1, step: "trajectory_generation" });
+    expect(useTrajectoryPageStore.getState().output?.ref).toMatchObject({ sha256: TRAJECTORY_SHA, kind: "trajectories", pointer: "/trajectories" });
+    expect(useTrajectoryPlaybackStore.getState().frames).toHaveLength(2);
+    expect(useTrajectoryGenerationStore.getState().resultValid).toBe(true);
+  });
+
+  it("gives each entry a fresh seed", async () => {
+    const master = fakeMaster();
+    const driver = new WorkbenchJobDriver(() => access(master.client));
+    driver.pollMs = 1;
+    driver.jobPollMs = 1;
+    const request = {
+      input: { label: "scene", origin: "history" as const, ref: { sha256: SCENE_SHA, size_bytes: 5, kind: "scene", media_type: "application/json", pointer: null }, source: { campaign_id: "c1", case_id: 5, step: "scene_generation" as const } },
+      scenarioContent: null,
+      colregsConstraintsContent: "",
+      params: { generator: "straight" as const, timespan: 60 },
+    };
+    await driver.generateTrajectories("r1", request);
+    await driver.generateTrajectories("r2", request);
+    // A history output is used as it is: nothing is uploaded.
+    expect(master.uploads).toEqual([]);
+    const seeds = master.created.map(({ body }) => parse(body.config as string).policy.seed);
+    expect(seeds[0]).not.toBe(seeds[1]);
+  });
+
+  it("stops a followed workbench entry on the page's Stop, and only leaves a followed campaign", async () => {
+    const stopped: string[] = [];
+    const following = (kind: string) =>
+      ({
+        getCampaign: async () => ({ ...sampleCampaignSummary, kind }),
+        listCases: async () => ({ items: [], total: 0 }),
+        // The case waits for its job until the follow is stopped.
+        getCase: async () =>
+          caseDetailSchema.parse({ ...sampleCase, campaign_id: "wb7", case_id: 1, state: "active", stage: "simulate", progress: {}, jobs: [], run_records: [], verdicts: [] }),
+        controlCampaign: async (id: string) => {
+          stopped.push(`${kind}:${id}`);
+          return {};
+        },
+        artifactUrl: (sha256: string) => sha256,
+      }) as unknown as OperatorClient;
+    for (const kind of ["workbench", "campaign"]) {
+      const driver = new WorkbenchJobDriver(() => access(following(kind)));
+      driver.pollMs = 1;
+      const follow = driver.openTarget({ page: "simulation", campaignId: "wb7", caseId: 1, step: "simulation", live: true });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      driver.stopSimulation(true);
+      await follow;
+    }
+    expect(stopped).toEqual(["workbench:wb7"]);
+  });
+
+  it("clears a page whose loaded entry was deleted", async () => {
+    const client = {
+      getCase: async () => {
+        throw new OperatorApiError("http", "HTTP 404", "/cluster/campaigns/wb9/cases/1", 404);
+      },
+      artifactUrl: (sha256: string) => sha256,
+    } as unknown as OperatorClient;
+    useScenePlaybackStore.getState().setVisualizedScenario({ scene: { timestamp: 0, actors: [] } as never, valid: true });
+    useScenePageStore.getState().setLoaded({ page: "sceneGeneration", campaignId: "wb9", caseId: 1, step: "scene_generation" }, null);
+    const driver = new WorkbenchJobDriver(() => access(client));
+    await driver.loadTarget({ page: "sceneGeneration", campaignId: "wb9", caseId: 1, step: "scene_generation" }, { quiet: true });
+    expect(useScenePageStore.getState().loaded).toBeNull();
+    expect(useScenePageStore.getState().message).toMatch(/deleted/);
+    expect(useScenePlaybackStore.getState().latestGeneratedScene).toBeNull();
+  });
+
+  it("keeps the page as it is when a quiet refresh fails for another reason", async () => {
+    const client = {
+      getCase: async () => {
+        throw new OperatorApiError("network", "cannot reach the master", "/x");
+      },
+      artifactUrl: (sha256: string) => sha256,
+    } as unknown as OperatorClient;
+    const target = { page: "sceneGeneration" as const, campaignId: "wb9", caseId: 1, step: "scene_generation" as const };
+    useScenePageStore.getState().setLoaded(target, null);
+    await new WorkbenchJobDriver(() => access(client)).loadTarget(target, { quiet: true });
+    expect(useScenePageStore.getState().loaded).toMatchObject({ campaignId: "wb9" });
+  });
+});

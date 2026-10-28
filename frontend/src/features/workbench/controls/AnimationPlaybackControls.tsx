@@ -1,12 +1,12 @@
 import { Disclosure } from "../../../components/Disclosure";
-import { usePlaybackStore } from "../../../domain/playback/playbackStore";
+import { useShownPlayback } from "../../../domain/playback/playbackContext";
 import { handleResetPlayback } from "./resetPlayback";
 
 interface AnimationPlaybackControlsProps {
-  /** Snap the play head to a timestamp (from the owning stream controls). */
-  seek: (value: number) => void;
-  /** Set playback speed multiplier. */
-  setSpeed: (value: number) => void;
+  /** Snap the play head to a timestamp; the shown page's store when absent. */
+  seek?: (value: number) => void;
+  /** Set playback speed multiplier; the shown page's store when absent. */
+  setSpeed?: (value: number) => void;
   /** Optional label shown above the controls. */
   title?: string;
 }
@@ -14,20 +14,24 @@ interface AnimationPlaybackControlsProps {
 /**
  * The animation playback block (step / play / reset / scrub / speed) shared by the
  * Simulation control panel and the Trajectory Generation preview tab. It operates
- * purely on the preview `frames` stream in `playbackStore`.
+ * purely on the preview `frames` stream of the shown page's playback store.
  */
 export function AnimationPlaybackControls({
-  seek,
-  setSpeed,
+  seek: seekProp,
+  setSpeed: setSpeedProp,
   title = "Playback",
 }: AnimationPlaybackControlsProps) {
-  const isPlaying = usePlaybackStore((s) => s.isPlaying);
-  const speed = usePlaybackStore((s) => s.speed);
-  const currentTimestamp = usePlaybackStore((s) => s.currentTimestamp);
-  const latestTimestamp = usePlaybackStore((s) => s.latestTimestamp);
-  const setPlaying = usePlaybackStore((s) => s.setPlaying);
-  const stepBy = usePlaybackStore((s) => s.stepBy);
-  const hasFrames = usePlaybackStore((s) => s.frames.length > 0);
+  const storeSeek = useShownPlayback((s) => s.seek);
+  const storeSetSpeed = useShownPlayback((s) => s.setSpeed);
+  const seek = seekProp ?? storeSeek;
+  const setSpeed = setSpeedProp ?? storeSetSpeed;
+  const isPlaying = useShownPlayback((s) => s.isPlaying);
+  const speed = useShownPlayback((s) => s.speed);
+  const currentTimestamp = useShownPlayback((s) => s.currentTimestamp);
+  const latestTimestamp = useShownPlayback((s) => s.latestTimestamp);
+  const setPlaying = useShownPlayback((s) => s.setPlaying);
+  const stepBy = useShownPlayback((s) => s.stepBy);
+  const hasFrames = useShownPlayback((s) => s.frames.length > 0);
 
   const stepFrameCount = Math.max(1, Math.round(speed));
   const sliderMax = Math.max(1, latestTimestamp, currentTimestamp);

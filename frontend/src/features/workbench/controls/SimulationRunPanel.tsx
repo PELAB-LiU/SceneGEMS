@@ -11,6 +11,12 @@ import { RecordingControls } from "./RecordingControls";
 import { groundControlEndpointLabels } from "./simulationInitConfig";
 import { SimulationInitControls, type SimulationInitControlsHandle } from "./SimulationInitControls";
 import type { SimulationStreamControls } from "./types";
+import { useTrajectoryGenerationStore } from "../../../domain/trajectoryGeneration/trajectoryGenerationStore";
+import { PageEntryStatus } from "../pages/PageEntryStatus";
+import { PageInputPanel } from "../pages/PageInputPanel";
+import { forgetSimulationRun, inputOfFile, trajectoriesOfTrajectoryPage, trajectoryContentOfDocument } from "../pages/pageHandoff";
+import { useSimulationPageStore, type PageInput } from "../pages/pageStore";
+import { RunRecordingStatus } from "../pages/RunRecordingStatus";
 
 interface Props {
   streamControls: SimulationStreamControls;
@@ -56,6 +62,9 @@ export function SimulationRunPanel({ streamControls, colregsConstraintsContent }
   const groundControlPorts = usePlaybackStore((s) => s.groundControlPortsByAgentId);
   const previewMonitor = usePlaybackStore((s) => s.previewMonitor);
   const run = useClusterRunStore();
+  const input = useSimulationPageStore((s) => s.input);
+  const trajectoryPageHasResult = useTrajectoryGenerationStore((s) => s.resultValid && s.resultScenarioJson !== null);
+  const streamStatus = usePlaybackStore((s) => s.streamStatus);
 
   const simInitRef = useRef<SimulationInitControlsHandle>(null);
   const [setup, setSetup] = useState<SimulationSetup | null>(null);
@@ -71,8 +80,9 @@ export function SimulationRunPanel({ streamControls, colregsConstraintsContent }
   const latestTimestamp = getLatestSimulationTimestamp(simulationFrames);
 
   const blockers: string[] = [];
-  if (!simulationInitialized) {
-    blockers.push("Load a scenario first: Load for Simulation on the Scene Generation or Trajectory Generation page.");
+  // A cluster run needs only the input (a loaded run replays and runs again without the gateway session).
+  if (!simulationInitialized && !(onCluster && input !== null && simulationFrames.length > 0)) {
+    blockers.push("Choose the input trajectories above: from the Trajectory Generation page, Campaign History or a file.");
   }
   if (onCluster && resources.blocker) {
     blockers.push(resources.blocker);
@@ -85,6 +95,15 @@ export function SimulationRunPanel({ streamControls, colregsConstraintsContent }
   const canInitialize = !onCluster && blockers.length === 0;
   const canStart = !onCluster && simulationStatus === "ready to start";
   const sessionStarted = simulationStatus === "running" || simulationStatus === "starting";
+
+  // The input's trajectories go to the gateway session and the cluster run; a new input replaces the shown run.
+  const takeInput = async (picked: PageInput, content: string | null) => {
+    if (content === null) {
+      throw new Error("The file holds no trajectories (a trajectories.scene_list).");
+    }
+    forgetSimulationRun();
+    await streamControls.setSimulationInput(picked, content, { colregsConstraintsContent });
+  };
 
   const runOnCluster = () => {
     if (plan?.where !== "cluster") {
@@ -141,6 +160,26 @@ export function SimulationRunPanel({ streamControls, colregsConstraintsContent }
         </div>
       </div>
 
+      <PageInputPanel
+        title="Input trajectories"
+        input={input}
+        emptyText="none yet."
+        previousLabel="Use the trajectories of the Trajectory Generation page"
+        previousAvailable={trajectoryPageHasResult && streamStatus === "connected"}
+        onUsePrevious={async () => {
+          const handoff = trajectoriesOfTrajectoryPage();
+          if (handoff !== null) {
+            await takeInput(handoff.input, handoff.content);
+          }
+        }}
+        historyStep="trajectory_generation"
+        client={streamControls.operatorClient}
+        onPickHistory={(picked, document) => takeInput(picked, trajectoryContentOfDocument(document))}
+        onPickFile={async (file) => takeInput(inputOfFile(file.name), trajectoryContentOfDocument(JSON.parse(await file.text())))}
+        disabled={clusterActive || sessionStarted || streamStatus !== "connected"}
+      />
+      <PageEntryStatus store={useSimulationPageStore} />
+      {!onCluster ? <RunRecordingStatus /> : null}
       <p className="meta sim-run-where">
         {plan === null
           ? "Set up the vessels below."

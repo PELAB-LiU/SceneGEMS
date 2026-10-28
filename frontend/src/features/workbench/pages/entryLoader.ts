@@ -1,0 +1,268 @@
+import { readResultField } from "../../../domain/cluster/clusterJobs";
+import type { ConfigArtifactRef } from "../../../domain/cluster/campaignApi";
+import { createFramesApi, parseFrames, runFramesFlow } from "../../../domain/cluster/framesApi";
+import { OperatorApiError, type OperatorClient } from "../../../domain/cluster/operatorApi";
+import type { CaseDetail, PipelineStage, RunRecord } from "../../../domain/cluster/schemas";
+import { buildFramesFromTrajectoryData, parseScenarioFile } from "../../../domain/sceneGeneration/parseEvaluationDataFile";
+import type { EvaluationData, SimulationFrame } from "../../../domain/simulation/types";
+import { EntryEndedError, stageJob } from "./entryFollower";
+import type { PageOutput } from "./pageStore";
+import type { WorkbenchTarget } from "./workbenchTarget";
+
+/**
+ * Loads the output of an entry for its workbench page: the scene, the planned trajectories or the
+ * simulated run of one case, with the monitor's frames, fetched from the master (artifacts through
+ * `/cluster/artifacts/<sha>`, a run's frames through the frames route). A 404 means the entry (or
+ * its output) was deleted: the loader rejects with an `EntryEndedError` that is `gone`, and the
+ * page clears itself.
+ */
+
+export type LoaderClient = Pick<OperatorClient, "getCase" | "getJob" | "artifactUrl" | "request">;
+
+export interface LoaderOptions {
+  signal?: AbortSignal;
+  fetch?: typeof fetch;
+  /** A run's monitor frames; the frames route (a post-hoc job over its state log) by default. */
+  runFrames?: (client: LoaderClient, campaignId: string, runRecordId: number, signal?: AbortSignal) => Promise<SimulationFrame[]>;
+}
+
+export interface LoadedScene {
+  step: "scene_generation";
+  scene: SimulationFrame;
+  evaluationData: EvaluationData;
+  /** The scene as a scenario file holds it (EvaluationData with `best_scene`). */
+  scenario: Record<string, unknown>;
+  valid: boolean;
+  /** The scene monitor's judgment of the scene, null when the step ran unmonitored. */
+  monitorFrame: SimulationFrame | null;
+  output: PageOutput;
+}
+
+export interface LoadedTrajectories {
+  step: "trajectory_generation";
+  /** The TrajectoryData document (`trajectories`, `monitor_frames`). */
+  trajectoryData: Record<string, unknown>;
+  /** The monitor's frames over the planned trajectories, or the planned scenes when it ran unmonitored. */
+  frames: SimulationFrame[];
+  valid: boolean;
+  complete: boolean | null;
+  output: PageOutput;
+}
+
+/** What the simulation page fills its setup from, so the run can run again. */
+export interface LoadedRunSetup {
+  simulationLayer: string;
+  mode: string | null;
+  windVector: [number, number, number];
+  waves: { amplitude: number; period: number; steepness: number; direction: [number, number] } | null;
+}
+
+export interface LoadedRun {
+  step: "simulation";
+  runRecord: RunRecord;
+  /** The run's input as a full trajectory scenario (`{trajectories: ...}`), null when it is not kept. */
+  scenario: Record<string, unknown> | null;
+  frames: SimulationFrame[];
+  setup: LoadedRunSetup;
+  /** The run's input trajectories, as the page's input to run it again. */
+  input: PageOutput | null;
+}
+
+export type LoadedOutput = LoadedScene | LoadedTrajectories | LoadedRun;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function gone<T>(call: () => Promise<T>, what: string): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    if (error instanceof OperatorApiError && error.status === 404) {
+      throw new EntryEndedError(`${what} was deleted.`, true);
+    }
+    throw error;
+  }
+}
+
+/** An artifact's JSON and its size in bytes. A missing artifact answers 404 (`OperatorApiError`). */
+export async function fetchArtifact(client: Pick<OperatorClient, "artifactUrl">, sha256: string, options: Pick<LoaderOptions, "signal" | "fetch"> = {}) {
+  const fetchImpl = options.fetch ?? ((input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init));
+  const path = `/cluster/artifacts/${sha256}`;
+  let response: Response;
+  try {
+    response = await fetchImpl(client.artifactUrl(sha256), { headers: { Accept: "application/json" }, signal: options.signal });
+  } catch (error) {
+    if (options.signal?.aborted) {
+      throw error;
+    }
+    throw new OperatorApiError("network", `cannot download the output (${error instanceof Error ? error.message : String(error)})`, path);
+  }
+  if (!response.ok) {
+    throw new OperatorApiError("http", `the output artifact answered HTTP ${response.status}`, path, response.status);
+  }
+  const text = await response.text();
+  try {
+    return { document: JSON.parse(text) as unknown, sizeBytes: new TextEncoder().encode(text).length };
+  } catch (error) {
+    throw new OperatorApiError("schema", `the output artifact is not JSON (${error instanceof Error ? error.message : String(error)})`, path, response.status);
+  }
+}
+
+function sourceOf(target: WorkbenchTarget) {
+  return { campaign_id: target.campaignId, case_id: target.caseId, step: target.step };
+}
+
+function ref(sha256: string, sizeBytes: number, kind: string, pointer: string | null = null): ConfigArtifactRef {
+  return { sha256, size_bytes: sizeBytes, kind, media_type: "application/json", pointer };
+}
+
+/** The monitor frames of a stage's post-hoc job (kept with `policy.keep_frames`), empty when it has none. */
+export async function stageMonitorFrames(client: LoaderClient, detail: CaseDetail, stage: PipelineStage, options: LoaderOptions = {}): Promise<SimulationFrame[]> {
+  const job = stageJob(detail, stage);
+  if (job === null || job.job_id === null || job.job?.state !== "succeeded") {
+    return [];
+  }
+  const view = await client.getJob(job.job_id, options.signal);
+  const result = isRecord(view.result) ? view.result : {};
+  if (result.frames === undefined || result.frames === null) {
+    return [];
+  }
+  return parseFrames(await readResultField(client, result.frames, { signal: options.signal, fetch: options.fetch }));
+}
+
+/** A run's frames through the frames route: the master's post-hoc job over the stored state log. */
+export async function framesOfRun(client: LoaderClient, campaignId: string, runRecordId: number, signal?: AbortSignal): Promise<SimulationFrame[]> {
+  const phase = await runFramesFlow(createFramesApi(client, campaignId, runRecordId), { signal });
+  if (phase.phase === "done") {
+    return phase.frames;
+  }
+  if (phase.phase === "idle") {
+    throw new DOMException("Loading the run was stopped.", "AbortError");
+  }
+  throw new Error(`The run's frames are not available: ${"message" in phase ? phase.message : phase.phase}`);
+}
+
+/** A full trajectory scenario of a planned or recorded trajectory document, for the gateway and the cluster runs. */
+export function trajectoryScenarioOf(document: unknown): Record<string, unknown> | null {
+  if (!isRecord(document)) {
+    return null;
+  }
+  if (isRecord(document.trajectories) && Array.isArray(document.trajectories.scene_list)) {
+    return document;
+  }
+  return Array.isArray(document.scene_list) ? { trajectories: document } : null;
+}
+
+function numberTriple(value: unknown): [number, number, number] {
+  return Array.isArray(value) && value.length === 3 && value.every((n) => typeof n === "number") ? (value as [number, number, number]) : [0, 0, 0];
+}
+
+export function runSetupOf(record: Pick<RunRecord, "stack" | "environment">): LoadedRunSetup {
+  const config = isRecord(record.stack.config) ? record.stack.config : record.stack;
+  const waves = isRecord(record.environment.waves) ? record.environment.waves : null;
+  return {
+    simulationLayer: typeof config.simulation_layer === "string" ? config.simulation_layer : "kinematic",
+    mode: typeof config.mode === "string" ? config.mode : null,
+    windVector: numberTriple(record.environment.wind_vector),
+    waves:
+      waves && typeof waves.amplitude === "number"
+        ? {
+            amplitude: waves.amplitude,
+            period: typeof waves.period === "number" ? waves.period : 0,
+            steepness: typeof waves.steepness === "number" ? waves.steepness : 0,
+            direction: Array.isArray(waves.direction) && waves.direction.length === 2 ? (waves.direction as [number, number]) : [0, 0],
+          }
+        : null,
+  };
+}
+
+async function loadScene(client: LoaderClient, target: WorkbenchTarget, detail: CaseDetail, options: LoaderOptions): Promise<LoadedScene> {
+  if (detail.scene_artifact === null) {
+    throw new EntryEndedError(detail.state === "active" ? "The scene is not generated yet." : "The case has no scene.", false);
+  }
+  const { document, sizeBytes } = await gone(() => fetchArtifact(client, detail.scene_artifact as string, options), "The scene");
+  if (!isRecord(document)) {
+    throw new Error("The scene artifact is not a scenario.");
+  }
+  const parsed = parseScenarioFile(JSON.stringify(document));
+  const frames = await stageMonitorFrames(client, detail, "monitor_scene", options).catch(() => []);
+  return {
+    step: "scene_generation",
+    scene: parsed.scene,
+    evaluationData: parsed.evaluationData,
+    scenario: document,
+    valid: !(detail.state === "dropped" && detail.stage === "generate_scene"),
+    monitorFrame: frames[0] ?? null,
+    output: { label: `Scene of case ${target.caseId} of entry ${target.campaignId}`, ref: ref(detail.scene_artifact, sizeBytes, "scene"), source: sourceOf(target) },
+  };
+}
+
+async function loadTrajectories(client: LoaderClient, target: WorkbenchTarget, detail: CaseDetail, options: LoaderOptions): Promise<LoadedTrajectories> {
+  if (detail.trajectories_artifact === null) {
+    throw new EntryEndedError(detail.state === "active" ? "The trajectories are not planned yet." : "The case has no trajectories.", false);
+  }
+  const { document, sizeBytes } = await gone(() => fetchArtifact(client, detail.trajectories_artifact as string, options), "The trajectories");
+  const scenario = trajectoryScenarioOf(document);
+  if (scenario === null) {
+    throw new Error("The trajectory artifact holds no trajectories.");
+  }
+  const planned = buildFramesFromTrajectoryData(scenario);
+  const monitored = await stageMonitorFrames(client, detail, "monitor_trajectories", options).catch(() => []);
+  return {
+    step: "trajectory_generation",
+    trajectoryData: scenario,
+    frames: monitored.length > 0 ? monitored : planned,
+    valid: planned.length > 0,
+    complete: detail.trajectories_complete,
+    output: {
+      label: `Trajectories of case ${target.caseId} of entry ${target.campaignId}`,
+      ref: ref(detail.trajectories_artifact, sizeBytes, "trajectories", scenario === document ? "/trajectories" : null),
+      source: sourceOf(target),
+    },
+  };
+}
+
+async function loadRun(client: LoaderClient, target: WorkbenchTarget, detail: CaseDetail, options: LoaderOptions): Promise<LoadedRun> {
+  const runRecord = (target.runRecordId === undefined ? detail.run_records[0] : detail.run_records.find((record) => record.run_record_id === target.runRecordId)) ?? null;
+  if (runRecord === null) {
+    throw new EntryEndedError(detail.state === "active" ? "The run has not ended yet." : "The case has no recorded run.", target.runRecordId !== undefined && detail.state !== "active");
+  }
+  const runFrames = options.runFrames ?? framesOfRun;
+  const frames = await gone(() => runFrames(client, target.campaignId, runRecord.run_record_id, options.signal), "The run");
+  const inputSha = runRecord.artifacts.trajectories ?? null;
+  let scenario: Record<string, unknown> | null = null;
+  let input: PageOutput | null = null;
+  if (inputSha) {
+    try {
+      const { document, sizeBytes } = await fetchArtifact(client, inputSha, options);
+      scenario = trajectoryScenarioOf(document);
+      if (scenario !== null) {
+        input = {
+          label: `Trajectories of the run in case ${target.caseId} of entry ${target.campaignId}`,
+          ref: ref(inputSha, sizeBytes, "trajectories", scenario === document ? "/trajectories" : null),
+          source: sourceOf(target),
+        };
+      }
+    } catch (error) {
+      // A run whose input was freed still replays; it only cannot run again.
+      if (!(error instanceof OperatorApiError && error.status === 404)) {
+        throw error;
+      }
+    }
+  }
+  return { step: "simulation", runRecord, scenario, frames, setup: runSetupOf(runRecord), input };
+}
+
+/** Fetches the output a target names. Rejects with `EntryEndedError` (`gone`) when the entry or output was deleted. */
+export async function loadEntryOutput(client: LoaderClient, target: WorkbenchTarget, options: LoaderOptions = {}): Promise<LoadedOutput> {
+  const detail = await gone(() => client.getCase(target.campaignId, target.caseId, options.signal), "The entry");
+  switch (target.step) {
+    case "scene_generation":
+      return loadScene(client, target, detail, options);
+    case "trajectory_generation":
+      return loadTrajectories(client, target, detail, options);
+    case "simulation":
+      return loadRun(client, target, detail, options);
+  }
+}
