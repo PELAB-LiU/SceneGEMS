@@ -2,23 +2,24 @@ import { Fragment } from "react";
 import type { TrajectoryStream } from "../../../app/uiStore";
 import type { SimulationFrame } from "../../../domain/simulation/types";
 import { getActorPanelDotColor } from "../scene/shipColors";
-import { ActorNamesProvider, renderActorName } from "./actorNameFormat";
+import { ActorNamesProvider } from "./actorNameFormat";
+import { renderActorName } from "./actorNames";
 import { ColregsMonitorStateSection } from "./ColregsMonitorStateSection";
 import { EncounterSummaryCard } from "./EncounterSummaryCard";
+import { DynamicFieldGrid, DynamicValue } from "./frameDataDisplay";
 import {
   ACTOR_FIELD_PRIORITY,
   asRecord,
-  DynamicFieldGrid,
-  DynamicValue,
   FRAME_STRUCTURE_KEYS,
   humanizeKey,
   KINEMATIC_FIELD_PRIORITY,
-} from "./frameDataDisplay";
+} from "./frameDataFormat";
 import { ManeuversSection } from "./ManeuversSection";
 import { MonitorMetricsSection } from "./MonitorMetricsSection";
 import { RuleResultsPanel } from "./RuleResultsPanel";
 import { SituationContextsSection } from "./SituationContextsSection";
-import { monitorSectionKey, PersistedDetails } from "./monitorPrimitives";
+import { monitorSectionKey } from "./monitorSectionKey";
+import { PersistedDetails } from "./monitorPrimitives";
 import { useMonitorFrameForKind } from "./useMonitorFrame";
 
 interface BasicActorInfoPanelProps {

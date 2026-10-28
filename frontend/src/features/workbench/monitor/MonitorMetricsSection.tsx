@@ -1,4 +1,4 @@
-import { renderRelationId } from "./actorNameFormat";
+import { renderRelationId } from "./renderRelationId";
 import { GeneralMonitorObject } from "./GeneralMonitorList";
 import { fmtNum, type Tone } from "./monitorFormat";
 import { looksLikeMetrics } from "./monitorFieldShapes";

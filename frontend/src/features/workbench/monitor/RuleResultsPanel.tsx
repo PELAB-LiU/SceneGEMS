@@ -5,7 +5,8 @@ import type {
   RuleResultData,
   SituationContextData,
 } from "../../../domain/simulation/types";
-import { renderActorName, renderRelationId } from "./actorNameFormat";
+import { renderActorName } from "./actorNames";
+import { renderRelationId } from "./renderRelationId";
 import { PersistedDetails } from "./monitorPrimitives";
 import { sortEvaluations } from "./ruleEvaluationOrder";
 

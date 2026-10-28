@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import type { SimulationFrame } from "../../../domain/simulation/types";
-import { ActorNamesProvider, buildActorNameMap, formatRelationId } from "../monitor/actorNameFormat";
+import { ActorNamesProvider } from "../monitor/actorNameFormat";
+import { buildActorNameMap, formatRelationId } from "../monitor/actorNames";
 import { MetricTimeSeriesChart } from "./MetricTimeSeriesChart";
 import { collectRelationIds } from "./metricsRelations";
 

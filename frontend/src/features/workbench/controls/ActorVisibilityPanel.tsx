@@ -1,7 +1,8 @@
 import type { TrajectoryStream } from "../../../app/uiStore";
 import { useUiStore } from "../../../app/uiStore";
 import { usePlaybackStore } from "../../../domain/playback/playbackStore";
-import { monitorSectionKey, PersistedDetails } from "../monitor/monitorPrimitives";
+import { monitorSectionKey } from "../monitor/monitorSectionKey";
+import { PersistedDetails } from "../monitor/monitorPrimitives";
 
 interface ActorVisibilityPanelProps {
   /** Which trajectory column this panel belongs to. */
