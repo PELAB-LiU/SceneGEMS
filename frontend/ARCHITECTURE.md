@@ -11,7 +11,7 @@ src/
   domain/        Simulation protocol, WebSocket client, playback store; cluster/ has the
                  cluster list, the operator API client, the live channel client and stores
   features/      React UI by section: workbench/ (connection, controls, metrics, monitor,
-                 scene), cluster/, capabilities/, campaigns/, observe/ (becoming history/), results/
+                 scene), cluster/ (with instances/), capabilities/, campaigns/, history/, results/
   language/      Lezer grammar for .problem files
 ```
 
@@ -33,8 +33,7 @@ control panel.
 
 The left pane has six sections: Workbench (with the views Domain Configuration, Scene
 Generation, Trajectory Generation, Simulation and Connections), Cluster, Capabilities, Campaigns,
-Campaign History (section id `history`, until its page replaces Observe it still shows the Observe
-section) and Results. `uiStore` keeps `section` and `workbenchView` (persisted, v6). Other sections
+Campaign History (section id `history`) and Results. `uiStore` keeps `section` and `workbenchView` (persisted, v6). Other sections
 open an output on a workbench page through `openInWorkbench(target)` in
 `features/workbench/pages/workbenchTarget.ts`, which shows the page and queues the target for it
 (`takeTarget(page)`). The workbench stays mounted while another section is shown, so its gateway socket and state carry on. The left
@@ -52,6 +51,22 @@ keeps the list (name and operator URL, per browser). A master's operator API lis
   reference-counted topic subscriptions, snapshot then updates with per-topic `seq`, reconnect
   with backoff and resubscribe, ping. `liveTopics.ts` has the reducers per topic.
 - `useLiveTopic(topic, reducer)`: a topic of the selected cluster as React state.
+
+## Campaign History and the Cluster page's instances
+
+`features/history/` is Campaign History: every entry of the selected cluster (campaigns and
+workbench runs) from `listHistory` (`domain/cluster/historyApi.ts`), kept live by the `campaigns`
+topic (`campaignsReducer` in `liveTopics.ts`: pushed rows patch the page, a new, deleted or
+filtered-out entry has the page read again; polling while the topic is not live). An entry's page
+follows `campaign:<id>` (`useCampaignFeed.ts`) and has a tab per executed step with its outputs
+(`listOutputs`); "Open in workbench" and "Watch live" call `openInWorkbench(outputTarget(...))`.
+`historyStore.ts` keeps the open entry and step per browser; other sections open an entry with
+`showHistoryEntry(id)`. The Campaigns section is the wizard only.
+
+`features/cluster/instances/` is the instance browser of a node (pools and leased jobs, from
+`domain/cluster/observableInstances.ts`) with the viewers; a node card's "Instances" opens it.
+A viewer subscribes to its `instance:` topic only while it is shown. `domain/cluster/observeFrames.ts`
+turns instance samples and frames into encounter view frames (the workbench's job driver uses it too).
 
 ## Capabilities
 

@@ -9,7 +9,7 @@ import { usePlaybackStore } from "../domain/playback/playbackStore";
 import { ClusterSection } from "../features/cluster/ClusterSection";
 import { CampaignsSection } from "../features/campaigns/CampaignsSection";
 import { CapabilitiesSection } from "../features/capabilities/CapabilitiesSection";
-import { ObserveSection } from "../features/observe/ObserveSection";
+import { HistorySection } from "../features/history/HistorySection";
 import { ResultsSection } from "../features/results/ResultsSection";
 
 const APP_TITLE = "SceneGEMS";
@@ -72,7 +72,7 @@ export function AppShell() {
         {section === "cluster" && <ClusterSection />}
         {section === "capabilities" && <CapabilitiesSection />}
         {section === "campaigns" && <CampaignsSection />}
-        {section === "history" && <ObserveSection />}
+        {section === "history" && <HistorySection />}
         {section === "results" && <ResultsSection />}
       </div>
       <div ref={setErrorSlot} className="app-error-slot" />

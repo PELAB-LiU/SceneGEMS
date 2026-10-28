@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   campaignDetailSchema,
   campaignEventSchema,
+  campaignRowSchema,
   campaignSummarySchema,
   classViewSchema,
   jobViewSchema,
@@ -10,6 +11,7 @@ import {
   nodeViewSchema,
   type CampaignDetail,
   type CampaignEvent,
+  type CampaignRow,
   type CampaignTotals,
   type ClassView,
   type JobView,
@@ -140,6 +142,40 @@ export const campaignReducer: LiveTopicReducer<CampaignTopicState> = {
       }
     }
     return { ...state, detail: { ...state.detail, classes, totals: campaignTotals(classes) } };
+  },
+};
+
+// campaigns (Phase 6, design doc 6.5)
+
+export const campaignsUpdateSchema = z.union([z.object({ campaign: campaignRowSchema }), z.object({ deleted: z.string() })]);
+export type CampaignsUpdate = z.infer<typeof campaignsUpdateSchema>;
+
+export interface CampaignsTopicState {
+  /** The latest pushed row of each entry changed since the snapshot. */
+  rows: Record<string, CampaignRow>;
+  /** Entries deleted since the snapshot. */
+  deleted: string[];
+  /** The latest update, so a consumer can tell whether its page must be read again. */
+  last: CampaignsUpdate | null;
+}
+
+const CAMPAIGNS_KEPT = 500;
+
+/** The `campaigns` topic: the snapshot carries nothing (the list is read from the route), updates are rows and deletions. */
+export const campaignsReducer: LiveTopicReducer<CampaignsTopicState> = {
+  snapshot: () => ({ rows: {}, deleted: [], last: null }),
+  update: (state, data) => {
+    const update = campaignsUpdateSchema.parse(data);
+    if ("campaign" in update) {
+      const id = update.campaign.campaign_id;
+      const { [id]: _previous, ...others } = state.rows;
+      void _previous;
+      const kept = Object.entries(others).slice(-(CAMPAIGNS_KEPT - 1));
+      return { rows: { ...Object.fromEntries(kept), [id]: update.campaign }, deleted: state.deleted.filter((entry) => entry !== id), last: update };
+    }
+    const { [update.deleted]: _removed, ...rows } = state.rows;
+    void _removed;
+    return { rows, deleted: [...state.deleted.filter((entry) => entry !== update.deleted), update.deleted].slice(-CAMPAIGNS_KEPT), last: update };
   },
 };
 

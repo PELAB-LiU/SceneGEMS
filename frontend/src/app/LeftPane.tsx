@@ -163,10 +163,10 @@ const WORKBENCH_ITEMS: NavEntry<WorkbenchView>[] = [
 ];
 
 const CLUSTER_ITEMS: NavEntry<AppSection>[] = [
-  { id: "cluster", label: "Cluster", hint: "Machines and their status", Icon: ClusterIcon },
+  { id: "cluster", label: "Cluster", hint: "Machines and what they run", Icon: ClusterIcon },
   { id: "capabilities", label: "Capabilities", hint: "What the system can run", Icon: CapabilitiesIcon },
-  { id: "campaigns", label: "Campaigns", hint: "Run many simulations", Icon: CampaignsIcon },
-  { id: "history", label: "Campaign History", hint: "Past and running campaigns and runs", Icon: HistoryIcon },
+  { id: "campaigns", label: "Campaigns", hint: "Define and start a campaign", Icon: CampaignsIcon },
+  { id: "history", label: "Campaign History", hint: "Campaigns and runs, with outputs", Icon: HistoryIcon },
   { id: "results", label: "Results", hint: "Review finished runs", Icon: ResultsIcon },
 ];
 

@@ -11,7 +11,7 @@ interface SectionFrameProps {
   children: ReactNode;
 }
 
-/** The frame of a cluster section (Cluster, Campaigns, Observe, Results): header with the selected cluster, scrolling body. */
+/** The frame of a cluster section (Cluster, Campaigns, Campaign History, Results): header with the selected cluster, scrolling body. */
 export function SectionFrame({ title, subtitle, actions, children }: SectionFrameProps) {
   const cluster = useSelectedCluster();
   return (

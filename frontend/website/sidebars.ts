@@ -18,6 +18,16 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Cluster sections',
+      collapsed: false,
+      items: [
+        'cluster',
+        'campaigns',
+        'campaign-history',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Visualization & controls',
       collapsed: false,
       items: [

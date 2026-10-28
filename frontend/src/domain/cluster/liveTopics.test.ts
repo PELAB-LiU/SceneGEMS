@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { sampleCampaignDetail, sampleClass, sampleCampaignSummary, sampleEvent, sampleJob, sampleLogLine, sampleNode } from "../../test/fixtures/clusterViews";
+import { sampleCampaignRow, sampleWorkbenchRow } from "../../test/fixtures/historyViews";
 import {
   campaignReducer,
+  campaignsReducer,
   instanceReducer,
   JOB_LOG_LINES_KEPT,
   jobReducer,
@@ -10,6 +12,22 @@ import {
 } from "./liveTopics";
 
 describe("live topic reducers", () => {
+  it("campaigns: the snapshot resets, rows replace by id, deletions drop the row and are remembered", () => {
+    let state = campaignsReducer.snapshot({});
+    expect(state).toEqual({ rows: {}, deleted: [], last: null });
+    state = campaignsReducer.update(state, { campaign: sampleCampaignRow() }, 1);
+    state = campaignsReducer.update(state, { campaign: sampleWorkbenchRow() }, 2);
+    state = campaignsReducer.update(state, { campaign: sampleCampaignRow({ actual_state: "paused" }) }, 3);
+    expect(Object.keys(state.rows)).toEqual(["wb1", "c1"]);
+    expect(state.rows.c1.actual_state).toBe("paused");
+    state = campaignsReducer.update(state, { deleted: "wb1" }, 4);
+    expect(Object.keys(state.rows)).toEqual(["c1"]);
+    expect(state.deleted).toEqual(["wb1"]);
+    expect(state.last).toEqual({ deleted: "wb1" });
+    expect(campaignsReducer.snapshot({}).rows).toEqual({});
+    expect(() => campaignsReducer.update(state, { campaign: { campaign_id: "x" } }, 5)).toThrow();
+  });
+
   it("nodes: snapshot sorted by name, changed nodes replaced or added, removed nodes dropped", () => {
     let nodes = nodesReducer.snapshot([sampleNode({ node_id: "b", name: "worker-b" }), sampleNode({ node_id: "a", name: "worker-a" })]);
     expect(nodes.map((node) => node.node_id)).toEqual(["a", "b"]);
