@@ -115,6 +115,18 @@ describe("frames request flow", () => {
     expect(final).toMatchObject({ phase: "failed", message: "the monitoring job was cancelled" });
   });
 
+  it("asks the master to resubmit only when the flow is told to retry", async () => {
+    const plain = fakeApi({ submit: async () => view("failed", { error: "boom" }) });
+    await run(plain);
+    expect(plain.submit).toHaveBeenCalledWith(undefined, undefined);
+
+    const again = fakeApi({ submit: async () => view("queued"), polls: [view("succeeded", {}, REF)] });
+    const { final, names } = await run(again, { retry: true });
+    expect(again.submit).toHaveBeenCalledWith(undefined, { retry: true });
+    expect(names).toEqual(["submitting", "submitted", "downloading", "done"]);
+    expect(final).toMatchObject({ phase: "done" });
+  });
+
   it("reports a job that succeeded without frames", async () => {
     const api = fakeApi({ submit: async () => view("succeeded") });
     const { final } = await run(api);
@@ -215,6 +227,21 @@ describe("the frames API over the operator client", () => {
       "GET http://127.0.0.1:5174/cluster/campaigns/camp%201/run-records/11/frames",
       `GET http://127.0.0.1:5174/cluster/artifacts/${SHA}`,
     ]);
+  });
+
+  it("posts with ?retry=true only when asked to retry", async () => {
+    const seen: string[] = [];
+    const operatorFetch = vi.fn(async (url: string, init?: RequestInit) => {
+      seen.push(`${init?.method} ${url}`);
+      return jsonResponse({ run_record_id: 11, job: sampleJob({ state: "queued" }), frames: null }, 201);
+    });
+    const client = createOperatorClient("http://127.0.0.1:5174", { fetch: operatorFetch as unknown as typeof fetch });
+    const api = createFramesApi(client, "camp 1", 11);
+    await api.submit(undefined, { retry: false });
+    await api.submit(undefined, { retry: true });
+    await api.poll();
+    const path = "http://127.0.0.1:5174/cluster/campaigns/camp%201/run-records/11/frames";
+    expect(seen).toEqual([`POST ${path}`, `POST ${path}?retry=true`, `GET ${path}`]);
   });
 
   it("turns a 409 of the real client into the unavailable phase", async () => {

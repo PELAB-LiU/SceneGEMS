@@ -7,9 +7,9 @@ caller's session, so it joins the engine's transaction.
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Collection, Dict, List, Mapping, Optional
+from typing import Any, Collection, Dict, List, Mapping, Optional, Tuple
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from scenegems_tool.cluster.protocol.jobs import JobState
@@ -66,6 +66,18 @@ def job_facts(session: Session, job_ids: Collection[str]) -> Dict[str, JobFacts]
 
 def job_id_by_key(session: Session, idempotency_key: str) -> Optional[str]:
     return session.execute(select(JobRow.id).where(JobRow.idempotency_key == idempotency_key)).scalar_one_or_none()
+
+
+def latest_job_by_key_family(session: Session, base_key: str) -> Optional[Tuple[str, str]]:
+    """The id and key of the newest job whose key is base_key or base_key:<suffix>, or None."""
+    statement = (
+        select(JobRow.id, JobRow.idempotency_key)
+        .where(or_(JobRow.idempotency_key == base_key, JobRow.idempotency_key.startswith(base_key + ":", autoescape=True)))
+        .order_by(JobRow.seq.desc())
+        .limit(1)
+    )
+    row = session.execute(statement).first()
+    return None if row is None else (row.id, row.idempotency_key)
 
 
 def delete_intent(session: Session, idempotency_key: str) -> bool:

@@ -61,8 +61,8 @@ def _run_job(plane: ControlPlane, job_id: str, result: dict) -> None:
     plane.jobs.report_result(JobResult(lease_id=lease.lease_id, job_id=job_id, idempotency_key=lease.job.idempotency_key, outcome=JobOutcome.SUCCEEDED, result=result))
 
 
-def _run_record(stores, campaign_id: str, **fields) -> int:
-    (case,) = stores.cases.create_cases(campaign_id, [NewCase(CLASS_A, 0, 100)])
+def _run_record(stores, campaign_id: str, case_index: int = 0, **fields) -> int:
+    (case,) = stores.cases.create_cases(campaign_id, [NewCase(CLASS_A, case_index, 100 + case_index)])
     record = stores.results.add_run_record(NewRunRecord(case.case_id, 0, TrajectoryGeneratorImplementation.STRAIGHT, True, {"mode": "replay"}, {}, case.seed, **fields))
     return record.run_record_id
 
@@ -126,6 +126,93 @@ def test_a_run_without_a_kept_state_log_is_refused(client, stores, campaign):
     gone = stores.results.add_run_record(NewRunRecord(case.case_id, 0, TrajectoryGeneratorImplementation.STRAIGHT, True, {}, {}, 1, artifacts={"state_log": "c" * 64})).run_record_id
     response = client.post(_path(campaign["campaign_id"], gone))
     assert response.status_code == 409 and "no longer stored" in response.json()["detail"]
+
+
+def _fail_job(plane: ControlPlane, job_id: str) -> None:
+    """The node runs the job and reports a failure that is not retried."""
+    lease = plane.jobs.claim_next(NODE, 30.0)
+    assert lease is not None and lease.job.job_id == job_id
+    plane.jobs.accept(lease.lease_id, 30.0)
+    plane.jobs.report_result(JobResult(lease_id=lease.lease_id, job_id=job_id, idempotency_key=lease.job.idempotency_key, outcome=JobOutcome.FAILED, error="monitor crashed"))
+
+
+@pytest.fixture
+def frames_path(client, stores, campaign) -> str:
+    stores.artifacts.insert_if_absent(STATE_LOG["sha256"], "trajectories", 4096, "application/json")
+    run_record_id = _run_record(stores, campaign["campaign_id"], artifacts={"state_log": STATE_LOG["sha256"]})
+    return _path(campaign["campaign_id"], run_record_id)
+
+
+def test_a_failed_frames_job_is_returned_as_it_is_without_retry(client, plane, frames_path):
+    job = client.post(frames_path).json()["job"]
+    _fail_job(plane, job["job_id"])
+    for response in (client.post(frames_path), client.get(frames_path)):
+        assert response.status_code == 200
+        assert response.json()["job"]["job_id"] == job["job_id"] and response.json()["job"]["state"] == "failed"
+
+
+def test_retry_submits_a_new_job_after_a_failed_one_and_get_follows_the_newest(client, plane, stores, frames_path):
+    first = client.post(frames_path).json()
+    run_record_id = first["run_record_id"]
+    _fail_job(plane, first["job"]["job_id"])
+
+    retried = client.post(frames_path, params={"retry": "true"})
+    assert retried.status_code == 201
+    second = retried.json()["job"]
+    assert second["job_id"] != first["job"]["job_id"] and second["state"] == "queued"
+    assert second["idempotency_key"] == frames_key(run_record_id, 2) == f"frames:{run_record_id}:2"
+    assert second["priority"] == FRAMES_PRIORITY
+    assert plane.jobs.get(second["job_id"]).payload == plane.jobs.get(first["job"]["job_id"]).payload
+    assert client.get(frames_path).json()["job"]["job_id"] == second["job_id"]
+    assert client.post(frames_path).json()["job"]["job_id"] == second["job_id"]  # a plain ask finds the newest
+
+    again = client.post(frames_path, params={"retry": "true"})  # the second is queued: returned as it is
+    assert again.status_code == 200 and again.json()["job"]["job_id"] == second["job_id"]
+
+    _fail_job(plane, second["job_id"])
+    third = client.post(frames_path, params={"retry": "true"})
+    assert third.status_code == 201 and third.json()["job"]["idempotency_key"] == f"frames:{run_record_id}:3"
+
+    _run_job(plane, third.json()["job"]["job_id"], {"frames": FRAMES, "passed": True})
+    done = client.get(frames_path).json()
+    assert done["job"]["job_id"] == third.json()["job"]["job_id"] and done["frames"] == FRAMES
+    kept = client.post(frames_path, params={"retry": "true"})  # a succeeded job is not replaced
+    assert kept.status_code == 200 and kept.json()["frames"] == FRAMES
+
+
+def test_retry_submits_a_new_job_after_a_cancelled_one(client, plane, frames_path):
+    first = client.post(frames_path).json()
+    assert plane.jobs.cancel(first["job"]["job_id"], "operator").cancelled
+    assert client.get(frames_path).json()["job"]["state"] == "cancelled"
+    retried = client.post(frames_path, params={"retry": "true"})
+    assert retried.status_code == 201 and retried.json()["job"]["idempotency_key"].endswith(":2")
+
+
+def test_retry_without_a_request_submits_the_first_job_and_a_running_job_is_kept(client, plane, frames_path):
+    first = client.post(frames_path, params={"retry": "true"})
+    assert first.status_code == 201 and first.json()["job"]["idempotency_key"] == frames_key(first.json()["run_record_id"])
+    lease = plane.jobs.claim_next(NODE, 30.0)
+    plane.jobs.accept(lease.lease_id, 30.0)
+    running = client.post(frames_path, params={"retry": "true"})
+    assert running.status_code == 200 and running.json()["job"]["state"] == "running" and running.json()["job"]["job_id"] == first.json()["job"]["job_id"]
+
+
+def test_the_newest_job_is_found_among_the_keys_of_the_same_run_record_only(client, plane, stores, campaign, frames_path):
+    stores.artifacts.insert_if_absent("d" * 64, "trajectories", 4096, "application/json")
+    others = [_run_record(stores, campaign["campaign_id"], case_index=index, artifacts={"state_log": "d" * 64}) for index in (1, 2)]
+    mine = client.post(frames_path).json()
+    _fail_job(plane, mine["job"]["job_id"])
+    for other in others:
+        assert client.post(_path(campaign["campaign_id"], other)).status_code == 201
+    retried = client.post(frames_path, params={"retry": "true"}).json()
+    assert retried["job"]["idempotency_key"] == frames_key(mine["run_record_id"], 2)
+    assert client.get(frames_path).json()["job"]["job_id"] == retried["job"]["job_id"]
+
+
+def test_retry_still_refuses_a_run_without_a_kept_state_log(client, stores, campaign):
+    without = _run_record(stores, campaign["campaign_id"])
+    response = client.post(_path(campaign["campaign_id"], without), params={"retry": "true"})
+    assert response.status_code == 409
 
 
 def test_unknown_campaigns_and_run_records_are_404(client, stores, campaign):
