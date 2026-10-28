@@ -1,5 +1,4 @@
 import { Disclosure } from "../../components/Disclosure";
-import type { CampaignTotals } from "../../domain/cluster/schemas";
 import { percent, type VerdictSummary } from "../../domain/cluster/resultsApi";
 import { formatSeconds } from "./resultsFormat";
 
@@ -8,7 +7,6 @@ interface VerdictSummaryPanelProps {
   loading: boolean;
   /** Whether filters narrow the set the summary is about. */
   filtered: boolean;
-  campaignTotals: CampaignTotals | undefined;
 }
 
 function Tile({ label, count, whole, tone }: { label: string; count: number; whole: number; tone: "passed" | "failed" | "unmonitored" }) {
@@ -22,7 +20,7 @@ function Tile({ label, count, whole, tone }: { label: string; count: number; who
 }
 
 /** Verdict counts per run and state, and the failed rules ranked by the verdicts they failed in. */
-export function VerdictSummaryPanel({ summary, loading, filtered, campaignTotals }: VerdictSummaryPanelProps) {
+export function VerdictSummaryPanel({ summary, loading, filtered }: VerdictSummaryPanelProps) {
   if (!summary) {
     return (
       <section className="results-panel" aria-label="Summary of the verdicts">
@@ -34,22 +32,16 @@ export function VerdictSummaryPanel({ summary, loading, filtered, campaignTotals
   }
   const whole = summary.analyzed;
   const mostFailures = Math.max(1, ...summary.failedRules.map((rule) => rule.verdicts));
-  const totals = campaignTotals?.verdicts;
   return (
     <section className="results-panel" aria-label="Summary of the verdicts">
       <header className="results-panel-head">
-        <h3>Summary</h3>
+        <h3>Runs</h3>
         <span className="meta">
-          {filtered ? "of the filtered verdicts" : "of all verdicts of the campaign"}
+          {filtered ? "of the filtered verdicts" : "of all verdicts"}
           {summary.partial ? `: the first ${summary.analyzed} of ${summary.total}` : `: ${summary.analyzed}`}
           {summary.sensitive > 0 ? `, ${summary.sensitive} sensitive` : ""}
         </span>
         {loading && <span className="meta" role="status">updating</span>}
-        {totals && filtered && (
-          <span className="meta results-push">
-            whole campaign: {totals.passed ?? 0} passed, {totals.failed ?? 0} failed, {totals.unmonitored ?? 0} unmonitored
-          </span>
-        )}
       </header>
       {summary.partial && (
         <p className="meta warning">The ranking and the counts below read the first {summary.analyzed} verdicts only; narrow the filters for an exact picture.</p>

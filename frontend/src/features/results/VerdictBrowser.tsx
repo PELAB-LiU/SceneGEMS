@@ -2,14 +2,27 @@ import { useMemo } from "react";
 import { describeOperatorError } from "../../domain/cluster/operatorApi";
 import { hasActiveFilters, toApiFilters, type VerdictPaging } from "../../domain/cluster/resultsApi";
 import { useResultsStore } from "../../domain/cluster/resultsStore";
-import type { Verdict } from "../../domain/cluster/schemas";
+import type { CampaignStep, Verdict } from "../../domain/cluster/schemas";
 import { VerdictFilterBar } from "./VerdictFilterBar";
 import { VerdictSummaryPanel } from "./VerdictSummaryPanel";
 import { VerdictTable } from "./VerdictTable";
+import { verdictStepOf } from "./stepViews";
 import { useCampaignDetail, useResultsClient, useVerdictPage, useVerdictSummary } from "./useResultsData";
 
-/** The verdicts of one campaign: filters, a summary and the paged table. */
-export function VerdictBrowser({ operatorUrl, campaignId }: { operatorUrl: string; campaignId: string }) {
+interface VerdictBrowserProps {
+  operatorUrl: string;
+  campaignId: string;
+  /** The step view shown. */
+  step: CampaignStep;
+  /** Whether the master filters verdicts by step; one without Phase 6 lists the verdicts of the whole campaign. */
+  stepFilter: boolean;
+}
+
+/** The verdicts of the shown step of an entry: filters, a summary of the filtered runs and the paged table. */
+export function VerdictBrowser({ operatorUrl, campaignId, step, stepFilter }: VerdictBrowserProps) {
+  const verdictStep = stepFilter ? verdictStepOf(step) : undefined;
+  // Scene and trajectory verdicts have run index 0 only, so the run filter and the per-run counts are for the simulation.
+  const byRun = step === "simulation";
   const filters = useResultsStore((state) => state.filters);
   const page = useResultsStore((state) => state.page);
   const pageSize = useResultsStore((state) => state.pageSize);
@@ -19,23 +32,18 @@ export function VerdictBrowser({ operatorUrl, campaignId }: { operatorUrl: strin
   const paging = useMemo<VerdictPaging>(() => ({ page, pageSize, direction }), [page, pageSize, direction]);
   const client = useResultsClient(operatorUrl);
   const detail = useCampaignDetail(operatorUrl, campaignId);
-  const verdicts = useVerdictPage(operatorUrl, campaignId, filters, paging);
-  const summary = useVerdictSummary(operatorUrl, campaignId, filters);
+  const verdicts = useVerdictPage(operatorUrl, campaignId, filters, paging, verdictStep);
+  const summary = useVerdictSummary(operatorUrl, campaignId, filters, verdictStep, byRun);
   const total = verdicts.data?.total ?? null;
-  const csvUrl = client ? client.verdictsCsvUrl(campaignId, toApiFilters(filters)) : null;
+  const csvUrl = client ? client.verdictsCsvUrl(campaignId, toApiFilters(filters, verdictStep)) : null;
 
   const open = (verdict: Verdict) => openCase(campaignId, verdict.case_id);
 
   return (
     <div className="results-stack">
-      <VerdictFilterBar detail={detail.data} filters={filters} onChange={setFilters} onReset={resetFilters} csvUrl={csvUrl} total={total} />
-      <VerdictSummaryPanel
-        summary={summary.data}
-        loading={summary.isFetching}
-        filtered={hasActiveFilters(filters)}
-        campaignTotals={detail.data?.totals}
-      />
-      {summary.isError && <p className="error">The summary could not be loaded: {describeOperatorError(summary.error)}</p>}
+      <VerdictFilterBar detail={detail.data} filters={filters} onChange={setFilters} onReset={resetFilters} csvUrl={csvUrl} total={total} showRun={byRun} />
+      {byRun && <VerdictSummaryPanel summary={summary.data} loading={summary.isFetching} filtered={hasActiveFilters(filters)} />}
+      {byRun && summary.isError && <p className="error">The summary could not be loaded: {describeOperatorError(summary.error)}</p>}
       {verdicts.isError ? (
         <div className="results-notice results-notice--bad" role="alert">
           <strong>The verdicts cannot be loaded.</strong>

@@ -1,5 +1,5 @@
 import type { OperatorClient, ListPage, VerdictFilters } from "./operatorApi";
-import type { CampaignDetail, Verdict, VerdictState } from "./schemas";
+import type { CampaignDetail, Verdict, VerdictState, VerdictStep } from "./schemas";
 
 /**
  * Verdict table logic of the Results section: filter and paging state, how a page is read
@@ -40,9 +40,12 @@ export function hasActiveFilters(filters: VerdictFilterState): boolean {
   );
 }
 
-/** The API's query filters (without a page) for a filter state. */
-export function toApiFilters(filters: VerdictFilterState): VerdictFilters {
+/** The API's query filters (without a page) for a filter state, narrowed to one step when given. */
+export function toApiFilters(filters: VerdictFilterState, step?: VerdictStep): VerdictFilters {
   const query: VerdictFilters = {};
+  if (step !== undefined) {
+    query.step = step;
+  }
   if (filters.classId !== "") {
     query.class_id = filters.classId;
   }
@@ -110,9 +113,10 @@ export async function fetchVerdictPage(
   campaignId: string,
   filters: VerdictFilterState,
   paging: VerdictPaging,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  step?: VerdictStep
 ): Promise<VerdictPage> {
-  const query = toApiFilters(filters);
+  const query = toApiFilters(filters, step);
   if (paging.direction === "asc") {
     const page = await client.listVerdicts(campaignId, { ...query, limit: paging.pageSize, offset: paging.page * paging.pageSize }, signal);
     return { items: page.items, total: page.total };
@@ -231,9 +235,10 @@ export async function fetchVerdictSummary(
   filters: VerdictFilterState,
   signal?: AbortSignal,
   cap: number = SUMMARY_CAP,
-  pageSize: number = SUMMARY_PAGE
+  pageSize: number = SUMMARY_PAGE,
+  step?: VerdictStep
 ): Promise<VerdictSummary> {
-  const query = toApiFilters(filters);
+  const query = toApiFilters(filters, step);
   const verdicts: Verdict[] = [];
   let total: number | null = null;
   while (verdicts.length < cap) {
