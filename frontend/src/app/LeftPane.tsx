@@ -104,7 +104,7 @@ function CampaignsIcon(props: IconProps) {
   );
 }
 
-function ObserveIcon(props: IconProps) {
+function HistoryIcon(props: IconProps) {
   return (
     <svg {...iconBaseProps(props)}>
       <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
@@ -166,7 +166,7 @@ const CLUSTER_ITEMS: NavEntry<AppSection>[] = [
   { id: "cluster", label: "Cluster", hint: "Machines and their status", Icon: ClusterIcon },
   { id: "capabilities", label: "Capabilities", hint: "What the system can run", Icon: CapabilitiesIcon },
   { id: "campaigns", label: "Campaigns", hint: "Run many simulations", Icon: CampaignsIcon },
-  { id: "observe", label: "Observe", hint: "Watch runs live", Icon: ObserveIcon },
+  { id: "history", label: "Campaign History", hint: "Past and running campaigns and runs", Icon: HistoryIcon },
   { id: "results", label: "Results", hint: "Review finished runs", Icon: ResultsIcon },
 ];
 

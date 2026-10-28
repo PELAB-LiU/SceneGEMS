@@ -12,11 +12,23 @@ import {
   sampleVerdict,
 } from "../../test/fixtures/clusterViews";
 import {
+  sampleCampaignRow,
+  sampleFindings,
+  sampleLiveRunRecord,
+  sampleMonitoredCase,
+  samplePreSixCampaignRow,
+  sampleSceneVerdict,
+  sampleUploadedRef,
+} from "../../test/fixtures/historyViews";
+import {
+  artifactRefSchema,
   campaignConfigSchema,
+  campaignRowSchema,
   campaignDetailSchema,
   campaignEventSchema,
   campaignSummarySchema,
   caseDetailSchema,
+  caseViewSchema,
   jobDetailSchema,
   jobViewSchema,
   masterStatusSchema,
@@ -144,5 +156,63 @@ describe("operator API schemas", () => {
     expect(detail.verdicts[0].failed_rules).toEqual(["rule_8"]);
     expect(verdictSchema.parse({ ...sampleVerdict, case_index: 2 }).case_index).toBe(2);
     expect(runRecordSchema.parse(sampleRunRecord).case_index).toBeUndefined();
+  });
+});
+
+describe("Phase 6 views", () => {
+  it("reads a campaign row of a master without Phase 6 and one with it", () => {
+    const old = campaignSummarySchema.parse(samplePreSixCampaignRow);
+    expect(old.kind).toBeUndefined();
+    expect(old.made_from).toBeUndefined();
+    const row = campaignRowSchema.parse(sampleCampaignRow());
+    expect(row.kind).toBe("campaign");
+    expect(row.origin).toBe("wizard");
+    expect(row.steps).toEqual(["scene_generation", "trajectory_generation"]);
+  });
+
+  it("keeps the detail's own totals next to the row fields", () => {
+    const detail = campaignDetailSchema.parse({ ...sampleCampaignDetail(), kind: "workbench", origin: "simulation", steps: ["simulation"], made_from: ["c0"] });
+    expect(detail.totals.classes).toBe(1);
+    expect(detail.kind).toBe("workbench");
+    expect(detail.made_from).toEqual(["c0"]);
+  });
+
+  it("accepts every origin and rejects an unknown one", () => {
+    for (const origin of ["wizard", "cli", "scene_generation", "trajectory_generation", "simulation", "live_session"]) {
+      expect(campaignRowSchema.safeParse(sampleCampaignRow({ origin })).success).toBe(true);
+    }
+    expect(campaignRowSchema.safeParse(sampleCampaignRow({ origin: "script" })).success).toBe(false);
+  });
+
+  it("reads verdicts with a step and without one", () => {
+    expect(verdictSchema.parse(sampleSceneVerdict).step).toBe("scene");
+    expect(verdictSchema.parse(sampleSceneVerdict).run_record_id).toBeNull();
+    expect(verdictSchema.parse(sampleVerdict).step).toBeUndefined();
+    expect(verdictSchema.safeParse({ ...sampleVerdict, step: "monitor" }).success).toBe(false);
+  });
+
+  it("reads run records with a source and a missing generator", () => {
+    const live = runRecordSchema.parse(sampleLiveRunRecord);
+    expect(live.source).toBe("live_session");
+    expect(live.trajectory_generator).toBeNull();
+    expect(runRecordSchema.parse(sampleRunRecord).source).toBeUndefined();
+    expect(runRecordSchema.parse(sampleRunRecord).trajectory_generator).toBe("straight");
+  });
+
+  it("knows the monitor stages of a case", () => {
+    expect(caseViewSchema.parse(sampleMonitoredCase).stage).toBe("monitor_trajectories");
+    expect(caseViewSchema.parse({ ...sampleMonitoredCase, stage: "monitor_scene" }).stage).toBe("monitor_scene");
+  });
+
+  it("reads an artifact reference with and without a pointer", () => {
+    expect(artifactRefSchema.parse(sampleUploadedRef).pointer).toBeNull();
+    const withPointer = artifactRefSchema.parse({ sha256: "e".repeat(64), size_bytes: 10, kind: "trajectory_data", pointer: "/trajectories" });
+    expect(withPointer.pointer).toBe("/trajectories");
+    expect(withPointer.media_type).toBe("application/json");
+    expect(artifactRefSchema.safeParse({ ...sampleUploadedRef, size_bytes: -1 }).success).toBe(false);
+  });
+
+  it("has a findings fixture for the step views", () => {
+    expect(sampleFindings().step).toBe("trajectory_generation");
   });
 });

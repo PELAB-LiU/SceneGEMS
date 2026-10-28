@@ -37,7 +37,9 @@ export const campaignActualStateSchema = z.enum([
 export const classStateSchema = z.enum(["open", "complete", "abandoned"]);
 export const pipelineStageSchema = z.enum([
   "generate_scene",
+  "monitor_scene",
   "generate_trajectories",
+  "monitor_trajectories",
   "simulate",
   "monitor",
   "calibrate",
@@ -45,6 +47,17 @@ export const pipelineStageSchema = z.enum([
 ]);
 export const caseStateSchema = z.enum(["active", "complete", "dropped", "failed", "cancelled"]);
 export const verdictStateSchema = z.enum(["passed", "failed", "unmonitored"]);
+
+// Phase 6: partial campaigns (design doc 6.3). The chain a campaign runs a consecutive part of, in order.
+export const CAMPAIGN_STEPS = ["scene_generation", "trajectory_generation", "simulation"] as const;
+export const campaignStepSchema = z.enum(CAMPAIGN_STEPS);
+/** The step a verdict belongs to: `scene` and `trajectories` verdicts have run index 0. */
+export const verdictStepSchema = z.enum(["scene", "trajectories", "simulation"]);
+export const campaignKindSchema = z.enum(["campaign", "workbench"]);
+export const CAMPAIGN_ORIGINS = ["wizard", "cli", "scene_generation", "trajectory_generation", "simulation", "live_session"] as const;
+export const campaignOriginSchema = z.enum(CAMPAIGN_ORIGINS);
+/** Where a run record came from: a cluster job or a recorded live session. */
+export const runSourceSchema = z.enum(["job", "live_session"]);
 
 export type NodeStatus = z.infer<typeof nodeStatusSchema>;
 export type JobState = z.infer<typeof jobStateSchema>;
@@ -54,6 +67,11 @@ export type ClassState = z.infer<typeof classStateSchema>;
 export type PipelineStage = z.infer<typeof pipelineStageSchema>;
 export type CaseState = z.infer<typeof caseStateSchema>;
 export type VerdictState = z.infer<typeof verdictStateSchema>;
+export type CampaignStep = z.infer<typeof campaignStepSchema>;
+export type VerdictStep = z.infer<typeof verdictStepSchema>;
+export type CampaignKind = z.infer<typeof campaignKindSchema>;
+export type CampaignOrigin = z.infer<typeof campaignOriginSchema>;
+export type RunSource = z.infer<typeof runSourceSchema>;
 
 // Nodes and the master (views.py, operator_routes.py)
 
@@ -194,7 +212,29 @@ export type JobView = z.infer<typeof jobViewSchema>;
 export type JobEvent = z.infer<typeof jobEventSchema>;
 export type JobDetail = z.infer<typeof jobDetailSchema>;
 
+// Artifact references (cluster/protocol/artifacts.py)
+
+/** Kinds of stored artifacts; a plain string so a master that adds one still parses. */
+export const ARTIFACT_KIND_VALUES = ["scene", "trajectory_data", "trajectories", "frames", "calibration", "functional_scenario"] as const;
+
+export const artifactRefSchema = z.object({
+  sha256: z.string(),
+  size_bytes: z.number().int().nonnegative(),
+  kind: z.string(),
+  media_type: z.string().default("application/json"),
+  /** JSON pointer into the document, such as "/trajectories"; the whole document when null. */
+  pointer: z.string().nullish(),
+});
+
+export type ArtifactRef = z.infer<typeof artifactRefSchema>;
+
 // Campaigns (campaign_views.py)
+
+/** What a list row says about a campaign's input (6.5): the first step it runs and how many items it takes. */
+export const campaignInputSummarySchema = z.object({
+  first_step: campaignStepSchema,
+  item_count: z.number().int().nonnegative(),
+});
 
 export const campaignSummarySchema = z.object({
   campaign_id: z.string(),
@@ -208,6 +248,24 @@ export const campaignSummarySchema = z.object({
   updated_at: isoTime,
   started_at: nullableTime,
   finished_at: nullableTime,
+  // Phase 6 (6.5): optional, so a master without Phase 6 still parses.
+  kind: campaignKindSchema.optional(),
+  origin: campaignOriginSchema.optional(),
+  steps: z.array(campaignStepSchema).optional(),
+  input: campaignInputSummarySchema.optional(),
+  /** Campaign ids the items of this campaign came from. */
+  made_from: z.array(z.string()).optional(),
+});
+
+/** The `totals` of a list row (6.5): cases by state and verdicts by step and state. Not the detail's `campaignTotalsSchema`. */
+export const campaignRowTotalsSchema = z.object({
+  cases: z.record(z.string(), z.number().int()),
+  verdicts: z.record(z.string(), z.record(z.string(), z.number().int())),
+});
+
+/** One row of `GET /cluster/campaigns`: the summary plus the row totals, so the list needs no detail call per row. */
+export const campaignRowSchema = campaignSummarySchema.extend({
+  totals: campaignRowTotalsSchema.optional(),
 });
 
 /** Run index (as a string) to verdict state to count. */
@@ -303,8 +361,11 @@ export const runRecordSchema = z.object({
   class_id: z.string(),
   run_index: z.number().int(),
   repeat_index: z.number().int(),
-  trajectory_generator: z.string(),
+  /** Null for trajectories taken from an item or a live session (Phase 6). */
+  trajectory_generator: z.string().nullable(),
   trajectories_complete: z.boolean(),
+  /** Phase 6; missing from masters before it, which only ran jobs. */
+  source: runSourceSchema.optional(),
   stack: jsonObject,
   repeatability_tier: z.string().nullable(),
   environment: jsonObject,
@@ -328,6 +389,8 @@ export const verdictSchema = z.object({
   case_index: z.number().int().optional(),
   campaign_id: z.string(),
   class_id: z.string(),
+  /** Phase 6; missing from masters before it, whose verdicts are all of the simulation. */
+  step: verdictStepSchema.optional(),
   run_index: z.number().int(),
   run_record_id: z.number().int().nullable(),
   state: verdictStateSchema,
@@ -368,6 +431,9 @@ export const campaignConfigSchema = z.object({
   versions: z.array(configVersionSchema),
 });
 
+export type CampaignInputSummary = z.infer<typeof campaignInputSummarySchema>;
+export type CampaignRowTotals = z.infer<typeof campaignRowTotalsSchema>;
+export type CampaignRow = z.infer<typeof campaignRowSchema>;
 export type CampaignSummary = z.infer<typeof campaignSummarySchema>;
 export type VerdictCounts = z.infer<typeof verdictCountsSchema>;
 export type ClassView = z.infer<typeof classViewSchema>;

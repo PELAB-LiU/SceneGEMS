@@ -1,14 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 import { sampleCampaignDetail } from "../../test/fixtures/clusterViews";
 import { sampleCatalogClasses, sampleCatalogStacks, sampleValidationResult } from "../../test/fixtures/campaignCatalog";
+import { sampleFormat2Config, sampleScenarioConfig } from "../../test/fixtures/historyViews";
 import {
+  campaignInputSchema,
   catalogClassSchema,
   catalogStacksSchema,
   createCampaign,
   getCatalogStacks,
+  inputItemSourceSchema,
   listCatalogClasses,
+  stepMonitorSchema,
   validateCampaignConfig,
   validationResultSchema,
+  type CampaignConfigFormat2,
 } from "./campaignApi";
 import { createOperatorClient, OperatorApiError } from "./operatorApi";
 
@@ -132,5 +137,46 @@ describe("validate and create", () => {
     await createCampaign(client, "name: x\n", { start: true, name: "other" });
     expect(JSON.parse(spy.mock.calls[1][1]?.body as string)).toEqual({ config: "name: x\n", start: true, name: "other" });
     expect(spy.mock.calls[1][0]).toBe(`${BASE}/cluster/campaigns`);
+  });
+
+  it("sends kind and origin in the request, and leaves them out otherwise", async () => {
+    const { client, spy } = clientWith(async () => jsonResponse(sampleCampaignDetail(), { status: 201 }));
+    await createCampaign(client, "format: 2\n", { start: true, kind: "workbench", origin: "scene_generation" });
+    expect(JSON.parse(spy.mock.calls[0][1]?.body as string)).toEqual({ config: "format: 2\n", start: true, kind: "workbench", origin: "scene_generation" });
+    await createCampaign(client, "format: 2\n");
+    expect(JSON.parse(spy.mock.calls[1][1]?.body as string)).toEqual({ config: "format: 2\n", start: false });
+  });
+});
+
+describe("config format 2 types", () => {
+  it("parses the input of a campaign that continues from history and from a file", () => {
+    const input = campaignInputSchema.parse(sampleFormat2Config.input);
+    expect(input.items).toHaveLength(2);
+    expect(input.items?.[0].source).toEqual({ campaign_id: "c1", case_id: 5, step: "scene_generation" });
+    expect(input.items?.[1].source).toEqual({ file: "head_on.json" });
+    expect(input.items?.[1].ref.size_bytes).toBeUndefined();
+  });
+
+  it("parses scenarios given as content with their quota and failure budget", () => {
+    const input = campaignInputSchema.parse(sampleScenarioConfig.input);
+    expect(input.functional_scenarios?.[0]).toMatchObject({ name: "my_head_on", quota: 3, failure_budget: 1 });
+    expect(input.items).toBeUndefined();
+  });
+
+  it("rejects an item source that names a step outside the chain, and a monitor it does not know", () => {
+    expect(inputItemSourceSchema.safeParse({ campaign_id: "c1", case_id: 5, step: "monitor" }).success).toBe(false);
+    expect(stepMonitorSchema.safeParse("live").success).toBe(false);
+    expect(stepMonitorSchema.parse("post_hoc")).toBe("post_hoc");
+  });
+
+  it("types a format 2 config with its Phase 6 sections", () => {
+    const config: CampaignConfigFormat2 = {
+      format: 2,
+      name: "x",
+      steps: ["scene_generation", "trajectory_generation"],
+      scene_generation: { monitor: "post_hoc" },
+      trajectories: { generator: "straight", monitor: "empty" },
+    };
+    expect(config.steps).toEqual(["scene_generation", "trajectory_generation"]);
   });
 });
