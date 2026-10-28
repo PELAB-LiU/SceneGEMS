@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from scenegems_tool.cluster.node.job_report import JobFailed
 from scenegems_tool.cluster.node.jobs import scene_generation_job, trajectory_generation_job
 from scenegems_tool.cluster.protocol.jobs import JobType
 from scenegems_tool.messaging import mqtt_scenario_generation_client, mqtt_trajectory_generation_client
@@ -24,10 +25,12 @@ class _ScriptedClient:
 
     answer = None
     commands = []
+    cancels = []
+    ready = True  # the pool heartbeats
 
     def __init__(self, **arguments):
         self.arguments = arguments
-        self.is_connected = self.is_heartbeat_valid = True
+        self.is_connected = self.is_heartbeat_valid = type(self).ready
 
     def connect(self):
         pass
@@ -42,11 +45,14 @@ class _ScriptedClient:
     publish_generate_scene_command = _publish
     publish_generate_trajectories_command = _publish
 
+    def publish_cancel_command(self, request_id):
+        type(self).cancels.append(request_id)
+
 
 @pytest.fixture
 def pool(monkeypatch, node):
     def install(module, attribute, answer):
-        client = type("Client", (_ScriptedClient,), {"answer": staticmethod(answer), "commands": []})
+        client = type("Client", (_ScriptedClient,), {"answer": staticmethod(answer), "commands": [], "cancels": []})
         monkeypatch.setattr(module, attribute, client)
         monkeypatch.setattr(node, "pools", SimpleNamespace(get=lambda subsystem: SimpleNamespace(mqtt_connection=node.mqtt_connection)))
         return client
@@ -84,3 +90,22 @@ def test_the_trajectory_job_returns_complete(pool, node, make_job):
     (request_id, scenario_content, constants, params), options = client.commands[0]
     assert options == {"seed": 3} and params.generator.value == "straight" and params.timespan == 300.0
     assert "search preview 1" in report.messages
+    assert client.cancels == []  # the search ended on its own
+
+
+def test_a_cancelled_trajectory_job_cancels_its_own_search_only(pool, node, make_job):
+    cancel = threading.Event()
+    client = pool(mqtt_trajectory_generation_client, "MqttTrajectoryGenerationClient", lambda arguments, command: cancel.set())  # the lease is cancelled mid-search
+    with pytest.raises(JobFailed, match="cancelled"):
+        trajectory_generation_job.run(make_job(JobType.TRAJECTORY_GENERATION, valid_payload(JobType.TRAJECTORY_GENERATION)), node, _Report(), cancel)
+    assert client.cancels == ["job-1-1"]
+
+
+def test_a_job_cancelled_before_its_search_started_sends_no_cancel(pool, node, make_job):
+    cancel = threading.Event()
+    cancel.set()
+    client = pool(mqtt_trajectory_generation_client, "MqttTrajectoryGenerationClient", lambda arguments, command: None)
+    client.ready = False  # cancelled while the job waits for the pool's heartbeat
+    with pytest.raises(JobFailed, match="cancelled"):
+        trajectory_generation_job.run(make_job(JobType.TRAJECTORY_GENERATION, valid_payload(JobType.TRAJECTORY_GENERATION)), node, _Report(), cancel)
+    assert client.commands == [] and client.cancels == []

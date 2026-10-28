@@ -1,4 +1,4 @@
-"""Trajectory generation over MQTT: the seed in the command and the task, complete in the result."""
+"""Trajectory generation over MQTT: the seed in the command and the task, the request in the cancel, complete in the result."""
 
 from scenegems_tool.messaging.mqtt_trajectory_generation_client import MqttTrajectoryGenerationClient
 from scenegems_tool.messaging.mqtt_trajectory_generation_service import MqttTrajectoryGenerationService
@@ -30,6 +30,14 @@ def test_the_seed_and_the_generator_are_in_the_command():
     params = _command(_client(), seed=5)["task"]["params"]
     assert params["seed"] == 5 and params["params"]["generator"] == "straight" and params["params"]["timespan"] == 60.0
     assert "seed" not in _command(_client())["task"]["params"]
+
+
+def test_the_cancel_names_the_request_it_stops():
+    client = _client()
+    client.publish_cancel_command("r1")
+    [(topic, command)] = client.client.published
+    assert topic == client.exec_command_topic
+    assert (command["command"], command["execution-unit"], command["signal"]) == ("signal-task", TRAJECTORY_GENERATION_SERVICE_NAME, {"name": "cancel", "request-id": "r1"})
 
 
 def test_the_service_puts_the_seed_and_the_generator_into_the_task():

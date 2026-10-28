@@ -112,13 +112,14 @@ class MqttTrajectoryGenerationClient(MqttClient):
         }
         self.client.publish(self.exec_command_topic, json.dumps(command), qos=1)
 
-    def publish_cancel_command(self) -> None:
+    def publish_cancel_command(self, request_id: str) -> Optional[mqtt.MQTTMessageInfo]:
+        """Ask the pool to stop the search of this request only; the returned info confirms the publish."""
         command = {
             "stamp": time.time(),
             "task_sender": self.name,
             "task-uuid": str(uuid.uuid4()),
             "command": "signal-task",
             "execution-unit": self.parent_service_name,
-            "signal": {"name": "cancel"},
+            "signal": {"name": "cancel", "request-id": request_id},
         }
-        self.client.publish(self.exec_command_topic, json.dumps(command), qos=1)
+        return self.client.publish(self.exec_command_topic, json.dumps(command), qos=1)
