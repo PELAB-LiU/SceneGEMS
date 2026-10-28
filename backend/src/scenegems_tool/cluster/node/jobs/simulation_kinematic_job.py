@@ -5,8 +5,8 @@ or USV Navigation on the own ship against replaying targets (run_kinematic_close
 The run needs no other service, so its container has no network. A run is bit-identical
 for the same payload, and the result carries its state digest.
 
-With monitor live, the COLREGS monitor judges every step in process with the post-hoc
-monitor's summary (subsystems/monitoring/rule_outcomes.py), and early_stop ends the run once
+With monitor live, the COLREGS monitor judges every step in process (live_monitor.py) with the
+post-hoc monitor's summary (subsystems/monitoring/rule_outcomes.py), and early_stop ends the run once
 every rule is decided. A run without a monitor is the same run as before the monitor existed.
 
 Observed live (the node's observation, in_container/run_observation.py), the run is paced to
@@ -23,6 +23,7 @@ from pydantic import Field, model_validator
 
 from scenegems_tool.cluster.node.job_report import JobReport, JobResultData
 from scenegems_tool.cluster.node.jobs.job_payload import TrajectoriesInput, parse_payload, to_trajectories
+from scenegems_tool.cluster.node.jobs.live_monitor import LiveMonitor, SimulationMonitor
 from scenegems_tool.cluster.node.jobs.runner_container import StatusCallback, run_in_runner_container
 from scenegems_tool.cluster.node.node_context import NodeContext
 from scenegems_tool.cluster.node.subsystem import Subsystem
@@ -41,11 +42,6 @@ ARTIFACT_RESULT_FIELDS: Tuple[ArtifactField, ...] = (ArtifactField("trajectories
 class KinematicMode(str, Enum):
     REPLAY = "replay"  # every vessel replays its trajectory
     USV_NAVIGATION = "usv_navigation"  # the own ship runs USV Navigation, the others replay
-
-
-class KinematicMonitor(str, Enum):
-    NONE = "none"  # no monitor in the run; a post-hoc or empty monitor may follow
-    LIVE = "live"  # the COLREGS monitor in process, step by step
 
 
 class UsvNavigationPayload(ProtocolModel):
@@ -77,7 +73,7 @@ class KinematicSimulationPayload(ProtocolModel):
     dt: Optional[float] = Field(default=None, gt=0.0)  # the trajectories' time step when None
     steps: Optional[int] = Field(default=None, ge=1)  # the trajectories' timespan when None
     seed: int = 0  # run seed (EnvironmentConfig.seed)
-    monitor: KinematicMonitor = KinematicMonitor.NONE
+    monitor: SimulationMonitor = SimulationMonitor.NONE
     early_stop: bool = False  # live only: end the run once every rule of every relation is decided
     colregs_constraints_content: Optional[str] = None  # live only: COLREGS constants YAML; the general maritime defaults when None
     include_trajectories: bool = True  # return the simulated trajectories, not only the run record
@@ -91,60 +87,14 @@ class KinematicSimulationPayload(ProtocolModel):
 
     @model_validator(mode="after")
     def _monitor_options_need_the_live_monitor(self) -> "KinematicSimulationPayload":
-        if self.monitor != KinematicMonitor.LIVE and (self.early_stop or self.colregs_constraints_content is not None):
+        if self.monitor != SimulationMonitor.LIVE and (self.early_stop or self.colregs_constraints_content is not None):
             raise ValueError("early_stop and colregs_constraints_content apply only to monitor live")
-        if self.monitor == KinematicMonitor.LIVE and self.dt is not None and not float(self.dt).is_integer():
+        if self.monitor == SimulationMonitor.LIVE and self.dt is not None and not float(self.dt).is_integer():
             raise ValueError("the live monitor needs a whole number of seconds as dt")
         return self
 
 
 PAYLOAD_MODEL = KinematicSimulationPayload
-
-
-class LiveMonitor:
-    """The COLREGS monitor fed by the run's step observer, as monitoring.post_hoc feeds it scene by scene."""
-
-    def __init__(self, actors, time_step: int, colregs_constraints_content: Optional[str], early_stop: bool):
-        from concrete_level.colregs_monitoring.colregs_monitor_runtime import ColregsMonitorRuntime
-        from scenegems_tool.subsystems.monitoring.rule_outcomes import RuleOutcomes
-        from utils.colregs_approximations import COLREGSConstraints
-
-        constants = COLREGSConstraints.from_file_content(colregs_constraints_content) if colregs_constraints_content else COLREGSConstraints.default_general_maritime()
-        self.actors = tuple(actors)
-        self.time_step = time_step
-        self.early_stop = early_stop
-        self.runtime = ColregsMonitorRuntime(constants)
-        self.outcomes = RuleOutcomes()
-        self.scenes = 0
-        self.decided_at: Optional[int] = None  # scenario time at which every rule was decided, with early_stop
-        self.last_monitored: Any = None  # the latest MonitoredSceneWithResults, for the frames of an observed run
-        self.last_monitored_index: Optional[int] = None
-
-    def on_step(self, index: int, states) -> bool:
-        from concrete_level.colregs_monitoring.colregs_monitor_runtime import MonitoringTask
-        from concrete_level.trajectory_generation.scene_builder import SceneBuilder
-
-        builder = SceneBuilder()
-        builder.set_states_as_dict(dict(zip(self.actors, states)))  # the scene KinematicRunResult.to_trajectories builds for this step
-        self.runtime.add_task(MonitoringTask(scene=builder.build(), scene_timestamp=index * self.time_step, time_step=self.time_step))
-        self.scenes += 1
-        for monitored_scene in self.runtime.monitor_current_tasks():
-            self.outcomes.add(monitored_scene)
-            self.last_monitored, self.last_monitored_index = monitored_scene, index
-        if self.early_stop and self.outcomes.every_rule_decided():
-            self.decided_at = index * self.time_step
-            return True
-        return False
-
-    def result(self, stopped_early: bool) -> Dict[str, Any]:
-        """The post-hoc result shape, plus the scenario time the run stopped at when the monitor ended it early."""
-        return {
-            "scenes": self.scenes,
-            "monitored_scenes": self.outcomes.monitored_scenes,
-            "time_step": self.time_step,
-            **self.outcomes.summary(),
-            "stopped_early_at": self.decided_at if stopped_early else None,
-        }
 
 
 def run(job: JobSpec, node: NodeContext, report: JobReport, cancel: Optional[threading.Event] = None) -> JobResultData:
@@ -194,7 +144,7 @@ def execute(job: JobSpec, status: StatusCallback, observation: Optional["Contain
     environment = EnvironmentConfig.calm(seed=payload.seed)
     dt = float(trajectories.time_step) if payload.dt is None else payload.dt
     planned_steps = payload.steps if payload.steps is not None else int(round(trajectories.timespan / dt))
-    monitor = LiveMonitor(trajectories.initial_scene.actors, int(dt), payload.colregs_constraints_content, payload.early_stop) if payload.monitor == KinematicMonitor.LIVE else None
+    monitor = LiveMonitor(trajectories.initial_scene.actors, int(dt), payload.colregs_constraints_content, payload.early_stop) if payload.monitor == SimulationMonitor.LIVE else None
     observer = observation.observer(frame_builder(job.job_id, trajectories.initial_scene.actors, dt, monitor), dt, last_index=planned_steps) if observation is not None else None
     on_step = step_observer(monitor, observer)
     status(f"running the kinematic {payload.mode.value} run" + (" with the live monitor" if monitor is not None else ""))

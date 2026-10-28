@@ -9,6 +9,12 @@ Observed live, the runner forwards each step's observed states as frames, at mos
 number a second at the stack's own pace: SITL runs free at the payload's speedup, so the run is
 not slowed to the observers' speed (that would delay its commands in SITL time and change it).
 
+With monitor live, the COLREGS monitor judges every lockstep step in process (live_monitor.py),
+whether or not the run is observed, and a judged step's frame carries its verdicts. The lockstep
+runner does not stop early, so the monitor has no early stop here. A step's scene is the
+vessels' observed states plus the static obstacles at their initial state, as in the run's
+trajectories (include_trajectories).
+
 The generated files reach SITL and Gazebo through the runtime assets volume, so the caller
 must run where that volume is mounted at RUNTIME_ASSETS_FOLDER: the node daemon's container
 or the workbench backend's.
@@ -18,10 +24,11 @@ import threading
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Dict, Mapping, Optional, Tuple
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from scenegems_tool.cluster.node.job_report import JobFailed, JobReport, JobResultData
 from scenegems_tool.cluster.node.jobs.job_payload import GeofencePayload, TrajectoriesInput, parse_payload, to_trajectories
+from scenegems_tool.cluster.node.jobs.live_monitor import LiveMonitor, SimulationMonitor
 from scenegems_tool.cluster.node.jobs.runner_container import StatusCallback, job_document
 from scenegems_tool.cluster.node.launchers.per_job.job_stack import RUNNER_SERVICE, JobStack, runner_service
 from scenegems_tool.cluster.node.node_context import NodeContext
@@ -36,7 +43,10 @@ if TYPE_CHECKING:
 STACK_NETWORK = "maritime_net"  # the network build_simulation_docker_stack_artifacts puts every vessel service on
 
 ARTIFACT_INPUT_FIELDS: Tuple[ArtifactField, ...] = (ArtifactField("trajectories", ArtifactKind.TRAJECTORIES),)
-ARTIFACT_RESULT_FIELDS: Tuple[ArtifactField, ...] = (ArtifactField("states", ArtifactKind.TRAJECTORIES),)  # the state log
+ARTIFACT_RESULT_FIELDS: Tuple[ArtifactField, ...] = (
+    ArtifactField("states", ArtifactKind.TRAJECTORIES),  # the state log
+    ArtifactField("trajectories", ArtifactKind.TRAJECTORIES),
+)
 
 
 class ArduPilotSimulationLayer(str, Enum):
@@ -54,7 +64,18 @@ class ArduPilotSimulationPayload(ProtocolModel):
     seed: int = 0
     start_boot_s: Optional[float] = Field(default=None, ge=0.0)  # SITL time of scenario time 0; the next quantum when None
     include_states: bool = True  # return the observed state of every vessel at every step
+    monitor: SimulationMonitor = SimulationMonitor.NONE
+    colregs_constraints_content: Optional[str] = None  # live only: COLREGS constants YAML; the general maritime defaults when None
+    include_trajectories: bool = False  # return the observed run as trajectories, as simulation.kinematic does
     timeout_s: float = Field(default=1800.0, gt=0.0)
+
+    @model_validator(mode="after")
+    def _monitor_options_need_the_live_monitor(self) -> "ArduPilotSimulationPayload":
+        if self.monitor != SimulationMonitor.LIVE and self.colregs_constraints_content is not None:
+            raise ValueError("colregs_constraints_content applies only to monitor live")
+        if (self.monitor == SimulationMonitor.LIVE or self.include_trajectories) and self.dt is not None and not float(self.dt).is_integer():
+            raise ValueError("the live monitor and the trajectories need a whole number of seconds as dt")
+        return self
 
 
 PAYLOAD_MODEL = ArduPilotSimulationPayload
@@ -103,20 +124,61 @@ def run(job: JobSpec, node: NodeContext, report: JobReport, cancel: Optional[thr
     return stack.run(job_document(job), report, timeout_s=payload.timeout_s, cancel=cancel, observation=node.observations.of(job), paced=False)
 
 
-def frame_builder(scenario_id: str, trajectories, dt: float) -> Callable[[int, Mapping[int, Any]], Dict[str, Any]]:
-    """A lockstep step's frame in the workbench's wire format: every vessel's observed state."""
-    from concrete_level.trajectory_generation.scene_builder import SceneBuilder
-    from scenegems_tool.gateway.serialization import serialize_frame
+def step_scene(initial_scene) -> Callable[[Mapping[int, Any]], Dict[Any, Any]]:
+    """A lockstep step's scene as {actor: state}: each vessel's observed state, the static obstacles where the scene put them."""
+    vessels = {vessel.id: vessel for vessel in initial_scene.vessels}
+    obstacles = {obstacle: initial_scene[obstacle] for obstacle in initial_scene.obstacles}
 
-    vessels = {vessel.id: vessel for vessel in trajectories.initial_scene.vessels}
+    def build(samples: Mapping[int, Any]) -> Dict[Any, Any]:
+        return {**{vessels[vessel_id]: sample.state for vessel_id, sample in samples.items()}, **obstacles}
+
+    return build
+
+
+def frame_builder(scenario_id: str, trajectories, dt: float, monitor: Optional[LiveMonitor] = None) -> Callable[[int, Mapping[int, Any]], Dict[str, Any]]:
+    """A lockstep step's frame in the workbench's wire format: the monitored scene when the live monitor judged the step, else the scene alone."""
+    from concrete_level.trajectory_generation.scene_builder import SceneBuilder
+    from scenegems_tool.gateway.serialization import serialize_frame, serialize_monitored_frame
+
+    scene_of = step_scene(trajectories.initial_scene)
     time_step = int(dt) if float(dt).is_integer() else dt
 
     def build(index: int, samples: Mapping[int, Any]) -> Dict[str, Any]:
+        timestamp = index * time_step
+        if monitor is not None and monitor.last_monitored_index == index:
+            return serialize_monitored_frame(scenario_id=scenario_id, monitored_scene=monitor.last_monitored, timestamp=timestamp, time_step=time_step)
         builder = SceneBuilder()
-        builder.set_states_as_dict({vessels[vessel_id]: sample.state for vessel_id, sample in samples.items()})
-        return serialize_frame(scenario_id=scenario_id, scene=builder.build(), timestamp=index * time_step, time_step=time_step)
+        builder.set_states_as_dict(scene_of(samples))
+        return serialize_frame(scenario_id=scenario_id, scene=builder.build(), timestamp=timestamp, time_step=time_step)
 
     return build
+
+
+def step_observer(trajectories, monitor: Optional[LiveMonitor], observer) -> Optional[Callable[[int, Mapping[int, Any]], None]]:
+    """The lockstep step observer: the live monitor's, the observation's after it, both or none."""
+    if monitor is None and observer is None:
+        return None
+    scene_of = step_scene(trajectories.initial_scene)
+
+    def on_step(index: int, samples: Mapping[int, Any]) -> None:
+        if monitor is not None:
+            scene = scene_of(samples)
+            monitor.on_step(index, [scene[actor] for actor in monitor.actors])
+        if observer is not None:
+            observer.step(index, samples)
+
+    return on_step
+
+
+def observed_trajectories(trajectories, result, dt: float):
+    """The run as trajectories: every step's observed vessel states and the static obstacles."""
+    from concrete_level.trajectory_generation.trajectory_builder import TrajectoryBuilder
+
+    scene_of = step_scene(trajectories.initial_scene)
+    builder = TrajectoryBuilder(time_step=int(dt))
+    for step_states in result.states:
+        builder.add_scene_as_dict(scene_of(dict(zip(result.vessel_ids, step_states))))
+    return builder.build()
 
 
 def execute(job: JobSpec, status: StatusCallback, observation: Optional["ContainerObservation"] = None) -> JobResultData:
@@ -127,11 +189,12 @@ def execute(job: JobSpec, status: StatusCallback, observation: Optional["Contain
     trajectories, instance = _instance(payload)
     dt = float(trajectories.time_step) if payload.dt is None else payload.dt
     steps = payload.steps if payload.steps is not None else int(round(trajectories.timespan / dt))
-    on_step = None
+    monitor = LiveMonitor(trajectories.initial_scene.actors, int(dt), payload.colregs_constraints_content, early_stop=False) if payload.monitor == SimulationMonitor.LIVE else None
+    observer = None
     if observation is not None:
-        observer = observation.observer(frame_builder(job.job_id, trajectories, dt), dt, last_index=steps, pace=False, stride_speed=float(payload.speedup))
-        on_step = observer.step
-    status("connecting to SITL")
+        observer = observation.observer(frame_builder(job.job_id, trajectories, dt, monitor), dt, last_index=steps, pace=False, stride_speed=float(payload.speedup))
+    on_step = step_observer(trajectories, monitor, observer)
+    status("connecting to SITL" + (" with the live monitor" if monitor is not None else ""))
     result = run_mavlink_stack(trajectories, instance, payload.geofence.to_geofence(), dt=payload.dt, steps=payload.steps, start_boot_s=payload.start_boot_s, on_step=on_step)
     status("run finished", 1.0)
     data: JobResultData = {
@@ -146,4 +209,8 @@ def execute(job: JobSpec, status: StatusCallback, observation: Optional["Contain
             str(vessel_id): [[sample.boot_ms, sample.state.x, sample.state.y, sample.state.speed, sample.state.heading] for sample in column]
             for vessel_id, column in zip(result.vessel_ids, zip(*result.states))
         }
+    if monitor is not None:
+        data["monitor"] = monitor.result(stopped_early=False)
+    if payload.include_trajectories:
+        data["trajectories"] = observed_trajectories(trajectories, result, dt).to_dict()
     return data

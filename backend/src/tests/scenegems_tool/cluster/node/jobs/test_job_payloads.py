@@ -8,10 +8,11 @@ from scenegems_tool.cluster.node.job_report import JobFailed
 from scenegems_tool.cluster.node.jobs import simulation_kinematic_job
 from scenegems_tool.cluster.node.jobs.calibration_deviation_job import CalibrationDeviationPayload
 from scenegems_tool.cluster.node.jobs.job_payload import parse_payload, validate_structure
+from scenegems_tool.cluster.node.jobs.live_monitor import SimulationMonitor
 from scenegems_tool.cluster.node.jobs.monitoring_post_hoc_job import PostHocMonitoringPayload
 from scenegems_tool.cluster.node.jobs.scene_generation_job import SceneGenerationPayload
 from scenegems_tool.cluster.node.jobs.simulation_ardupilot_job import ArduPilotSimulationLayer, ArduPilotSimulationPayload
-from scenegems_tool.cluster.node.jobs.simulation_kinematic_job import KinematicMode, KinematicMonitor, KinematicSimulationPayload
+from scenegems_tool.cluster.node.jobs.simulation_kinematic_job import KinematicMode, KinematicSimulationPayload
 from scenegems_tool.cluster.node.jobs.trajectory_generation_job import TrajectoryGenerationPayload
 from scenegems_tool.cluster.protocol.artifacts import find_references, resolve_references
 from scenegems_tool.cluster.protocol.jobs import JobType
@@ -64,7 +65,27 @@ def test_ardupilot_payload(trajectories):
     assert payload.geofence.to_geofence().radius_meters == 2000.0
 
 
-@pytest.mark.parametrize("change", [{"simulation_layer": "kinematic"}, {"speedup": 0}, {"geofence": {**GEOFENCE, "latitude": 91.0}}, {"geofence": None}])
+def test_ardupilot_payload_monitor_defaults_and_live(trajectories):
+    base = {"simulation_layer": "ardupilot_sim", "trajectories": trajectories, "geofence": GEOFENCE}
+    payload = ArduPilotSimulationPayload.model_validate(base)
+    assert (payload.monitor, payload.colregs_constraints_content, payload.include_trajectories) == (SimulationMonitor.NONE, None, False)
+    live = ArduPilotSimulationPayload.model_validate({**base, "monitor": "live", "colregs_constraints_content": "rules", "include_trajectories": True, "dt": 2.0})
+    assert live.monitor == SimulationMonitor.LIVE and live.colregs_constraints_content == "rules" and live.include_trajectories
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"simulation_layer": "kinematic"},
+        {"speedup": 0},
+        {"geofence": {**GEOFENCE, "latitude": 91.0}},
+        {"geofence": None},
+        {"monitor": "post_hoc"},
+        {"colregs_constraints_content": "rules"},  # only with the live monitor
+        {"monitor": "live", "dt": 0.5},  # the monitor needs whole seconds
+        {"include_trajectories": True, "dt": 0.5},  # so do trajectories
+    ],
+)
 def test_invalid_ardupilot_payloads_are_rejected(trajectories, change):
     with pytest.raises(ValueError):
         ArduPilotSimulationPayload.model_validate({"simulation_layer": "ardupilot_sim", "trajectories": trajectories, "geofence": GEOFENCE, **change})
@@ -176,9 +197,9 @@ def test_trajectory_generator_choice_is_a_search_parameter():
 
 def test_kinematic_monitor_options(trajectories):
     payload = KinematicSimulationPayload.model_validate({"trajectories": trajectories})
-    assert (payload.monitor, payload.early_stop) == (KinematicMonitor.NONE, False)
+    assert (payload.monitor, payload.early_stop) == (SimulationMonitor.NONE, False)
     live = KinematicSimulationPayload.model_validate({"trajectories": trajectories, "monitor": "live", "early_stop": True, "dt": 2.0, "colregs_constraints_content": "x: 1"})
-    assert live.monitor == KinematicMonitor.LIVE and live.early_stop
+    assert live.monitor == SimulationMonitor.LIVE and live.early_stop
     for change in ({"early_stop": True}, {"colregs_constraints_content": ""}, {"monitor": "live", "dt": 0.5}, {"monitor": "post_hoc"}):
         with pytest.raises(ValueError):
             KinematicSimulationPayload.model_validate({"trajectories": trajectories, **change})
