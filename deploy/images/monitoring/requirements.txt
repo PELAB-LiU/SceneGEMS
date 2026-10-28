@@ -1,9 +1,9 @@
 # Runtime dependencies for scenegems-monitoring-subsystem (see deploy/images/monitoring/Dockerfile).
-paho-mqtt
-pyyaml
-numpy
-portion
-pyproj
-haversine
+paho-mqtt==2.1.0
+pyyaml==6.0.3
+numpy==2.5.4
+portion==2.6.3
+pyproj==3.8.0
+haversine==2.9.0
 # Job payloads and the cluster protocol of per-job runner containers (scenegems_tool.cluster.node.jobs)
 pydantic==2.13.4

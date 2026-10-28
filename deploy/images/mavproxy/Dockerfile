@@ -11,8 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 
-RUN pip install --upgrade pip setuptools wheel && \
-    pip install future pexpect pymavlink MAVProxy
+RUN pip install --upgrade pip==26.2.2 setuptools==84.2.1 wheel==0.48.0 && \
+    pip install future==1.0.0 pexpect==4.9.0 pymavlink==2.4.50 MAVProxy==1.8.75
 
 WORKDIR /app
 
