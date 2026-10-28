@@ -7,6 +7,17 @@ import { WIZARD_STEP_LABELS, WIZARD_STEPS, type WizardStepId } from "./wizardSta
 
 const CLASSES_SHOWN = 30;
 
+function entryLabel(step: WizardStepId, reason: Reason): string {
+  const number = (reason.entry ?? 0) + 1;
+  if (step === "runs") {
+    return `Run ${number}`;
+  }
+  if (reason.list === "scenario") {
+    return `Scenario file ${number}`;
+  }
+  return reason.list === "item" ? `Input item ${number}` : `Scope entry ${number}`;
+}
+
 function ReasonGroup({ step, reasons, onGoTo }: { step: WizardStepId; reasons: readonly Reason[]; onGoTo: (step: WizardStepId) => void }) {
   if (reasons.length === 0) {
     return null;
@@ -25,7 +36,7 @@ function ReasonGroup({ step, reasons, onGoTo }: { step: WizardStepId; reasons: r
         {reasons.map((reason, index) => (
           <li key={`${reason.raw}-${index}`}>
             <span className={`wiz-issue-source wiz-issue-source--${reason.source}`}>{reason.source === "server" ? "master" : "here"}</span>
-            {reason.entry !== null && <strong>{step === "runs" ? `Run ${reason.entry + 1}` : `Scope entry ${reason.entry + 1}`}: </strong>}
+            {reason.entry !== null && <strong>{entryLabel(step, reason)}: </strong>}
             {describeReason(reason)}
           </li>
         ))}
@@ -85,7 +96,7 @@ export function ReviewStep({ yaml, validation, current, localReasons, serverReas
         {!blocked && validation.status === "valid" && result && (
           <p>
             <strong>The master accepts this config{current ? "" : " (an earlier version of it)"}.</strong> {plural(result.classes.length, "class", "classes")} selected, <strong>{plural(result.cases_planned, "case")}</strong> planned
-            to complete, {plural(result.runs.length, "run")}. Config hash <code title={result.config_hash}>{shortHash(result.config_hash, 12)}</code>.
+            to complete{result.runs.length > 0 ? `, ${plural(result.runs.length, "run")}` : ""}. Config hash <code title={result.config_hash}>{shortHash(result.config_hash, 12)}</code>.
           </p>
         )}
         {!blocked && validation.status === "invalid" && (

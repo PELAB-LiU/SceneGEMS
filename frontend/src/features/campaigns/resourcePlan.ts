@@ -65,18 +65,33 @@ function listed(names: string[]): string {
   return names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
+const CHAIN_ORDER = ["scene_generation", "trajectory_generation", "simulation"];
+
+/** The steps a config runs: its `steps` (format 2), else the whole chain (format 1). */
+function stepsOf(config: Record<string, unknown>): string[] {
+  return Array.isArray(config.steps) ? config.steps.filter((step): step is string => typeof step === "string") : CHAIN_ORDER;
+}
+
+function monitorOf(config: Record<string, unknown>, section: string): unknown {
+  return (config[section] as { monitor?: unknown } | undefined)?.monitor;
+}
+
 /** The job types the campaign's cases run, in pipeline order, each with why it is needed. */
 export function requiredCapabilities(config: Record<string, unknown>): RequiredCapability[] {
-  const runs = runsOf(config);
+  const steps = stepsOf(config);
+  const runs = steps.includes("simulation") ? runsOf(config) : [];
   const generator = (config.trajectories as { generator?: unknown } | undefined)?.generator;
-  const required: RequiredCapability[] = [
-    { jobType: STAGE_JOB_TYPES.generate_scene, stage: "generate_scene", reason: "Every case starts with a generated scene." },
-    {
+  const required: RequiredCapability[] = [];
+  if (steps.includes("scene_generation")) {
+    required.push({ jobType: STAGE_JOB_TYPES.generate_scene, stage: "generate_scene", reason: "Every case starts with a generated scene." });
+  }
+  if (steps.includes("trajectory_generation")) {
+    required.push({
       jobType: STAGE_JOB_TYPES.generate_trajectories,
       stage: "generate_trajectories",
       reason: typeof generator === "string" ? `Every case plans its trajectories (${generator.replace(/_/g, " ")}).` : "Every case plans its trajectories.",
-    },
-  ];
+    });
+  }
   if (runs.length > 0) {
     required.push({
       jobType: STAGE_JOB_TYPES.simulate,
@@ -84,9 +99,16 @@ export function requiredCapabilities(config: Record<string, unknown>): RequiredC
       reason: runs.length === 1 ? "The run is simulated." : `Each of the ${runs.length} runs is simulated.`,
     });
   }
-  const postHoc = runs.map((run, index) => ((run.monitor ?? DEFAULT_MONITOR) === "post_hoc" ? runName(run, index) : null)).filter((name): name is string => name !== null);
-  if (postHoc.length > 0) {
-    required.push({ jobType: STAGE_JOB_TYPES.monitor, stage: "monitor", reason: `The post hoc monitor judges ${listed(postHoc)}.` });
+  const judged: string[] = [];
+  if (steps.includes("scene_generation") && monitorOf(config, "scene_generation") === "post_hoc") {
+    judged.push("the generated scenes");
+  }
+  if (steps.includes("trajectory_generation") && monitorOf(config, "trajectories") === "post_hoc") {
+    judged.push("the planned trajectories");
+  }
+  judged.push(...runs.map((run, index) => ((run.monitor ?? DEFAULT_MONITOR) === "post_hoc" ? runName(run, index) : null)).filter((name): name is string => name !== null));
+  if (judged.length > 0) {
+    required.push({ jobType: STAGE_JOB_TYPES.monitor, stage: "monitor", reason: `The post hoc monitor judges ${listed(judged)}.` });
   }
   const repeated = runs.map((run, index) => (Number(run.repeats ?? DEFAULT_REPEATS) > 1 ? runName(run, index) : null)).filter((name): name is string => name !== null);
   if (repeated.length > 0) {

@@ -391,6 +391,55 @@
   background: rgba(30, 58, 138, 0.35);
 }
 
+.wiz-option--off {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Input: uploads and Campaign History */
+
+.wiz-upload {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.wiz-upload input[type="file"] {
+  max-width: 100%;
+}
+
+.wiz-uploads {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wiz-upload-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+}
+
+.wiz-upload-row--failed {
+  border-color: rgba(239, 68, 68, 0.6);
+}
+
+.wiz-history {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
 /* Scope */
 
 .wiz-chips {
@@ -1007,4 +1056,13 @@
     grid-column: 2;
     white-space: normal;
   }
+}
+
+.wiz-class-scroll td input[type="text"] {
+  width: 100%;
+  min-width: 140px;
+}
+
+.wiz-item--invalid td {
+  background: rgba(239, 68, 68, 0.08);
 }

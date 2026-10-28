@@ -14,6 +14,7 @@ const sidebars: SidebarsConfig = {
         'scene-generation',
         'simulation',
         'connections',
+        'campaign-wizard',
       ],
     },
     {

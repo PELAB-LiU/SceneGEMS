@@ -3,7 +3,7 @@ import type { NodeView } from "../../../domain/cluster/schemas";
 import { formatMegabytes } from "../../cluster/clusterFormat";
 import { plural } from "../campaignFormat";
 import { capabilityLabel, fullUsageQueueDepth, nodeProblems, slotsByJobType, type CapabilityCoverage } from "../resourcePlan";
-import { requiredLabelsOf } from "./configBuilder";
+import { requiredLabelsOf, stagesOf } from "./configBuilder";
 import { Field, FieldIssues, NumberField } from "./fields";
 import { reasonsOfEntry, splitByField } from "./reasons";
 import type { ClusterResources, StepProps } from "./stepTypes";
@@ -80,6 +80,9 @@ export function ResourcesStep({ draft, update, reasons, cluster }: ResourcesStep
   const { resources } = draft;
   const own = splitByField(reasonsOfEntry(reasons, null), ["nodes", "required_labels", "queue_depth", "priority"]);
   const labels = requiredLabelsOf(draft);
+  // Only the stages the campaign's steps use have a queue
+  const used = new Set(stagesOf(draft));
+  const queueStages = Object.entries(QUEUE_DEPTH_LABELS).filter(([stage]) => used.has(stage));
   const plan = cluster.plan;
   const requiredJobTypes = new Set(plan?.required.map((capability) => capability.jobType) ?? []);
   const usableIds = cluster.nodes.filter((node) => nodeProblems(node, labels).length === 0).map((node) => node.node_id);
@@ -210,7 +213,7 @@ export function ResourcesStep({ draft, update, reasons, cluster }: ResourcesStep
             <>
               <p className="wiz-hint">Full usage sizes each cap to the cluster's slots for that stage, never below the default.</p>
               <dl className="wiz-depths">
-                {Object.entries(QUEUE_DEPTH_LABELS).map(([stage, label]) => (
+                {queueStages.map(([stage, label]) => (
                   <div key={stage}>
                     <dt>{label}</dt>
                     <dd>{fullDepth[stage]}</dd>
@@ -221,7 +224,7 @@ export function ResourcesStep({ draft, update, reasons, cluster }: ResourcesStep
           ) : (
             <>
               <div className="wiz-row">
-                {Object.entries(QUEUE_DEPTH_LABELS).map(([stage, label]) => (
+                {queueStages.map(([stage, label]) => (
                   <Field
                     key={stage}
                     label={label}
