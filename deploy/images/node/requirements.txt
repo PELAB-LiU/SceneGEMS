@@ -5,13 +5,13 @@
 pydantic==2.13.4
 websockets==16.0
 # Broker clients of the pooled services
-paho-mqtt
-pyyaml
+paho-mqtt==2.1.0
+pyyaml==6.0.3
 # Payload checks (trajectories, functional scenarios) and the generated SITL and Gazebo stacks
-numpy
-scipy
-pyproj
-haversine
+numpy==2.5.4
+scipy==1.18.1
+pyproj==3.8.0
+haversine==2.9.0
 pymavlink==2.4.50
 # Image fingerprints from the local Docker engine (scenegems_tool.cluster.fingerprints)
-docker
+docker==7.2.0

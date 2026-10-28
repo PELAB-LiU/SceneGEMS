@@ -44,8 +44,8 @@ RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:/opt/ardupilot/Tools/autotest:${PATH}"
 ENV LC_NUMERIC=C
 
-RUN pip install --upgrade pip setuptools wheel && \
-    pip install future lxml pymavlink MAVProxy pexpect empy
+RUN pip install --upgrade pip==26.2.2 setuptools==84.2.1 wheel==0.48.0 && \
+    pip install future==1.0.0 lxml==6.1.3 pymavlink==2.4.50 MAVProxy==1.8.75 pexpect==4.9.0 empy==4.2.1
 
 # Build ArduRover SITL binary during image build so runtime starts fast.
 RUN ./waf configure --board sitl && \
